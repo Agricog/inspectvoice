@@ -1363,8 +1363,7 @@ export async function generateReportBlob(data: ReportData): Promise<{
 }> {
   const report = await generateInspectionReport(data);
 
-  const blob = new Blob([report.pdfBytes.buffer], { type: 'application/pdf' });
-
+  const blob = new Blob([report.pdfBytes], { type: 'application/pdf' });
   return {
     blob,
     filename: report.filename,

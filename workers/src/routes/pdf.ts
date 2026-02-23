@@ -55,9 +55,11 @@ export async function triggerPdfGeneration(
     );
   }
 
-  // Check if PDF is already being generated (prevent duplicate queue messages)
-  if (inspection['pdf_generated_at'] && !request.url.includes('regenerate=true')) {
-    // PDF already exists — return the existing URL
+  // Check if PDF already exists (allow regeneration with query param)
+  const url = new URL(request.url);
+  const regenerate = url.searchParams.get('regenerate') === 'true';
+
+  if (inspection['pdf_generated_at'] && !regenerate) {
     return jsonResponse({
       success: true,
       data: {
@@ -118,12 +120,23 @@ export async function downloadPdf(
   const id = validateUUID(params['id'], 'id');
   const db = createDb(ctx);
 
-  const inspection = await db.findByIdOrThrow<Record<string, unknown>>('inspections', id, 'Inspection');
+  // Fetch inspection with site name for filename
+  const rows = await db.rawQuery(
+    `SELECT i.pdf_url, i.pdf_generated_at, i.inspection_date, s.name AS site_name
+     FROM inspections i
+     INNER JOIN sites s ON s.id = i.site_id
+     WHERE i.id = $1`,
+    [id],
+  );
+
+  const inspection = (rows as Record<string, unknown>[])[0];
+  if (!inspection) {
+    throw new NotFoundError('Inspection not found');
+  }
 
   const pdfUrl = inspection['pdf_url'] as string | null;
 
   if (!pdfUrl) {
-    // PDF not yet generated
     return jsonResponse({
       success: true,
       data: {
@@ -139,11 +152,14 @@ export async function downloadPdf(
   const r2 = createR2(ctx);
   const object = await r2.get(r2Key);
 
-  // Build filename: IV-{ref}_{site}_{date}.pdf
-  const siteName = (inspection['site_id'] as string).slice(0, 8);
-  const date = (inspection['inspection_date'] as string).slice(0, 10);
+  // Build human-readable filename
+  const siteName = ((inspection['site_name'] as string) ?? 'Site')
+    .replace(/[^a-zA-Z0-9-_ ]/g, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 40);
+  const date = ((inspection['inspection_date'] as string) ?? '').slice(0, 10);
   const ref = id.slice(0, 8).toUpperCase();
-  const filename = `InspectVoice-${ref}-${date}.pdf`;
+  const filename = `InspectVoice-${ref}-${siteName}-${date}.pdf`;
 
   return fileResponse(
     object.body,

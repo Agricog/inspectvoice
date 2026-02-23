@@ -6,11 +6,13 @@
  *   1. Report header (company/org branding, report ref, date)
  *   2. Site details (name, address, type, contact)
  *   3. Inspection summary (type, date, inspector, weather, overall risk)
- *   4. Risk overview table (counts by severity)
- *   5. Asset inspection findings (per item: condition, defects, AI analysis)
- *   6. Defect register (all defects with actions and timeframes)
- *   7. Inspector declaration and signature
- *   8. Compliance footer (applicable standards, report version)
+ *   4. Risk overview (overall rating + counts by severity)
+ *   5. BS EN inspection schedule (checklist of all inspection points)
+ *   6. Asset inspection findings (per item: condition, defects, AI summary)
+ *   7. Defect register (all defects with actions, timeframes, costs)
+ *   8. Recommendations & compliance notes
+ *   9. Inspector declaration and signature
+ *   10. Compliance footer (applicable standards, report version)
  *
  * Note: pdf-lib is installed in workers/package.json. It runs in Cloudflare
  * Workers (no Node.js fs dependency).
@@ -20,7 +22,7 @@
 
 import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
 import { Logger } from '../shared/logger';
-import { getWorkerAssetConfig } from './ai';
+import { getWorkerAssetConfig, type WorkerInspectionPoint } from './ai';
 
 // =============================================
 // CONFIGURATION
@@ -39,19 +41,25 @@ const FONT_SIZE_HEADING = 13;
 const FONT_SIZE_SUBHEADING = 11;
 const FONT_SIZE_BODY = 9.5;
 const FONT_SIZE_SMALL = 8;
+const FONT_SIZE_TINY = 7;
 
 const LINE_HEIGHT_BODY = 14;
 const LINE_HEIGHT_HEADING = 20;
+const LINE_HEIGHT_TABLE = 13;
 const SECTION_GAP = 20;
 
 const COLOUR_BLACK = rgb(0, 0, 0);
 const COLOUR_DARK_GREY = rgb(0.25, 0.25, 0.25);
 const COLOUR_GREY = rgb(0.5, 0.5, 0.5);
 const COLOUR_LIGHT_GREY = rgb(0.92, 0.92, 0.92);
+const COLOUR_WHITE = rgb(1, 1, 1);
 const COLOUR_RED = rgb(0.8, 0.1, 0.1);
 const COLOUR_AMBER = rgb(0.85, 0.55, 0.05);
+const COLOUR_YELLOW = rgb(0.7, 0.5, 0.0);
 const COLOUR_GREEN = rgb(0.1, 0.6, 0.2);
 const COLOUR_BLUE = rgb(0.15, 0.3, 0.65);
+const COLOUR_TABLE_HEADER = rgb(0.12, 0.25, 0.5);
+const COLOUR_TABLE_STRIPE = rgb(0.96, 0.96, 0.98);
 
 // =============================================
 // INPUT TYPES
@@ -117,6 +125,9 @@ export interface PdfInspectionItem {
   readonly inspectorNotes: string | null;
   readonly voiceTranscript: string | null;
   readonly aiSummary: string | null;
+  readonly recommendations: readonly string[];
+  readonly complianceNotes: readonly string[];
+  readonly photoCount: number;
   readonly defects: readonly PdfDefect[];
 }
 
@@ -153,13 +164,23 @@ export async function generateInspectionPdf(
   });
 
   const doc = await PDFDocument.create();
+
+  // Set PDF metadata
+  doc.setTitle(`Inspection Report — ${data.site.name} — ${data.inspection.inspectionDate}`);
+  doc.setAuthor(data.org.companyName);
+  doc.setSubject(`BS EN 1176 Inspection Report`);
+  doc.setCreator('InspectVoice (inspectvoice.co.uk)');
+  doc.setProducer('InspectVoice PDF Generator');
+
   const fontRegular = await doc.embedFont(StandardFonts.Helvetica);
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const fontItalic = await doc.embedFont(StandardFonts.HelveticaOblique);
 
   const ctx: DrawContext = {
     doc,
     fontRegular,
     fontBold,
+    fontItalic,
     currentPage: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]),
     cursorY: PAGE_HEIGHT - MARGIN_TOP,
   };
@@ -176,16 +197,23 @@ export async function generateInspectionPdf(
   // ── Section 4: Risk Overview ──
   drawRiskOverview(ctx, data);
 
-  // ── Section 5: Asset Findings ──
-  for (const item of data.items) {
-    drawAssetFindings(ctx, item);
-  }
+  // ── Section 5: BS EN Inspection Schedule ──
+  drawInspectionSchedule(ctx, data);
 
-  // ── Section 6: Defect Register ──
+  // ── Section 6: Asset Findings ──
+  drawAssetFindingsSection(ctx, data);
+
+  // ── Section 7: Defect Register ──
   drawDefectRegister(ctx, data);
 
-  // ── Section 7: Declaration & Signature ──
+  // ── Section 8: Recommendations & Compliance ──
+  drawRecommendations(ctx, data);
+
+  // ── Section 9: Declaration & Signature ──
   drawSignature(ctx, data);
+
+  // ── Section 10: Applicable Standards ──
+  drawApplicableStandards(ctx, data);
 
   // ── Footer on all pages ──
   drawFooterOnAllPages(ctx, data);
@@ -209,6 +237,7 @@ interface DrawContext {
   doc: PDFDocument;
   fontRegular: PDFFont;
   fontBold: PDFFont;
+  fontItalic: PDFFont;
   currentPage: PDFPage;
   cursorY: number;
 }
@@ -221,7 +250,7 @@ function ensureSpace(ctx: DrawContext, needed: number): void {
   }
 }
 
-/** Draw text and advance cursor. */
+/** Draw text and advance cursor. Returns the number of lines drawn. */
 function drawText(
   ctx: DrawContext,
   text: string,
@@ -232,7 +261,7 @@ function drawText(
     indent?: number;
     maxWidth?: number;
   } = {},
-): void {
+): number {
   const font = options.font ?? ctx.fontRegular;
   const size = options.size ?? FONT_SIZE_BODY;
   const colour = options.colour ?? COLOUR_BLACK;
@@ -267,6 +296,8 @@ function drawText(
     });
     ctx.cursorY -= LINE_HEIGHT_BODY;
   }
+
+  return lines.length;
 }
 
 /** Draw a horizontal rule. */
@@ -281,7 +312,7 @@ function drawRule(ctx: DrawContext, colour: ReturnType<typeof rgb> = COLOUR_LIGH
   ctx.cursorY -= 8;
 }
 
-/** Draw a section heading. */
+/** Draw a section heading with number. */
 function drawHeading(ctx: DrawContext, text: string): void {
   ctx.cursorY -= SECTION_GAP;
   ensureSpace(ctx, LINE_HEIGHT_HEADING + 8);
@@ -311,15 +342,73 @@ function drawField(ctx: DrawContext, label: string, value: string | null | undef
   ctx.cursorY -= LINE_HEIGHT_BODY;
 }
 
+/**
+ * Draw a table row with cells at specified column positions.
+ * Used for the inspection schedule, risk overview, and defect register tables.
+ */
+function drawTableRow(
+  ctx: DrawContext,
+  cells: readonly { text: string; x: number; width: number; font?: PDFFont; colour?: ReturnType<typeof rgb> }[],
+  options: {
+    size?: number;
+    rowHeight?: number;
+    bgColour?: ReturnType<typeof rgb> | null;
+  } = {},
+): void {
+  const size = options.size ?? FONT_SIZE_SMALL;
+  const rowHeight = options.rowHeight ?? LINE_HEIGHT_TABLE;
+
+  ensureSpace(ctx, rowHeight + 2);
+
+  // Background fill
+  if (options.bgColour) {
+    ctx.currentPage.drawRectangle({
+      x: MARGIN_LEFT,
+      y: ctx.cursorY - 3,
+      width: CONTENT_WIDTH,
+      height: rowHeight + 2,
+      color: options.bgColour,
+    });
+  }
+
+  for (const cell of cells) {
+    // Truncate text to fit column width
+    const font = cell.font ?? ctx.fontRegular;
+    let displayText = cell.text;
+    while (font.widthOfTextAtSize(displayText, size) > cell.width - 4 && displayText.length > 3) {
+      displayText = displayText.slice(0, -4) + '...';
+    }
+
+    ctx.currentPage.drawText(displayText, {
+      x: cell.x,
+      y: ctx.cursorY,
+      size,
+      font,
+      color: cell.colour ?? COLOUR_BLACK,
+    });
+  }
+
+  ctx.cursorY -= rowHeight;
+}
+
 // =============================================
 // SECTION DRAWERS
 // =============================================
 
 function drawReportHeader(ctx: DrawContext, data: PdfReportData): void {
-  drawText(ctx, 'PLAYGROUND INSPECTION REPORT', {
+  // Adaptive title based on inspection type
+  const typeLabel = getInspectionTypeLabel(data.inspection.inspectionType);
+  drawText(ctx, `${typeLabel.toUpperCase()} REPORT`, {
     font: ctx.fontBold,
     size: FONT_SIZE_TITLE,
     colour: COLOUR_BLUE,
+  });
+  ctx.cursorY -= 2;
+
+  drawText(ctx, 'In accordance with BS EN 1176-7:2020', {
+    font: ctx.fontItalic,
+    size: FONT_SIZE_SMALL,
+    colour: COLOUR_GREY,
   });
   ctx.cursorY -= 4;
 
@@ -346,6 +435,9 @@ function drawReportHeader(ctx: DrawContext, data: PdfReportData): void {
   drawText(ctx, `Report Ref: IV-${data.inspection.id.slice(0, 8).toUpperCase()}`, {
     font: ctx.fontBold, size: FONT_SIZE_SMALL, colour: COLOUR_DARK_GREY,
   });
+  drawText(ctx, `Generated: ${formatDateTime(new Date().toISOString())}`, {
+    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
+  });
 
   drawRule(ctx);
 }
@@ -356,35 +448,49 @@ function drawSiteDetails(ctx: DrawContext, data: PdfReportData): void {
   drawField(ctx, 'Site Name', data.site.name);
   drawField(ctx, 'Address', data.site.address);
   drawField(ctx, 'Postcode', data.site.postcode);
-  drawField(ctx, 'Site Type', data.site.siteType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()));
+  drawField(ctx, 'Site Type', formatEnum(data.site.siteType));
   drawField(ctx, 'Contact', data.site.contactName);
   drawField(ctx, 'Contact Phone', data.site.contactPhone);
+  drawField(ctx, 'Assets Inspected', `${data.items.length} item${data.items.length !== 1 ? 's' : ''}`);
 }
 
 function drawInspectionSummary(ctx: DrawContext, data: PdfReportData): void {
   drawHeading(ctx, '2. Inspection Summary');
 
-  const typeLabel = {
-    routine_visual: 'Routine Visual Inspection',
-    operational: 'Operational Inspection',
-    annual_main: 'Annual Main Inspection',
-  }[data.inspection.inspectionType] ?? data.inspection.inspectionType;
-
-  drawField(ctx, 'Inspection Type', typeLabel);
+  drawField(ctx, 'Inspection Type', getInspectionTypeLabel(data.inspection.inspectionType));
   drawField(ctx, 'Date', formatDate(data.inspection.inspectionDate));
   drawField(ctx, 'Duration', data.inspection.durationMinutes ? `${data.inspection.durationMinutes} minutes` : null);
   drawField(ctx, 'Inspector', data.inspector.displayName);
   drawField(ctx, 'RPII No.', data.inspector.rpiiNumber);
   drawField(ctx, 'RPII Grade', data.inspector.rpiiGrade);
+  drawField(ctx, 'Qualifications', data.inspector.qualifications);
   drawField(ctx, 'Weather', data.inspection.weatherConditions);
   drawField(ctx, 'Temperature', data.inspection.temperatureC !== null ? `${data.inspection.temperatureC}°C` : null);
   drawField(ctx, 'Surface Conditions', data.inspection.surfaceConditions);
 
   if (data.inspection.closureRecommended) {
-    ctx.cursorY -= 6;
-    drawText(ctx, '⚠ CLOSURE RECOMMENDED — Very high risk defects identified', {
-      font: ctx.fontBold, size: FONT_SIZE_SUBHEADING, colour: COLOUR_RED,
+    ctx.cursorY -= 8;
+    ensureSpace(ctx, 30);
+
+    // Red warning box
+    ctx.currentPage.drawRectangle({
+      x: MARGIN_LEFT,
+      y: ctx.cursorY - 6,
+      width: CONTENT_WIDTH,
+      height: 22,
+      color: rgb(1, 0.92, 0.92),
+      borderColor: COLOUR_RED,
+      borderWidth: 1,
     });
+
+    ctx.currentPage.drawText('CLOSURE RECOMMENDED — Very high risk defects identified requiring immediate action', {
+      x: MARGIN_LEFT + 10,
+      y: ctx.cursorY,
+      size: FONT_SIZE_BODY,
+      font: ctx.fontBold,
+      color: COLOUR_RED,
+    });
+    ctx.cursorY -= 22;
   }
 
   if (data.inspection.inspectorSummary) {
@@ -400,84 +506,192 @@ function drawRiskOverview(ctx: DrawContext, data: PdfReportData): void {
   const overallRisk = data.inspection.overallRiskRating ?? 'Not assessed';
   const riskColour = getRiskColour(overallRisk);
 
-  drawText(ctx, `Overall Risk Rating: ${overallRisk.replace(/_/g, ' ').toUpperCase()}`, {
+  drawText(ctx, `Overall Risk Rating: ${formatEnum(overallRisk)}`, {
     font: ctx.fontBold, size: FONT_SIZE_SUBHEADING, colour: riskColour,
   });
 
   ctx.cursorY -= 8;
 
-  // Risk count table
+  // Risk count table with proper formatting
+  const colSeverity = MARGIN_LEFT + 10;
+  const colCount = MARGIN_LEFT + 180;
+  const colAction = MARGIN_LEFT + 230;
+
+  // Header row
+  drawTableRow(ctx, [
+    { text: 'Severity', x: colSeverity, width: 170, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Count', x: colCount, width: 50, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Required Action', x: colAction, width: 240, font: ctx.fontBold, colour: COLOUR_WHITE },
+  ], { bgColour: COLOUR_TABLE_HEADER });
+
   const rows = [
-    { label: 'Very High Risk', count: data.inspection.veryHighRiskCount, colour: COLOUR_RED },
-    { label: 'High Risk', count: data.inspection.highRiskCount, colour: COLOUR_AMBER },
-    { label: 'Medium Risk', count: data.inspection.mediumRiskCount, colour: rgb(0.7, 0.5, 0.0) },
-    { label: 'Low Risk', count: data.inspection.lowRiskCount, colour: COLOUR_GREEN },
+    { label: 'Very High', count: data.inspection.veryHighRiskCount, colour: COLOUR_RED, action: 'Immediate closure / restriction' },
+    { label: 'High', count: data.inspection.highRiskCount, colour: COLOUR_AMBER, action: 'Urgent action within 48 hours' },
+    { label: 'Medium', count: data.inspection.mediumRiskCount, colour: COLOUR_YELLOW, action: 'Action within 1 month' },
+    { label: 'Low', count: data.inspection.lowRiskCount, colour: COLOUR_GREEN, action: 'Next scheduled maintenance' },
   ];
 
-  for (const row of rows) {
-    ensureSpace(ctx, LINE_HEIGHT_BODY);
-    ctx.currentPage.drawText(`${row.label}:`, {
-      x: MARGIN_LEFT + 10,
-      y: ctx.cursorY,
-      size: FONT_SIZE_BODY,
-      font: ctx.fontBold,
-      color: row.colour,
-    });
-    ctx.currentPage.drawText(String(row.count), {
-      x: MARGIN_LEFT + 150,
-      y: ctx.cursorY,
-      size: FONT_SIZE_BODY,
-      font: ctx.fontBold,
-      color: row.colour,
-    });
-    ctx.cursorY -= LINE_HEIGHT_BODY;
-  }
+  rows.forEach((row, i) => {
+    drawTableRow(ctx, [
+      { text: row.label, x: colSeverity, width: 170, font: ctx.fontBold, colour: row.colour },
+      { text: String(row.count), x: colCount, width: 50, font: ctx.fontBold, colour: row.count > 0 ? row.colour : COLOUR_GREY },
+      { text: row.action, x: colAction, width: 240, colour: COLOUR_DARK_GREY },
+    ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
+  });
 
+  ctx.cursorY -= 4;
   drawField(ctx, 'Total Defects', String(data.inspection.totalDefects), 10);
+  drawField(ctx, 'Total Assets Inspected', String(data.items.length), 10);
 }
 
-function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem): void {
+/**
+ * BS EN Inspection Schedule — THE differentiator.
+ *
+ * Shows a table of all inspection points for each asset type,
+ * with status indicators showing what was checked vs not mentioned.
+ * This is what councils and RoSPA assessors compare against.
+ */
+function drawInspectionSchedule(ctx: DrawContext, data: PdfReportData): void {
+  drawHeading(ctx, '4. BS EN Inspection Schedule');
+
+  drawText(ctx, 'The following inspection points were assessed for each asset in accordance with the applicable BS EN standard and the inspection type performed.', {
+    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
+  });
+
+  ctx.cursorY -= 4;
+
+  // Key
+  drawText(ctx, 'Key:  ✓ Inspected — defect(s) found    ● Inspected — satisfactory    ○ Not assessed for this inspection type', {
+    size: FONT_SIZE_SMALL, colour: COLOUR_GREY, font: ctx.fontItalic,
+  });
+
+  ctx.cursorY -= 8;
+
+  for (const item of data.items) {
+    const config = getWorkerAssetConfig(item.assetType);
+    const inspectionType = data.inspection.inspectionType;
+
+    ensureSpace(ctx, 60);
+
+    // Asset sub-header
+    drawText(ctx, `${item.assetCode} — ${config.name}`, {
+      font: ctx.fontBold, size: FONT_SIZE_BODY, colour: COLOUR_DARK_GREY,
+    });
+    drawText(ctx, `Standard: ${config.complianceStandard}`, {
+      size: FONT_SIZE_SMALL, colour: COLOUR_GREY, indent: 5,
+    });
+
+    ctx.cursorY -= 2;
+
+    // Table header
+    const colStatus = MARGIN_LEFT + 5;
+    const colPoint = MARGIN_LEFT + 30;
+    const colDesc = MARGIN_LEFT + 200;
+
+    drawTableRow(ctx, [
+      { text: 'Status', x: colStatus, width: 25, font: ctx.fontBold, colour: COLOUR_WHITE },
+      { text: 'Inspection Point', x: colPoint, width: 170, font: ctx.fontBold, colour: COLOUR_WHITE },
+      { text: 'Description', x: colDesc, width: 260, font: ctx.fontBold, colour: COLOUR_WHITE },
+    ], { bgColour: COLOUR_TABLE_HEADER });
+
+    // Inspection points for this asset
+    for (let i = 0; i < config.inspectionPoints.length; i++) {
+      const point = config.inspectionPoints[i];
+      if (!point) continue;
+
+      const isApplicable = point.appliesTo.includes(inspectionType);
+
+      // Determine if the inspector found defects related to this inspection point
+      const hasDefect = item.defects.some((d) =>
+        d.description.toLowerCase().includes(point.label.toLowerCase().split('/')[0] ?? '') ||
+        d.defectCategory.toLowerCase().includes(point.label.toLowerCase().split('/')[0] ?? ''),
+      );
+
+      const status = !isApplicable ? '○' : hasDefect ? '✓' : '●';
+      const statusColour = !isApplicable ? COLOUR_GREY : hasDefect ? COLOUR_AMBER : COLOUR_GREEN;
+
+      ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
+
+      drawTableRow(ctx, [
+        { text: status, x: colStatus + 5, width: 20, font: ctx.fontBold, colour: statusColour },
+        { text: point.label, x: colPoint, width: 170, font: ctx.fontRegular },
+        { text: point.description, x: colDesc, width: 260, colour: COLOUR_DARK_GREY },
+      ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
+    }
+
+    ctx.cursorY -= 6;
+  }
+}
+
+function drawAssetFindingsSection(ctx: DrawContext, data: PdfReportData): void {
+  drawHeading(ctx, '5. Asset Inspection Findings');
+
+  for (const item of data.items) {
+    drawAssetFindings(ctx, item, data.inspection.inspectionType);
+  }
+}
+
+function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem, inspectionType: string): void {
   ensureSpace(ctx, 80);
   ctx.cursorY -= SECTION_GAP / 2;
 
   const config = getWorkerAssetConfig(item.assetType);
+
+  // Asset header with condition badge
+  const conditionLabel = item.overallCondition
+    ? formatEnum(item.overallCondition)
+    : 'Not assessed';
   const conditionColour = getConditionColour(item.overallCondition);
 
-  // Asset header
   drawText(ctx, `${item.assetCode} — ${config.name}`, {
     font: ctx.fontBold, size: FONT_SIZE_SUBHEADING, colour: COLOUR_DARK_GREY,
   });
 
-  drawField(ctx, 'Condition', item.overallCondition?.replace(/_/g, ' ').toUpperCase() ?? 'Not assessed', 10);
-  drawField(ctx, 'Risk Rating', item.riskRating?.replace(/_/g, ' ').toUpperCase() ?? 'Not assessed', 10);
+  drawField(ctx, 'Condition', conditionLabel, 10);
+  drawField(ctx, 'Risk Rating', item.riskRating ? formatEnum(item.riskRating) : 'Not assessed', 10);
 
   if (item.requiresAction) {
-    drawField(ctx, 'Action Required', item.actionTimeframe?.replace(/_/g, ' ') ?? 'Yes', 10);
+    drawField(ctx, 'Action Required', item.actionTimeframe ? formatEnum(item.actionTimeframe) : 'Yes', 10);
+  }
+
+  if (item.photoCount > 0) {
+    drawField(ctx, 'Photos', `${item.photoCount} photo${item.photoCount !== 1 ? 's' : ''} captured`, 10);
   }
 
   if (item.inspectorNotes) {
-    drawText(ctx, `Inspector Notes: ${item.inspectorNotes}`, { indent: 10, size: FONT_SIZE_SMALL });
+    ctx.cursorY -= 2;
+    drawText(ctx, 'Inspector Notes:', { font: ctx.fontBold, size: FONT_SIZE_SMALL, indent: 10 });
+    drawText(ctx, item.inspectorNotes, { indent: 15, size: FONT_SIZE_SMALL });
   }
 
   if (item.aiSummary) {
-    drawText(ctx, `AI Summary: ${item.aiSummary}`, { indent: 10, size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
+    ctx.cursorY -= 2;
+    drawText(ctx, 'Findings Summary:', { font: ctx.fontBold, size: FONT_SIZE_SMALL, indent: 10 });
+    drawText(ctx, item.aiSummary, { indent: 15, size: FONT_SIZE_SMALL });
   }
 
   // Defects for this asset
   if (item.defects.length > 0) {
-    ctx.cursorY -= 4;
+    ctx.cursorY -= 6;
+    drawText(ctx, `Defects (${item.defects.length}):`, {
+      font: ctx.fontBold, size: FONT_SIZE_SMALL, indent: 10,
+    });
+
     for (const defect of item.defects) {
-      ensureSpace(ctx, 40);
+      ensureSpace(ctx, 45);
       const sevColour = getRiskColour(defect.severity);
 
-      drawText(ctx, `[${defect.severity.replace(/_/g, ' ').toUpperCase()}] ${defect.description}`, {
+      drawText(ctx, `[${formatEnum(defect.severity)}] ${defect.description}`, {
         indent: 15, font: ctx.fontBold, size: FONT_SIZE_SMALL, colour: sevColour,
       });
-      drawText(ctx, `Action: ${defect.actionRequired} (${defect.actionTimeframe.replace(/_/g, ' ')})`, {
+      drawText(ctx, `Action: ${defect.actionRequired} (${formatEnum(defect.actionTimeframe)})`, {
         indent: 25, size: FONT_SIZE_SMALL,
       });
       if (defect.bsEnReference) {
         drawText(ctx, `Ref: ${defect.bsEnReference}`, { indent: 25, size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
+      }
+      if (defect.estimatedCostGbp) {
+        drawText(ctx, `Est. Cost: ${defect.estimatedCostGbp}`, { indent: 25, size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
       }
     }
   } else {
@@ -494,31 +708,91 @@ function drawDefectRegister(ctx: DrawContext, data: PdfReportData): void {
 
   if (allDefects.length === 0) return;
 
-  drawHeading(ctx, '5. Defect Register');
+  drawHeading(ctx, '6. Defect Register');
 
-  let defectNum = 1;
-  for (const defect of allDefects) {
-    ensureSpace(ctx, 50);
+  drawText(ctx, 'All defects identified during this inspection, listed by severity. This register should be used to track remedial actions to completion.', {
+    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
+  });
+
+  ctx.cursorY -= 6;
+
+  // Table header
+  const colNo = MARGIN_LEFT;
+  const colAsset = MARGIN_LEFT + 22;
+  const colSev = MARGIN_LEFT + 82;
+  const colDesc = MARGIN_LEFT + 142;
+  const colAction = MARGIN_LEFT + 312;
+  const colCost = MARGIN_LEFT + 442;
+
+  drawTableRow(ctx, [
+    { text: '#', x: colNo, width: 22, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Asset', x: colAsset, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Severity', x: colSev, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Description', x: colDesc, width: 170, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Action / Timeframe', x: colAction, width: 130, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Est. Cost', x: colCost, width: 53, font: ctx.fontBold, colour: COLOUR_WHITE },
+  ], { bgColour: COLOUR_TABLE_HEADER });
+
+  // Sort by severity (very_high first)
+  const sorted = [...allDefects].sort((a, b) => {
+    const order: Record<string, number> = { very_high: 0, high: 1, medium: 2, low: 3 };
+    return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);
+  });
+
+  sorted.forEach((defect, i) => {
+    ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
     const sevColour = getRiskColour(defect.severity);
 
-    drawText(ctx, `${defectNum}. [${defect.assetCode}] ${defect.description}`, {
-      font: ctx.fontBold, size: FONT_SIZE_BODY, colour: sevColour,
-    });
-    drawField(ctx, 'Severity', defect.severity.replace(/_/g, ' ').toUpperCase(), 15);
-    drawField(ctx, 'Category', defect.defectCategory, 15);
-    drawField(ctx, 'Action', `${defect.actionRequired} (${defect.actionTimeframe.replace(/_/g, ' ')})`, 15);
-    if (defect.bsEnReference) drawField(ctx, 'BS EN Ref', defect.bsEnReference, 15);
-    if (defect.estimatedCostGbp) drawField(ctx, 'Est. Cost', defect.estimatedCostGbp, 15);
+    drawTableRow(ctx, [
+      { text: String(i + 1), x: colNo, width: 22 },
+      { text: defect.assetCode, x: colAsset, width: 60, font: ctx.fontBold },
+      { text: formatEnum(defect.severity), x: colSev, width: 60, colour: sevColour, font: ctx.fontBold },
+      { text: defect.description, x: colDesc, width: 170 },
+      { text: `${formatEnum(defect.actionTimeframe)}`, x: colAction, width: 130 },
+      { text: defect.estimatedCostGbp ?? '—', x: colCost, width: 53, colour: COLOUR_GREY },
+    ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
+  });
+}
 
-    ctx.cursorY -= 4;
-    defectNum++;
+/**
+ * Consolidated recommendations and compliance notes from all AI analyses.
+ */
+function drawRecommendations(ctx: DrawContext, data: PdfReportData): void {
+  const allRecs = data.items.flatMap((item) =>
+    item.recommendations.map((r) => ({ assetCode: item.assetCode, text: r })),
+  );
+  const allNotes = data.items.flatMap((item) =>
+    item.complianceNotes.map((n) => ({ assetCode: item.assetCode, text: n })),
+  );
+
+  if (allRecs.length === 0 && allNotes.length === 0) return;
+
+  drawHeading(ctx, '7. Recommendations & Compliance Notes');
+
+  if (allRecs.length > 0) {
+    drawText(ctx, 'Recommendations:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
+    for (const rec of allRecs) {
+      ensureSpace(ctx, LINE_HEIGHT_BODY);
+      drawText(ctx, `• [${rec.assetCode}] ${rec.text}`, { indent: 10, size: FONT_SIZE_SMALL });
+    }
+    ctx.cursorY -= 6;
+  }
+
+  if (allNotes.length > 0) {
+    drawText(ctx, 'Compliance Notes:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
+    for (const note of allNotes) {
+      ensureSpace(ctx, LINE_HEIGHT_BODY);
+      drawText(ctx, `• [${note.assetCode}] ${note.text}`, { indent: 10, size: FONT_SIZE_SMALL });
+    }
   }
 }
 
 function drawSignature(ctx: DrawContext, data: PdfReportData): void {
-  drawHeading(ctx, '6. Inspector Declaration');
+  // Dynamic section number
+  const sectionNum = hasRecommendations(data) ? '8' : '7';
+  drawHeading(ctx, `${sectionNum}. Inspector Declaration`);
 
-  drawText(ctx, 'I confirm that this inspection has been carried out in accordance with BS EN 1176-7:2020 and represents an accurate record of findings at the time of inspection.', {
+  drawText(ctx, 'I confirm that this inspection has been carried out in accordance with BS EN 1176-7:2020 and represents an accurate record of findings at the time of inspection. Equipment not listed in this report was not inspected.', {
     size: FONT_SIZE_BODY,
   });
 
@@ -536,8 +810,49 @@ function drawSignature(ctx: DrawContext, data: PdfReportData): void {
   if (data.inspection.signedBy) {
     drawField(ctx, 'Signed By', data.inspection.signedBy);
     drawField(ctx, 'Signed At', data.inspection.signedAt ? formatDateTime(data.inspection.signedAt) : null);
+
+    // Signature line
+    ctx.cursorY -= 8;
+    ctx.currentPage.drawLine({
+      start: { x: MARGIN_LEFT, y: ctx.cursorY },
+      end: { x: MARGIN_LEFT + 200, y: ctx.cursorY },
+      thickness: 0.5,
+      color: COLOUR_BLACK,
+    });
+    ctx.cursorY -= LINE_HEIGHT_BODY;
+    drawText(ctx, 'Digital Signature', { size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
   } else {
     drawText(ctx, '[NOT YET SIGNED]', { font: ctx.fontBold, colour: COLOUR_AMBER });
+  }
+}
+
+/**
+ * List all BS EN standards referenced in this report.
+ */
+function drawApplicableStandards(ctx: DrawContext, data: PdfReportData): void {
+  const sectionNum = hasRecommendations(data) ? '9' : '8';
+  drawHeading(ctx, `${sectionNum}. Applicable Standards`);
+
+  // Collect unique standards from all inspected asset types
+  const standards = new Set<string>();
+  standards.add('BS EN 1176-1:2017 — Playground equipment — General safety requirements and test methods');
+  standards.add('BS EN 1176-7:2020 — Playground equipment — Guidance on installation, inspection, maintenance and operation');
+  standards.add('BS EN 1177:2018 — Impact attenuating playground surfacing');
+
+  for (const item of data.items) {
+    const config = getWorkerAssetConfig(item.assetType);
+    // Parse standards from complianceStandard string
+    const parts = config.complianceStandard.split(',').map((s) => s.trim());
+    for (const part of parts) {
+      if (part.startsWith('BS EN')) {
+        standards.add(part);
+      }
+    }
+  }
+
+  const sortedStandards = [...standards].sort();
+  for (const std of sortedStandards) {
+    drawText(ctx, `• ${std}`, { size: FONT_SIZE_SMALL, indent: 5 });
   }
 }
 
@@ -549,16 +864,34 @@ function drawFooterOnAllPages(ctx: DrawContext, data: PdfReportData): void {
     const page = pages[i];
     if (!page) continue;
 
-    // Page number
-    page.drawText(`Page ${i + 1} of ${totalPages}`, {
-      x: PAGE_WIDTH - MARGIN_RIGHT - 70,
+    // Top border line
+    page.drawLine({
+      start: { x: MARGIN_LEFT, y: PAGE_HEIGHT - MARGIN_TOP + 15 },
+      end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: PAGE_HEIGHT - MARGIN_TOP + 15 },
+      thickness: 0.5,
+      color: COLOUR_LIGHT_GREY,
+    });
+
+    // Bottom border line
+    page.drawLine({
+      start: { x: MARGIN_LEFT, y: MARGIN_BOTTOM - 15 },
+      end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: MARGIN_BOTTOM - 15 },
+      thickness: 0.5,
+      color: COLOUR_LIGHT_GREY,
+    });
+
+    // Page number (right)
+    const pageText = `Page ${i + 1} of ${totalPages}`;
+    const pageTextWidth = ctx.fontRegular.widthOfTextAtSize(pageText, FONT_SIZE_SMALL);
+    page.drawText(pageText, {
+      x: PAGE_WIDTH - MARGIN_RIGHT - pageTextWidth,
       y: 25,
       size: FONT_SIZE_SMALL,
       font: ctx.fontRegular,
       color: COLOUR_GREY,
     });
 
-    // Report ref
+    // Report ref (left)
     page.drawText(`IV-${data.inspection.id.slice(0, 8).toUpperCase()}`, {
       x: MARGIN_LEFT,
       y: 25,
@@ -567,22 +900,24 @@ function drawFooterOnAllPages(ctx: DrawContext, data: PdfReportData): void {
       color: COLOUR_GREY,
     });
 
-    // Custom footer text
+    // Custom footer text (left, lower)
     if (data.org.reportFooterText) {
       page.drawText(data.org.reportFooterText.slice(0, 100), {
         x: MARGIN_LEFT,
         y: 15,
-        size: 7,
+        size: FONT_SIZE_TINY,
         font: ctx.fontRegular,
         color: COLOUR_GREY,
       });
     }
 
-    // Generated by line
-    page.drawText('Generated by InspectVoice — inspectvoice.co.uk', {
-      x: PAGE_WIDTH / 2 - 85,
+    // Generated by line (centre, lower)
+    const genText = 'Generated by InspectVoice — inspectvoice.co.uk';
+    const genWidth = ctx.fontRegular.widthOfTextAtSize(genText, FONT_SIZE_TINY);
+    page.drawText(genText, {
+      x: (PAGE_WIDTH - genWidth) / 2,
       y: 15,
-      size: 7,
+      size: FONT_SIZE_TINY,
       font: ctx.fontRegular,
       color: COLOUR_GREY,
     });
@@ -593,11 +928,15 @@ function drawFooterOnAllPages(ctx: DrawContext, data: PdfReportData): void {
 // HELPERS
 // =============================================
 
+function hasRecommendations(data: PdfReportData): boolean {
+  return data.items.some((item) => item.recommendations.length > 0 || item.complianceNotes.length > 0);
+}
+
 function getRiskColour(rating: string): ReturnType<typeof rgb> {
   switch (rating) {
     case 'very_high': return COLOUR_RED;
     case 'high': return COLOUR_AMBER;
-    case 'medium': return rgb(0.7, 0.5, 0.0);
+    case 'medium': return COLOUR_YELLOW;
     case 'low': return COLOUR_GREEN;
     default: return COLOUR_DARK_GREY;
   }
@@ -606,11 +945,26 @@ function getRiskColour(rating: string): ReturnType<typeof rgb> {
 function getConditionColour(condition: string | null): ReturnType<typeof rgb> {
   switch (condition) {
     case 'good': return COLOUR_GREEN;
-    case 'fair': return rgb(0.7, 0.5, 0.0);
+    case 'fair': return COLOUR_YELLOW;
     case 'poor': return COLOUR_AMBER;
     case 'dangerous': return COLOUR_RED;
     default: return COLOUR_DARK_GREY;
   }
+}
+
+function getInspectionTypeLabel(type: string): string {
+  return {
+    routine_visual: 'Routine Visual Inspection',
+    operational: 'Operational Inspection',
+    annual_main: 'Annual Main Inspection',
+    post_repair: 'Post-Repair Inspection',
+    ad_hoc: 'Ad Hoc Inspection',
+  }[type] ?? type;
+}
+
+/** Format snake_case enum values for display: "very_high" → "Very High" */
+function formatEnum(value: string): string {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function formatDate(iso: string): string {

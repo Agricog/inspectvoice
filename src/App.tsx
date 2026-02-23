@@ -11,6 +11,7 @@ import { SiteForm } from '@pages/SiteForm';
 import { SiteDetail } from '@pages/SiteDetail';
 import AssetForm from '@pages/AssetForm';
 import AssetDetail from '@pages/AssetDetail';
+import InspectionStart from '@pages/InspectionStart';
 
 // =============================================
 // PLACEHOLDER PAGES (will be replaced)
@@ -82,6 +83,7 @@ export function App(): JSX.Element {
             <Route path="/sites/:siteId/assets/new" element={<AssetForm />} />
             <Route path="/sites/:siteId/assets/:assetId" element={<AssetDetail />} />
             <Route path="/sites/:siteId/assets/:assetId/edit" element={<AssetForm />} />
+            <Route path="/sites/:siteId/inspect/new" element={<InspectionStart />} />
 
             {/* Inspections (placeholder) */}
             <Route path="/inspections" element={<InspectionsList />} />

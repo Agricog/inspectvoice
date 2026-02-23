@@ -59,17 +59,17 @@ export async function handleClerkWebhook(
   // ── Step 3: Check WEBHOOKS_PAUSED ──
   if (ctx.env.WEBHOOKS_PAUSED === 'true') {
     logger.info('Webhooks paused — logged but not processed', { eventId: event.id });
-    await markEventProcessed(ctx, event.id, 'clerk');
+    await markEventProcessed(ctx, event.id);
     return jsonResponse({ success: true, message: 'Logged (paused)' }, ctx.requestId);
   }
 
   // ── Step 4: Process event ──
   try {
     await processClerkEvent(event, ctx, logger);
-    await markEventProcessed(ctx, event.id, 'clerk');
+    await markEventProcessed(ctx, event.id);
   } catch (error) {
     logger.error('Clerk event processing failed', error, { eventId: event.id });
-    await markEventFailed(ctx, event.id, 'clerk');
+    await markEventFailed(ctx, event.id, 'Clerk event processing failed');
     throw error;
   }
 
@@ -171,31 +171,31 @@ async function processClerkEvent(
 ): Promise<void> {
   switch (event.type) {
     case 'user.created':
-      await handleUserCreated(event.data as ClerkUser, ctx, logger);
+      await handleUserCreated(event.data as unknown as ClerkUser, ctx, logger);
       break;
 
     case 'user.updated':
-      await handleUserUpdated(event.data as ClerkUser, ctx, logger);
+      await handleUserUpdated(event.data as unknown as ClerkUser, ctx, logger);
       break;
 
     case 'user.deleted':
-      await handleUserDeleted(event.data as ClerkUser, ctx, logger);
+      await handleUserDeleted(event.data as unknown as ClerkUser, ctx, logger);
       break;
 
     case 'organization.created':
-      await handleOrgCreated(event.data as ClerkOrganization, ctx, logger);
+      await handleOrgCreated(event.data as unknown as ClerkOrganization, ctx, logger);
       break;
 
     case 'organization.updated':
-      await handleOrgUpdated(event.data as ClerkOrganization, ctx, logger);
+      await handleOrgUpdated(event.data as unknown as ClerkOrganization, ctx, logger);
       break;
 
     case 'organizationMembership.created':
-      await handleMembershipCreated(event.data as ClerkMembership, ctx, logger);
+      await handleMembershipCreated(event.data as unknown as ClerkMembership, ctx, logger);
       break;
 
     case 'organizationMembership.deleted':
-      await handleMembershipDeleted(event.data as ClerkMembership, ctx, logger);
+      await handleMembershipDeleted(event.data as unknown as ClerkMembership, ctx, logger);
       break;
 
     default:

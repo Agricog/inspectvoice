@@ -37,18 +37,18 @@ export async function claimWebhookEvent(
     const { neon } = await import('@neondatabase/serverless');
     const sql = neon(ctx.env.DATABASE_URL);
 
-    // Attempt to insert — if the event_id already exists, the unique constraint
-    // will cause this to fail, and we catch it below.
-    // Using ON CONFLICT DO NOTHING for atomic check-and-claim.
+    // Attempt to insert — if the (id, source) already exists, ON CONFLICT skips.
+    // RETURNING id tells us if the row was actually inserted.
     const result = await sql(
-      `INSERT INTO webhook_events (event_id, source, status, request_id, received_at)
-       VALUES ($1, $2, 'processing', $3, NOW())
-       ON CONFLICT (event_id) DO NOTHING`,
-      [eventId, source, ctx.requestId],
+      `INSERT INTO webhook_events (id, source, status, received_at)
+       VALUES ($1, $2, 'processing', NOW())
+       ON CONFLICT (id, source) DO NOTHING
+       RETURNING id`,
+      [eventId, source],
     );
 
-    // If rowCount is 0, the event already existed (duplicate)
-    if (result.rowCount === 0) {
+    // If result array is empty, the event already existed (duplicate)
+    if (result.length === 0) {
       logger.info('Duplicate webhook event skipped', {
         eventId,
         source,
@@ -87,7 +87,7 @@ export async function markEventProcessed(
     await sql(
       `UPDATE webhook_events
        SET status = 'completed', processed_at = NOW()
-       WHERE event_id = $1`,
+       WHERE id = $1`,
       [eventId],
     );
   } catch (error) {
@@ -105,7 +105,7 @@ export async function markEventProcessed(
 export async function markEventFailed(
   ctx: WebhookContext,
   eventId: string,
-  errorMessage: string,
+  _errorMessage: string,
 ): Promise<void> {
   try {
     const { neon } = await import('@neondatabase/serverless');
@@ -113,9 +113,9 @@ export async function markEventFailed(
 
     await sql(
       `UPDATE webhook_events
-       SET status = 'failed', error = $2, processed_at = NOW()
-       WHERE event_id = $1`,
-      [eventId, errorMessage.slice(0, 1000)],
+       SET status = 'failed', processed_at = NOW()
+       WHERE id = $1`,
+      [eventId],
     );
   } catch (error) {
     const logger = Logger.fromWebhookContext(ctx);
@@ -147,11 +147,12 @@ export async function purgeOldWebhookEvents(
 
     const result = await sql(
       `DELETE FROM webhook_events
-       WHERE received_at < NOW() - INTERVAL '1 day' * $1`,
+       WHERE received_at < NOW() - INTERVAL '1 day' * $1
+       RETURNING id`,
       [retentionDays],
     );
 
-    return result.rowCount;
+    return result.length;
   } catch {
     return 0;
   }

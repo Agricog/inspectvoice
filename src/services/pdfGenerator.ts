@@ -26,16 +26,13 @@ import {
 } from 'pdf-lib';
 
 import {
-  InspectionType,
   INSPECTION_TYPE_LABELS,
   INSPECTION_TYPE_DESCRIPTIONS,
   RiskRating,
   RISK_RATING_LABELS,
   ConditionRating,
   CONDITION_LABELS,
-  ActionTimeframe,
   ACTION_TIMEFRAME_LABELS,
-  CostBand,
   COST_BAND_LABELS,
   InspectionStatus,
   INSPECTION_STATUS_LABELS,
@@ -1366,7 +1363,7 @@ export async function generateReportBlob(data: ReportData): Promise<{
 }> {
   const report = await generateInspectionReport(data);
 
-  const blob = new Blob([report.pdfBytes], { type: 'application/pdf' });
+  const blob = new Blob([report.pdfBytes.buffer], { type: 'application/pdf' });
 
   return {
     blob,

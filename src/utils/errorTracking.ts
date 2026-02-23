@@ -84,6 +84,14 @@ interface ErrorContext {
   operation: string;
   /** Additional context (no PII) */
   metadata?: Record<string, string | number | boolean>;
+  /** Entity ID for sync operations */
+  entityId?: string;
+  /** Retry attempt number */
+  attempt?: number;
+  /** Whether this is a non-retryable client error */
+  isClientError?: boolean;
+  /** Operation types that failed (for dead-letter reporting) */
+  failedTypes?: string[];
 }
 
 /** Report a caught error with structured context */

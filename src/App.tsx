@@ -15,28 +15,11 @@ import InspectionReview from '@pages/InspectionReview';
 import InspectionCapture from '@pages/InspectionCapture';
 import { InspectionList } from '@pages/InspectionList';
 import { DefectTracker } from '@pages/DefectTracker';
+import { ManagerDashboard } from '@pages/ManagerDashboard';
 
 // =============================================
 // PLACEHOLDER PAGES (will be replaced)
 // =============================================
-
-function Dashboard(): JSX.Element {
-  return (
-    <div className="text-center py-16">
-      <h1 className="text-xl font-semibold text-iv-text mb-2">InspectVoice Dashboard</h1>
-      <p className="text-sm text-iv-muted">Coming soon — risk overview, compliance calendar, recent activity.</p>
-    </div>
-  );
-}
-
-function DefectsList(): JSX.Element {
-  return (
-    <div className="text-center py-16">
-      <h1 className="text-xl font-semibold text-iv-text mb-2">Defect Tracker</h1>
-      <p className="text-sm text-iv-muted">Coming soon — open defects, assigned actions, resolution tracking.</p>
-    </div>
-  );
-}
 
 function SettingsPage(): JSX.Element {
   return (
@@ -67,7 +50,7 @@ export function App(): JSX.Element {
         <Routes>
           <Route element={<Layout />}>
             {/* Dashboard */}
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<ManagerDashboard />} />
 
             {/* Sites */}
             <Route path="/sites" element={<SiteList />} />
@@ -84,8 +67,7 @@ export function App(): JSX.Element {
             {/* Inspections */}
             <Route path="/inspections" element={<InspectionList />} />
 
-            {/* Defects (placeholder) */}
-            <Route path="/defects" element={<DefectsList />} />
+            {/* Defects */}
             <Route path="/defects" element={<DefectTracker />} />
 
             {/* Settings (placeholder) */}

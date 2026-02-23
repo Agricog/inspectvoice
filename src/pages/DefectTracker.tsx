@@ -40,10 +40,9 @@ import {
   User,
   Calendar,
   PoundSterling,
-  FileText,
-  CircleAlert,
-  CircleCheck,
-  CirclePause,
+  AlertCircle,
+  CheckCircle,
+  PauseCircle,
   CircleDot,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
@@ -55,7 +54,6 @@ import {
   DEFECT_STATUS_LABELS,
   RISK_RATING_LABELS,
   ACTION_TIMEFRAME_LABELS,
-  COST_BAND_LABELS,
 } from '@/types/enums';
 
 // =============================================
@@ -97,14 +95,14 @@ type SortOrder = 'asc' | 'desc';
 
 const PAGE_SIZE = 20;
 
-const STATUS_STYLES: Record<DefectStatus, { bg: string; text: string; icon: typeof CircleAlert }> = {
-  [DefectStatus.OPEN]: { bg: 'bg-red-500/15', text: 'text-red-400', icon: CircleAlert },
+const STATUS_STYLES: Record<DefectStatus, { bg: string; text: string; icon: typeof AlertCircle }> = {
+  [DefectStatus.OPEN]: { bg: 'bg-red-500/15', text: 'text-red-400', icon: AlertCircle },
   [DefectStatus.ASSIGNED]: { bg: 'bg-orange-500/15', text: 'text-orange-400', icon: CircleDot },
   [DefectStatus.IN_PROGRESS]: { bg: 'bg-iv-accent/15', text: 'text-iv-accent', icon: Clock },
-  [DefectStatus.RESOLVED]: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', icon: CircleCheck },
-  [DefectStatus.VERIFIED]: { bg: 'bg-emerald-600/15', text: 'text-emerald-300', icon: CircleCheck },
-  [DefectStatus.DEFERRED]: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', icon: CirclePause },
-  [DefectStatus.NOT_ACTIONED]: { bg: 'bg-iv-muted/15', text: 'text-iv-muted', icon: CirclePause },
+  [DefectStatus.RESOLVED]: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', icon: CheckCircle },
+  [DefectStatus.VERIFIED]: { bg: 'bg-emerald-600/15', text: 'text-emerald-300', icon: CheckCircle },
+  [DefectStatus.DEFERRED]: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', icon: PauseCircle },
+  [DefectStatus.NOT_ACTIONED]: { bg: 'bg-iv-muted/15', text: 'text-iv-muted', icon: PauseCircle },
 };
 
 const SEVERITY_STYLES: Record<RiskRating, { bg: string; text: string; dot: string }> = {
@@ -217,7 +215,7 @@ function DueDateIndicator({ dueDate, status }: { dueDate: string | null; status:
 
   return (
     <span className={`inline-flex items-center gap-1 text-xs font-medium ${colorClass}`}>
-      {!isTerminal && info.isOverdue && <CircleAlert className="w-3 h-3" />}
+      {!isTerminal && info.isOverdue && <AlertCircle className="w-3 h-3" />}
       {info.label}
     </span>
   );

@@ -2,7 +2,6 @@
  * InspectVoice — App Root
  * Route definitions with Layout shell.
  */
-
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import { Layout } from '@components/Layout';
@@ -13,6 +12,7 @@ import AssetForm from '@pages/AssetForm';
 import AssetDetail from '@pages/AssetDetail';
 import InspectionStart from '@pages/InspectionStart';
 import InspectionReview from '@pages/InspectionReview';
+import InspectionCapture from '@pages/InspectionCapture';
 import { InspectionList } from '@pages/InspectionList';
 
 // =============================================
@@ -24,15 +24,6 @@ function Dashboard(): JSX.Element {
     <div className="text-center py-16">
       <h1 className="text-xl font-semibold text-iv-text mb-2">InspectVoice Dashboard</h1>
       <p className="text-sm text-iv-muted">Coming soon — risk overview, compliance calendar, recent activity.</p>
-    </div>
-  );
-}
-
-function InspectionsList(): JSX.Element {
-  return (
-    <div className="text-center py-16">
-      <h1 className="text-xl font-semibold text-iv-text mb-2">Inspections</h1>
-      <p className="text-sm text-iv-muted">Coming soon — inspection list, drafts, completed reports.</p>
     </div>
   );
 }
@@ -87,10 +78,10 @@ export function App(): JSX.Element {
             <Route path="/sites/:siteId/assets/:assetId/edit" element={<AssetForm />} />
             <Route path="/sites/:siteId/inspect/new" element={<InspectionStart />} />
             <Route path="/sites/:siteId/inspections/:inspectionId/review" element={<InspectionReview />} />
-            
+            <Route path="/sites/:siteId/inspections/:inspectionId/capture" element={<InspectionCapture />} />
 
-            {/* Inspections (placeholder) */}
-            <Route path="/inspections" element={<InspectionsList />} />
+            {/* Inspections */}
+            <Route path="/inspections" element={<InspectionList />} />
 
             {/* Defects (placeholder) */}
             <Route path="/defects" element={<DefectsList />} />

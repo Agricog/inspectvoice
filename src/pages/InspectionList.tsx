@@ -51,7 +51,6 @@ import {
   INSPECTION_STATUS_LABELS,
   INSPECTION_TYPE_LABELS,
   RISK_RATING_LABELS,
-  RISK_RATING_ORDER,
 } from '@/types/enums';
 
 // =============================================
@@ -756,7 +755,7 @@ export function InspectionList(): JSX.Element {
           <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 text-center">
             <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
             <p className="text-sm font-medium text-red-400 mb-1">Failed to load inspections</p>
-            <p className="text-xs text-iv-muted mb-4">{error}</p>
+            <p className="text-xs text-iv-muted mb-4">{error.message}</p>
             <button
               type="button"
               onClick={refetch}

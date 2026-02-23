@@ -44,18 +44,17 @@ import {
   Edit,
 } from 'lucide-react';
 
-import { inspections, inspectionItems, assetsCache } from '@services/offlineStore';
+import { inspections, inspectionItems } from '@services/offlineStore';
 import { captureError } from '@utils/errorTracking';
 import {
   InspectionStatus,
-  InspectionType,
   INSPECTION_TYPE_LABELS,
   ConditionRating,
   CONDITION_LABELS,
   RiskRating,
   RISK_RATING_LABELS,
 } from '@/types';
-import type { Inspection, InspectionItem, Asset } from '@/types';
+import type { Inspection, InspectionItem } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
 
 // =============================================
@@ -154,12 +153,10 @@ function RiskSummaryCard({
 
 function AssetResultCard({
   item,
-  asset,
   siteId,
   inspectionId,
 }: {
   item: InspectionItem;
-  asset: Asset | undefined;
   siteId: string;
   inspectionId: string;
 }): JSX.Element {
@@ -309,7 +306,6 @@ export default function InspectionReview(): JSX.Element {
   // ---- Data ----
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [items, setItems] = useState<InspectionItem[]>([]);
-  const [assetMap, setAssetMap] = useState<Map<string, Asset>>(new Map());
 
   // ---- Form ----
   const [summary, setSummary] = useState('');
@@ -330,10 +326,9 @@ export default function InspectionReview(): JSX.Element {
 
     async function loadData(): Promise<void> {
       try {
-        const [localInspection, localItems, cachedAssets] = await Promise.all([
+        const [localInspection, localItems] = await Promise.all([
           inspections.get(inspectionId!),
           inspectionItems.getByInspection(inspectionId!),
-          assetsCache.getBySite(siteId!),
         ]);
 
         if (cancelled) return;
@@ -350,20 +345,12 @@ export default function InspectionReview(): JSX.Element {
         const itemList = localItems.map((li) => li.data);
         setItems(itemList);
 
-        // Build asset lookup
-        const aMap = new Map<string, Asset>();
-        for (const ca of cachedAssets) {
-          aMap.set(ca.data.id, ca.data);
-          aMap.set(ca.data.asset_code, ca.data);
-        }
-        setAssetMap(aMap);
-
         // Pre-fill from existing inspection data
         if (insp.inspector_summary) setSummary(insp.inspector_summary);
         if (insp.closure_recommended) setClosureRecommended(true);
         if (insp.closure_reason) setClosureReason(insp.closure_reason);
         if (insp.signed_by) setSignedByName(insp.signed_by);
-        if (insp.status === InspectionStatus.COMPLETED) setCompleted(true);
+        if (insp.status === InspectionStatus.SIGNED) setCompleted(true);
 
         setLoading(false);
       } catch (error) {
@@ -413,9 +400,8 @@ export default function InspectionReview(): JSX.Element {
       const startedAt = inspection.started_at ? new Date(inspection.started_at).getTime() : Date.now();
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000);
 
-      const updatedInspection: Inspection = {
-        ...inspection,
-        status: InspectionStatus.COMPLETED,
+      const updatedData: Partial<Inspection> = {
+        status: InspectionStatus.SIGNED,
         completed_at: now,
         duration_minutes: durationMinutes,
         inspector_summary: summary || null,
@@ -432,9 +418,11 @@ export default function InspectionReview(): JSX.Element {
         updated_at: now,
       };
 
-      await inspections.update(updatedInspection);
+      const result = await inspections.update(inspectionId, updatedData);
 
-      setInspection(updatedInspection);
+      if (result) {
+        setInspection(result.data);
+      }
       setCompleted(true);
     } catch (error) {
       captureError(error, { module: 'InspectionReview', operation: 'signOff' });
@@ -647,7 +635,6 @@ export default function InspectionReview(): JSX.Element {
               <AssetResultCard
                 key={item.id}
                 item={item}
-                asset={assetMap.get(item.asset_id ?? '') ?? assetMap.get(item.asset_code)}
                 siteId={siteId}
                 inspectionId={inspectionId}
               />

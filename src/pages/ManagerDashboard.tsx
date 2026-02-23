@@ -130,14 +130,6 @@ const STATUS_STYLES: Record<InspectionStatus, { bg: string; text: string }> = {
 // HELPER FUNCTIONS
 // =============================================
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
 function formatShortDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-GB', {
     day: 'numeric',

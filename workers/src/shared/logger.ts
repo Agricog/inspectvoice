@@ -275,13 +275,13 @@ export class Logger {
 
     // Attach scrubbed data if provided
     if (data && Object.keys(data).length > 0) {
-      (entry as Record<string, unknown>).data = scrubSensitiveData(data);
+      (entry as unknown as Record<string, unknown>)['data'] = scrubSensitiveData(data);
     }
 
     // Attach error details if provided (never log full stack in production for 4xx)
     if (error) {
       const errorInfo = extractErrorInfo(error);
-      (entry as Record<string, unknown>).error = errorInfo;
+      (entry as unknown as Record<string, unknown>)['error'] = errorInfo;
     }
 
     this.write(entry);

@@ -16,19 +16,11 @@ import InspectionCapture from '@pages/InspectionCapture';
 import { InspectionList } from '@pages/InspectionList';
 import { DefectTracker } from '@pages/DefectTracker';
 import { ManagerDashboard } from '@pages/ManagerDashboard';
+import { SettingsPage } from '@pages/SettingsPage';
 
 // =============================================
-// PLACEHOLDER PAGES (will be replaced)
+// 404
 // =============================================
-
-function SettingsPage(): JSX.Element {
-  return (
-    <div className="text-center py-16">
-      <h1 className="text-xl font-semibold text-iv-text mb-2">Settings</h1>
-      <p className="text-sm text-iv-muted">Coming soon — profile, credentials, organisation, subscription.</p>
-    </div>
-  );
-}
 
 function NotFound(): JSX.Element {
   return (
@@ -70,7 +62,7 @@ export function App(): JSX.Element {
             {/* Defects */}
             <Route path="/defects" element={<DefectTracker />} />
 
-            {/* Settings (placeholder) */}
+            {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />
 
             {/* 404 */}

@@ -5,7 +5,10 @@
  * Pipeline:
  *   Inspector's voice notes (transcript from Deepgram)
  *   + Asset type config (inspection points, risk criteria, BS EN refs)
- *   → Claude Sonnet 4 analysis
+ *   → Transcript pre-processing (STT artifact cleanup)
+ *   → Input validation
+ *   → Claude Sonnet 4 analysis (with retries)
+ *   → Strict response validation
  *   → Structured AIAnalysisResult (defects, condition, risk rating, recommendations)
  *
  * The asset type configurations are embedded from src/config/assetTypes.ts.
@@ -15,7 +18,7 @@
  */
 
 import { Logger } from '../shared/logger';
-import { BadGatewayError } from '../shared/errors';
+import { BadGatewayError, BadRequestError } from '../shared/errors';
 
 // =============================================
 // CONFIGURATION
@@ -26,6 +29,18 @@ const MODEL = 'claude-sonnet-4-20250514';
 const MAX_TOKENS = 4096;
 const TEMPERATURE = 0.1; // Low temperature for consistent, factual analysis
 const REQUEST_TIMEOUT_MS = 60_000;
+
+/** Minimum transcript length worth analysing (characters) */
+const MIN_TRANSCRIPT_LENGTH = 20;
+
+/** Maximum transcript length to send (safety limit, ~12k words) */
+const MAX_TRANSCRIPT_LENGTH = 50_000;
+
+/** Maximum retries on transient Claude API failures */
+const MAX_RETRIES = 2;
+
+/** Base delay between retries in ms (multiplied by attempt number) */
+const RETRY_DELAY_MS = 2_000;
 
 // =============================================
 // TYPES — mirrors src/config/assetTypes.ts
@@ -75,6 +90,7 @@ export interface AIAnalysisResult {
   readonly recommendations: readonly string[];
   readonly closureRecommended: boolean;
   readonly complianceNotes: readonly string[];
+  readonly tokenUsage: { readonly input: number; readonly output: number };
 }
 
 export interface AIDefect {
@@ -97,7 +113,8 @@ export interface AIDefect {
  * @param input — transcript + asset context
  * @param apiKey — Anthropic API key
  * @returns Validated AIAnalysisResult
- * @throws BadGatewayError if Claude API is unavailable
+ * @throws BadRequestError if input is invalid
+ * @throws BadGatewayError if Claude API is unavailable after retries
  */
 export async function analyseTranscript(
   input: AnalysisInput,
@@ -105,22 +122,50 @@ export async function analyseTranscript(
 ): Promise<AIAnalysisResult> {
   const logger = Logger.minimal(input.requestId);
 
+  // ── Input validation ─────────────────────
+  const cleanedTranscript = preprocessTranscript(input.transcript);
+
+  if (cleanedTranscript.length < MIN_TRANSCRIPT_LENGTH) {
+    logger.warn('Transcript too short for analysis', {
+      originalLength: input.transcript.length,
+      cleanedLength: cleanedTranscript.length,
+      assetCode: input.assetCode,
+    });
+    throw new BadRequestError(
+      `Transcript too short for meaningful analysis (${cleanedTranscript.length} chars, minimum ${MIN_TRANSCRIPT_LENGTH})`,
+    );
+  }
+
+  if (cleanedTranscript.length > MAX_TRANSCRIPT_LENGTH) {
+    logger.warn('Transcript truncated to maximum length', {
+      originalLength: cleanedTranscript.length,
+      maxLength: MAX_TRANSCRIPT_LENGTH,
+    });
+  }
+
+  const transcript = cleanedTranscript.slice(0, MAX_TRANSCRIPT_LENGTH);
+
   logger.info('Starting AI analysis', {
     assetCode: input.assetCode,
     assetType: input.assetType,
     inspectionType: input.inspectionType,
-    transcriptLength: input.transcript.length,
+    transcriptLength: transcript.length,
+    originalLength: input.transcript.length,
   });
 
-  // Resolve asset config — falls back to generic if unknown type
+  // ── Resolve asset config ─────────────────
   const assetConfig = getWorkerAssetConfig(input.assetType);
 
-  // Filter inspection points to those applicable to this inspection type
   const applicablePoints = assetConfig.inspectionPoints.filter(
     (p) => p.appliesTo.includes(input.inspectionType),
   );
 
-  const prompt = buildPrompt(input, assetConfig, applicablePoints);
+  // ── Build prompt ─────────────────────────
+  const prompt = buildPrompt(
+    { ...input, transcript },
+    assetConfig,
+    applicablePoints,
+  );
 
   const requestBody = {
     model: MODEL,
@@ -132,51 +177,127 @@ export async function analyseTranscript(
     system: buildSystemPrompt(),
   };
 
-  try {
-    const response = await fetchWithTimeout(ANTHROPIC_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(requestBody),
-    }, REQUEST_TIMEOUT_MS);
+  // ── Call Claude with retries ─────────────
+  let lastError: Error | null = null;
 
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => 'Unknown');
-      logger.error('Claude API error', null, {
-        status: response.status,
-        error: errorBody.slice(0, 500),
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      logger.info('Retrying Claude API call', { attempt });
+      await delay(RETRY_DELAY_MS * attempt);
+    }
+
+    try {
+      const response = await fetchWithTimeout(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(requestBody),
+      }, REQUEST_TIMEOUT_MS);
+
+      // Don't retry on 4xx client errors
+      if (response.status >= 400 && response.status < 500) {
+        const errorBody = await response.text().catch(() => 'Unknown');
+        logger.error('Claude API client error (not retrying)', null, {
+          status: response.status,
+          error: errorBody.slice(0, 500),
+        });
+        throw new BadGatewayError(`Claude API error: ${response.status}`);
+      }
+
+      // Retry on 5xx server errors
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'Unknown');
+        lastError = new Error(`Claude ${response.status}: ${errorBody.slice(0, 200)}`);
+        logger.warn('Claude API server error (will retry)', {
+          attempt,
+          status: response.status,
+        });
+        continue;
+      }
+
+      const data = await response.json() as ClaudeResponse;
+      const textBlock = data.content?.find((block) => block.type === 'text');
+
+      if (!textBlock || !textBlock.text) {
+        throw new BadGatewayError('Claude returned empty response');
+      }
+
+      const inputTokens = data.usage?.input_tokens ?? 0;
+      const outputTokens = data.usage?.output_tokens ?? 0;
+
+      const result = parseAnalysisResponse(textBlock.text, input.requestId, {
+        input: inputTokens,
+        output: outputTokens,
       });
-      throw new BadGatewayError(`Claude API error: ${response.status}`);
+
+      logger.info('AI analysis complete', {
+        overallCondition: result.overallCondition,
+        riskRating: result.riskRating,
+        defectCount: result.defects.length,
+        closureRecommended: result.closureRecommended,
+        model: MODEL,
+        inputTokens,
+        outputTokens,
+        estimatedCostUSD: estimateTokenCost(inputTokens, outputTokens),
+      });
+
+      return result;
+    } catch (error) {
+      if (error instanceof BadGatewayError || error instanceof BadRequestError) {
+        throw error;
+      }
+
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+      logger.warn('Claude API call failed', {
+        attempt,
+        error: lastError.message,
+      });
     }
-
-    const data = await response.json() as ClaudeResponse;
-    const textBlock = data.content?.find((block) => block.type === 'text');
-
-    if (!textBlock || !textBlock.text) {
-      throw new BadGatewayError('Claude returned empty response');
-    }
-
-    const result = parseAnalysisResponse(textBlock.text, input.requestId);
-
-    logger.info('AI analysis complete', {
-      overallCondition: result.overallCondition,
-      riskRating: result.riskRating,
-      defectCount: result.defects.length,
-      closureRecommended: result.closureRecommended,
-      model: MODEL,
-      inputTokens: data.usage?.input_tokens,
-      outputTokens: data.usage?.output_tokens,
-    });
-
-    return result;
-  } catch (error) {
-    if (error instanceof BadGatewayError) throw error;
-    logger.error('AI analysis failed', error);
-    throw new BadGatewayError('AI analysis service unavailable');
   }
+
+  // All retries exhausted
+  logger.error('Claude API failed after retries', lastError);
+  throw new BadGatewayError('AI analysis service unavailable');
+}
+
+// =============================================
+// TRANSCRIPT PRE-PROCESSING
+// =============================================
+
+/**
+ * Clean common speech-to-text artifacts from Deepgram output
+ * before sending to Claude for analysis.
+ *
+ * - Removes filler words that add no informational content
+ * - Collapses repeated words/phrases (STT stutter artifacts)
+ * - Normalises excessive whitespace
+ * - Preserves all technical content and meaning
+ */
+function preprocessTranscript(raw: string): string {
+  let text = raw.trim();
+
+  // Remove common filler words/phrases (case-insensitive, word boundaries)
+  const fillers = [
+    /\b(um|uh|erm|er|hmm|ah|oh)\b/gi,
+    /\b(you know|i mean|like i said|sort of|kind of)\b/gi,
+    /\b(basically|obviously|actually|literally)\b/gi,
+  ];
+  for (const pattern of fillers) {
+    text = text.replace(pattern, '');
+  }
+
+  // Collapse repeated consecutive words (STT stutter: "the the", "and and")
+  text = text.replace(/\b(\w+)\s+\1\b/gi, '$1');
+
+  // Normalise whitespace (collapse multiple spaces, trim around punctuation)
+  text = text.replace(/\s{2,}/g, ' ');
+  text = text.replace(/\s+([.,;:!?])/g, '$1');
+  text = text.trim();
+
+  return text;
 }
 
 // =============================================
@@ -184,15 +305,64 @@ export async function analyseTranscript(
 // =============================================
 
 function buildSystemPrompt(): string {
-  return `You are an expert playground safety inspector AI assistant for InspectVoice, a UK-based inspection management platform. You analyse voice-recorded inspection notes and produce structured defect assessments compliant with BS EN 1176 (playground equipment safety) and BS EN 1177 (impact attenuation).
+  return `You are an expert UK playground safety inspector AI assistant for InspectVoice. You analyse voice-recorded field inspection notes and produce structured defect assessments compliant with BS EN 1176 (playground equipment safety), BS EN 1177 (impact attenuation), and BS EN 16630 (outdoor fitness equipment).
 
-Your analysis must be:
-- Factual and evidence-based (only report what the inspector described)
-- Compliant with UK playground safety standards (BS EN 1176 series, BS EN 1177, BS EN 16630)
-- Risk-rated using the standard four-tier system: very_high, high, medium, low
-- Actionable with specific timeframes and recommendations
+CRITICAL RULES — FOLLOW EVERY ONE WITHOUT EXCEPTION:
 
-You MUST respond with valid JSON only. No markdown, no explanation, no preamble. Just the JSON object.`;
+1. EVIDENCE-ONLY ANALYSIS
+   - Report ONLY defects that the inspector explicitly describes or clearly implies in their spoken notes.
+   - NEVER invent, assume, or extrapolate defects not mentioned in the transcript.
+   - If the inspector says the equipment looks fine with no issues, return overallCondition "good" with an empty defects array. Do NOT manufacture problems.
+
+2. HANDLING UNCLEAR TRANSCRIPTS
+   - Voice recordings are often informal, fragmented, or contain speech recognition errors.
+   - Interpret reasonable misspellings and colloquialisms: "dodgy" means defective, "shot" means severely worn/damaged, "knackered" means broken/non-functional, "iffy" means questionable condition.
+   - If a finding is genuinely ambiguous (you cannot determine what the inspector means), include it as a defect with severity "low" and note in the description that the finding needs inspector clarification.
+   - NEVER silently discard a finding because the wording is informal.
+
+3. PROFESSIONAL NARRATIVE
+   - Write all descriptions, summaries, and recommendations as if producing a formal inspection report for a UK council parks department.
+   - Use clear, factual, third-person language. Avoid colloquialisms in your output even though the input may contain them.
+   - Example input: "the swing chain's looking a bit dodgy, couple of links gone rusty"
+   - Example output description: "Corrosion observed on multiple chain links of the suspension system. Chain link integrity may be compromised."
+
+4. RISK RATING DISCIPLINE
+   - Use ONLY the risk criteria provided for the specific equipment type. Do not apply generic criteria.
+   - Risk ratings must be justified by what the inspector described, matched against the criteria.
+   - Do NOT inflate risk to seem thorough. Do NOT deflate risk to seem reassuring.
+   - When multiple defects exist, the overall risk rating equals the highest individual defect severity.
+
+5. BS EN CLAUSE REFERENCES
+   - Reference specific BS EN clauses from the provided defect categories when a defect clearly maps to one.
+   - If no specific clause applies, use the defect category name only (e.g. "General structural integrity") with bsEnReference set to null.
+   - NEVER fabricate clause numbers. Only use references from the provided list.
+
+6. ACTION TIMEFRAME ALIGNMENT
+   - very_high severity → "immediate" (closure/restriction required)
+   - high severity → "48_hours" (urgent action)
+   - medium severity → "1_week" or "1_month" depending on progression risk
+   - low severity → "next_inspection" or "routine"
+   - NEVER assign a relaxed timeframe to a high-severity defect.
+
+7. CLOSURE RECOMMENDATIONS
+   - Set closureRecommended to true ONLY for very_high risk situations where continued public use poses imminent danger of serious injury.
+   - This is a significant operational decision. Do not recommend closure lightly.
+
+8. COST ESTIMATES
+   - Provide realistic UK market rates for playground equipment repair/replacement in GBP.
+   - Format as a string: "£150-250" for ranges, "£500" for point estimates.
+   - Use null if you cannot reasonably estimate (e.g. specialist manufacturer repair).
+
+9. SINGLE ASSET FOCUS
+   - If the transcript mentions other equipment or general site observations, focus ONLY on the specified asset.
+   - Ignore findings about other assets entirely.
+
+10. COMPLETENESS AWARENESS
+    - After analysing the transcript, check the provided inspection points list.
+    - If the inspector has NOT mentioned a point that would normally be checked for this inspection type, include a compliance note: "Inspector did not comment on [inspection point] — consider verifying on site."
+    - This is a SOFT prompt only — do NOT create defects for un-mentioned items.
+
+You MUST respond with valid JSON only. No markdown fences, no explanation, no preamble, no trailing text. Output the JSON object and nothing else.`;
 }
 
 function buildPrompt(
@@ -201,48 +371,64 @@ function buildPrompt(
   applicablePoints: readonly WorkerInspectionPoint[],
 ): string {
   const inspectionTypeLabel = {
-    routine_visual: 'Routine Visual Inspection',
-    operational: 'Operational Inspection',
-    annual_main: 'Annual Main Inspection',
+    routine_visual: 'Routine Visual Inspection (quick walk-round check for obvious hazards)',
+    operational: 'Operational Inspection (detailed functional check of all moving parts and wear items)',
+    annual_main: 'Annual Main Inspection (comprehensive structural and compliance assessment)',
+  }[input.inspectionType];
+
+  const inspectionTypeDepth = {
+    routine_visual: 'Focus on visually obvious hazards only. Do not flag minor wear items unless they present an immediate safety concern.',
+    operational: 'Assess all functional and wear items. Flag deterioration that could become a hazard before the next operational inspection.',
+    annual_main: 'Full compliance assessment. Flag all defects regardless of severity. Note any gaps in inspection coverage.',
   }[input.inspectionType];
 
   return `Analyse this playground equipment inspection transcript and produce a structured defect assessment.
 
-## ASSET DETAILS
+## CONTEXT
 - Asset Code: ${input.assetCode}
 - Equipment Type: ${config.name} (${config.key})
 - Inspection Type: ${inspectionTypeLabel}
 - Applicable Standards: ${config.complianceStandard}
 
+## INSPECTION DEPTH GUIDANCE
+${inspectionTypeDepth}
+
 ## INSPECTION POINTS FOR THIS EQUIPMENT AND INSPECTION TYPE
-${applicablePoints.map((p, i) => `${i + 1}. **${p.label}** — ${p.description}`).join('\n')}
+These are the items an inspector should cover. Use them to identify what the inspector HAS and HAS NOT commented on.
+
+${applicablePoints.map((p, i) => `${i + 1}. ${p.label} — ${p.description}`).join('\n')}
 
 ## RISK CRITERIA FOR ${config.name.toUpperCase()}
+Use ONLY these criteria to assign risk ratings. Match the inspector's described conditions to the closest criteria.
 
-### Very High Risk (immediate closure/restriction required)
-${config.riskCriteria.very_high.map((c) => `- ${c}`).join('\n')}
+Very High Risk (immediate closure/restriction required):
+${config.riskCriteria.very_high.map((c) => `• ${c}`).join('\n')}
 
-### High Risk (urgent action within 48 hours)
-${config.riskCriteria.high.map((c) => `- ${c}`).join('\n')}
+High Risk (urgent action within 48 hours):
+${config.riskCriteria.high.map((c) => `• ${c}`).join('\n')}
 
-### Medium Risk (action within 1 month)
-${config.riskCriteria.medium.map((c) => `- ${c}`).join('\n')}
+Medium Risk (action within 1 month):
+${config.riskCriteria.medium.map((c) => `• ${c}`).join('\n')}
 
-### Low Risk (action at next scheduled maintenance)
-${config.riskCriteria.low.map((c) => `- ${c}`).join('\n')}
+Low Risk (action at next scheduled maintenance):
+${config.riskCriteria.low.map((c) => `• ${c}`).join('\n')}
 
-## BS EN DEFECT CATEGORIES FOR THIS EQUIPMENT
+## BS EN DEFECT CATEGORIES
+When a defect maps to one of these categories, use it as the defectCategory and include the clause reference in bsEnReference.
+
 ${config.bsEnDefectCategories.length > 0
-    ? config.bsEnDefectCategories.map((c) => `- ${c}`).join('\n')
-    : '- No specific BS EN categories (general duty of care applies)'}
+    ? config.bsEnDefectCategories.map((c) => `• ${c}`).join('\n')
+    : '• No specific BS EN categories for this equipment type. Use "General" as defectCategory with bsEnReference null.'}
 
 ## INSPECTOR'S VOICE TRANSCRIPT
+This is a cleaned transcription of the inspector's spoken field notes. It may be informal, fragmented, or contain speech recognition errors. Interpret professionally.
+
 """
 ${input.transcript}
 """
 
-## REQUIRED OUTPUT FORMAT
-Respond with a JSON object matching this exact schema:
+## REQUIRED OUTPUT
+Respond with a single JSON object matching this exact schema. No other text.
 
 {
   "overallCondition": "good" | "fair" | "poor" | "dangerous",
@@ -251,40 +437,34 @@ Respond with a JSON object matching this exact schema:
   "actionTimeframe": "immediate" | "48_hours" | "1_week" | "1_month" | "next_inspection" | "routine" | null,
   "defects": [
     {
-      "description": "Clear description of the defect",
+      "description": "Professional description of the defect (2-3 sentences, formal language)",
       "severity": "very_high" | "high" | "medium" | "low",
-      "defectCategory": "One of the BS EN defect categories listed above, or 'General' if none apply",
-      "bsEnReference": "Specific BS EN clause reference or null",
-      "actionRequired": "Specific remedial action needed",
+      "defectCategory": "BS EN defect category from list above, or 'General'",
+      "bsEnReference": "e.g. 'BS EN 1176-1:2017 §4.2.8.2' or null",
+      "actionRequired": "Specific remedial action (what exactly needs to be done)",
       "actionTimeframe": "immediate" | "48_hours" | "1_week" | "1_month" | "next_inspection" | "routine",
-      "estimatedRepairCost": "Rough GBP estimate or null"
+      "estimatedRepairCost": "e.g. '£150-250' or null"
     }
   ],
-  "summary": "2-3 sentence plain English summary of findings",
-  "recommendations": ["List of specific recommendations"],
+  "summary": "2-3 sentence professional summary of overall findings for the report executive summary",
+  "recommendations": ["Specific, actionable recommendations"],
   "closureRecommended": boolean,
-  "complianceNotes": ["References to specific BS EN clauses relevant to findings"]
-}
-
-RULES:
-1. Only report defects that are explicitly described or clearly implied in the transcript
-2. Do NOT invent defects that aren't mentioned
-3. If the transcript describes good condition with no issues, return overallCondition "good" with empty defects array
-4. Risk ratings must match the criteria provided above for this equipment type
-5. Every defect should reference a BS EN defect category from the list when applicable
-6. Closure recommendations only for very_high risk situations
-7. Cost estimates in GBP, or null if impossible to estimate
-8. Action timeframes must match severity: very_high=immediate, high=48_hours, medium=1_week or 1_month, low=next_inspection or routine`;
+  "complianceNotes": ["BS EN clause references relevant to findings, plus notes on inspection points not covered by the inspector"]
+}`;
 }
 
 // =============================================
 // RESPONSE PARSING & VALIDATION
 // =============================================
 
-function parseAnalysisResponse(text: string, requestId: string): AIAnalysisResult {
+function parseAnalysisResponse(
+  text: string,
+  requestId: string,
+  tokenUsage: { input: number; output: number },
+): AIAnalysisResult {
   const logger = Logger.minimal(requestId);
 
-  // Strip markdown code fences if Claude adds them
+  // Strip markdown code fences if Claude adds them despite instructions
   let cleaned = text.trim();
   if (cleaned.startsWith('```json')) {
     cleaned = cleaned.replace(/^```json\s*/, '').replace(/```\s*$/, '');
@@ -297,17 +477,31 @@ function parseAnalysisResponse(text: string, requestId: string): AIAnalysisResul
     parsed = JSON.parse(cleaned);
   } catch (error) {
     logger.error('Failed to parse AI response as JSON', error, {
-      responsePreview: cleaned.slice(0, 200),
+      responsePreview: cleaned.slice(0, 300),
     });
     throw new BadGatewayError('AI returned invalid JSON response');
   }
 
-  const overallCondition = validateEnumField(parsed, 'overallCondition', ['good', 'fair', 'poor', 'dangerous']);
-  const riskRating = validateEnumField(parsed, 'riskRating', ['very_high', 'high', 'medium', 'low']);
-  const requiresAction = typeof parsed['requiresAction'] === 'boolean' ? parsed['requiresAction'] : false;
-  const closureRecommended = typeof parsed['closureRecommended'] === 'boolean' ? parsed['closureRecommended'] : false;
-  const actionTimeframe = typeof parsed['actionTimeframe'] === 'string' ? parsed['actionTimeframe'] : null;
-  const summary = typeof parsed['summary'] === 'string' ? parsed['summary'] : 'No summary provided';
+  // Validate with safe defaults — defaults chosen to be cautiously middle-ground,
+  // not the most extreme value in either direction
+  const overallCondition = validateEnumField(
+    parsed, 'overallCondition', ['good', 'fair', 'poor', 'dangerous'], 'fair',
+  );
+  const riskRating = validateEnumField(
+    parsed, 'riskRating', ['very_high', 'high', 'medium', 'low'], 'medium',
+  );
+  const requiresAction = typeof parsed['requiresAction'] === 'boolean'
+    ? parsed['requiresAction']
+    : true; // Default to true (safer to flag than to miss)
+  const closureRecommended = typeof parsed['closureRecommended'] === 'boolean'
+    ? parsed['closureRecommended']
+    : false;
+  const actionTimeframe = typeof parsed['actionTimeframe'] === 'string'
+    ? parsed['actionTimeframe']
+    : null;
+  const summary = typeof parsed['summary'] === 'string' && parsed['summary'].length > 0
+    ? parsed['summary']
+    : 'AI analysis completed but no summary was generated. Manual review recommended.';
 
   const recommendations = Array.isArray(parsed['recommendations'])
     ? (parsed['recommendations'] as unknown[]).filter((r): r is string => typeof r === 'string')
@@ -317,49 +511,144 @@ function parseAnalysisResponse(text: string, requestId: string): AIAnalysisResul
     ? (parsed['complianceNotes'] as unknown[]).filter((n): n is string => typeof n === 'string')
     : [];
 
-  const rawDefects = Array.isArray(parsed['defects']) ? parsed['defects'] as Record<string, unknown>[] : [];
+  const rawDefects = Array.isArray(parsed['defects'])
+    ? parsed['defects'] as Record<string, unknown>[]
+    : [];
   const defects: AIDefect[] = rawDefects
     .map((d) => validateDefect(d))
     .filter((d): d is AIDefect => d !== null);
 
+  // Cross-validate: if defects exist but overallCondition is 'good', correct it
+  const correctedCondition = defects.length > 0 && overallCondition === 'good'
+    ? 'fair'
+    : overallCondition;
+
+  // Cross-validate: if any very_high defect exists, closureRecommended should be true
+  const hasVeryHigh = defects.some((d) => d.severity === 'very_high');
+  const correctedClosure = hasVeryHigh ? true : closureRecommended;
+
+  // Cross-validate: overall risk should match highest defect severity
+  const correctedRisk = defects.length > 0
+    ? deriveOverallRisk(defects)
+    : riskRating;
+
   return {
-    overallCondition: overallCondition as AIAnalysisResult['overallCondition'],
-    riskRating: riskRating as AIAnalysisResult['riskRating'],
-    requiresAction,
+    overallCondition: correctedCondition as AIAnalysisResult['overallCondition'],
+    riskRating: correctedRisk as AIAnalysisResult['riskRating'],
+    requiresAction: requiresAction || defects.length > 0,
     actionTimeframe,
     defects,
     summary,
     recommendations,
-    closureRecommended,
+    closureRecommended: correctedClosure,
     complianceNotes,
+    tokenUsage,
   };
 }
 
-function validateEnumField(obj: Record<string, unknown>, field: string, allowed: string[]): string {
+/**
+ * Validate a field against an enum list with an explicit safe default.
+ */
+function validateEnumField(
+  obj: Record<string, unknown>,
+  field: string,
+  allowed: string[],
+  defaultValue: string,
+): string {
   const value = obj[field];
   if (typeof value === 'string' && allowed.includes(value)) return value;
-  return allowed[allowed.length - 1] ?? '';
+  return defaultValue;
+}
+
+/**
+ * Derive overall risk rating from the highest-severity defect.
+ */
+function deriveOverallRisk(defects: readonly AIDefect[]): string {
+  const severityOrder: Record<string, number> = {
+    very_high: 4,
+    high: 3,
+    medium: 2,
+    low: 1,
+  };
+
+  let highest = 0;
+  let highestSeverity = 'low';
+
+  for (const defect of defects) {
+    const score = severityOrder[defect.severity] ?? 0;
+    if (score > highest) {
+      highest = score;
+      highestSeverity = defect.severity;
+    }
+  }
+
+  return highestSeverity;
 }
 
 function validateDefect(raw: Record<string, unknown>): AIDefect | null {
   if (!raw || typeof raw !== 'object') return null;
-  const description = typeof raw['description'] === 'string' ? raw['description'] : null;
-  if (!description) return null;
 
-  const severities = ['very_high', 'high', 'medium', 'low'];
-  const severity = typeof raw['severity'] === 'string' && severities.includes(raw['severity'])
+  const description = typeof raw['description'] === 'string' ? raw['description'].trim() : null;
+  if (!description || description.length < 5) return null;
+
+  const validSeverities = ['very_high', 'high', 'medium', 'low'];
+  const severity = typeof raw['severity'] === 'string' && validSeverities.includes(raw['severity'])
     ? raw['severity'] as AIDefect['severity']
-    : 'medium';
+    : 'medium'; // Default to medium, not low — safer to over-report
+
+  const validTimeframes = ['immediate', '48_hours', '1_week', '1_month', 'next_inspection', 'routine'];
+  const rawTimeframe = typeof raw['actionTimeframe'] === 'string' ? raw['actionTimeframe'] : '';
+
+  // Enforce timeframe-severity alignment
+  const actionTimeframe = validTimeframes.includes(rawTimeframe)
+    ? rawTimeframe
+    : severityToTimeframe(severity);
 
   return {
     description,
     severity,
-    defectCategory: typeof raw['defectCategory'] === 'string' ? raw['defectCategory'] : 'General',
-    bsEnReference: typeof raw['bsEnReference'] === 'string' ? raw['bsEnReference'] : null,
-    actionRequired: typeof raw['actionRequired'] === 'string' ? raw['actionRequired'] : 'Inspect and assess',
-    actionTimeframe: typeof raw['actionTimeframe'] === 'string' ? raw['actionTimeframe'] : 'next_inspection',
-    estimatedRepairCost: typeof raw['estimatedRepairCost'] === 'string' ? raw['estimatedRepairCost'] : null,
+    defectCategory: typeof raw['defectCategory'] === 'string' && raw['defectCategory'].length > 0
+      ? raw['defectCategory']
+      : 'General',
+    bsEnReference: typeof raw['bsEnReference'] === 'string' && raw['bsEnReference'].length > 0
+      ? raw['bsEnReference']
+      : null,
+    actionRequired: typeof raw['actionRequired'] === 'string' && raw['actionRequired'].length > 0
+      ? raw['actionRequired']
+      : 'Inspect and assess further — automated analysis requires confirmation.',
+    actionTimeframe,
+    estimatedRepairCost: typeof raw['estimatedRepairCost'] === 'string' && raw['estimatedRepairCost'].length > 0
+      ? raw['estimatedRepairCost']
+      : null,
   };
+}
+
+/**
+ * Map severity to the correct default timeframe when Claude returns an invalid one.
+ */
+function severityToTimeframe(severity: string): string {
+  switch (severity) {
+    case 'very_high': return 'immediate';
+    case 'high': return '48_hours';
+    case 'medium': return '1_month';
+    case 'low': return 'next_inspection';
+    default: return 'next_inspection';
+  }
+}
+
+// =============================================
+// TOKEN COST ESTIMATION
+// =============================================
+
+/**
+ * Estimate USD cost for Claude Sonnet 4 usage.
+ * Rates: $3/MTok input, $15/MTok output (as of 2025-Q1).
+ * Used for logging/monitoring — not for billing.
+ */
+function estimateTokenCost(inputTokens: number, outputTokens: number): string {
+  const inputCost = (inputTokens / 1_000_000) * 3;
+  const outputCost = (outputTokens / 1_000_000) * 15;
+  return `$${(inputCost + outputCost).toFixed(4)}`;
 }
 
 // =============================================
@@ -372,7 +661,7 @@ interface ClaudeResponse {
 }
 
 // =============================================
-// FETCH WITH TIMEOUT
+// HELPERS
 // =============================================
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -390,6 +679,10 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // =============================================
 // ASSET TYPE CONFIG LOOKUP
 // =============================================
@@ -404,7 +697,7 @@ export function getWorkerAssetConfig(assetType: string): WorkerAssetTypeConfig {
   return {
     key: assetType,
     name: assetType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-    complianceStandard: 'General duty of care',
+    complianceStandard: 'General duty of care — no specific BS EN standard applies',
     inspectionPoints: [
       { label: 'Overall structural integrity', description: 'Check all structural members for damage, corrosion, stability.', appliesTo: ['routine_visual', 'operational', 'annual_main'] },
       { label: 'Surface condition', description: 'Check all surfaces for damage, wear, sharp edges.', appliesTo: ['routine_visual', 'operational', 'annual_main'] },

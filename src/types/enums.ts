@@ -177,6 +177,12 @@ export enum SiteStatus {
   TEMPORARY_CLOSURE = 'temporary_closure',
 }
 
+export const SITE_STATUS_LABELS: Record<SiteStatus, string> = {
+  [SiteStatus.ACTIVE]: 'Active',
+  [SiteStatus.ARCHIVED]: 'Archived',
+  [SiteStatus.TEMPORARY_CLOSURE]: 'Temporary Closure',
+};
+
 // =============================================
 // ASSET CATEGORIES
 // =============================================

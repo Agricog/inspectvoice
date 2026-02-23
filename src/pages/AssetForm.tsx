@@ -53,6 +53,7 @@ import {
   isInRange,
   ValidationErrorCode,
 } from '@utils/validation';
+import type { ValidationResult } from '@utils/validation';
 import { captureError } from '@utils/errorTracking';
 import {
   AssetCategory,
@@ -73,6 +74,7 @@ import type { Asset } from '@/types';
 // =============================================
 
 interface AssetFormValues {
+  [key: string]: string | boolean;
   asset_code: string;
   asset_category: string;
   asset_type: string;
@@ -228,7 +230,7 @@ function assetToForm(asset: Asset): AssetFormValues {
 // VALIDATION
 // =============================================
 
-function validateAssetForm(values: AssetFormValues): ReturnType<typeof createValidator>['validate'] {
+function validateAssetForm(values: AssetFormValues): ValidationResult {
   const v = createValidator()
     .required('asset_code', values.asset_code, 'Asset code')
     .required('asset_category', values.asset_category, 'Category')
@@ -376,7 +378,7 @@ export default function AssetForm(): JSX.Element {
         setLoading(false);
       } catch (error) {
         if (cancelled) return;
-        captureError(error, { module: 'AssetForm', operation: 'loadAsset', assetId });
+        captureError(error, { module: 'AssetForm', operation: 'loadAsset' });
         setLoadError('Failed to load asset data. Please try again.');
         setLoading(false);
       }
@@ -401,7 +403,7 @@ export default function AssetForm(): JSX.Element {
         if (cancelled) return;
         setExistingCodes(assets.map((a) => a.data.asset_code));
       } catch (error) {
-        captureError(error, { module: 'AssetForm', operation: 'loadCodes', siteId });
+        captureError(error, { module: 'AssetForm', operation: 'loadCodes' });
       }
     }
 
@@ -431,8 +433,6 @@ export default function AssetForm(): JSX.Element {
         captureError(error, {
           module: 'AssetForm',
           operation: 'saveAsset',
-          siteId,
-          assetId: existingAsset?.id,
         });
         setSaveError('Failed to save asset. Please try again.');
         formTopRef.current?.scrollIntoView({ behavior: 'smooth' });

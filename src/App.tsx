@@ -14,6 +14,7 @@ import InspectionStart from '@pages/InspectionStart';
 import InspectionReview from '@pages/InspectionReview';
 import InspectionCapture from '@pages/InspectionCapture';
 import { InspectionList } from '@pages/InspectionList';
+import { DefectTracker } from '@pages/DefectTracker';
 
 // =============================================
 // PLACEHOLDER PAGES (will be replaced)
@@ -85,6 +86,7 @@ export function App(): JSX.Element {
 
             {/* Defects (placeholder) */}
             <Route path="/defects" element={<DefectsList />} />
+            <Route path="/defects" element={<DefectTracker />} />
 
             {/* Settings (placeholder) */}
             <Route path="/settings" element={<SettingsPage />} />

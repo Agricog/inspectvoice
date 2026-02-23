@@ -165,11 +165,11 @@ async function processStripeEvent(
       await handleSubscriptionDeleted(event, ctx, logger);
       break;
 
-    case 'org.subscription_changed':
+    case 'invoice.paid':
       await handleInvoicePaid(event, ctx, logger);
       break;
 
-    case 'org.subscription_changed':
+    case 'invoice.payment_failed':
       await handleInvoicePaymentFailed(event, ctx, logger);
       break;
 

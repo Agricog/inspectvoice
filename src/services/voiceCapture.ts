@@ -248,8 +248,8 @@ interface SpeechRecognitionErrorEvent {
 /** Create a SpeechRecognition instance if available */
 function createSpeechRecognition(lang: string): SpeechRecognitionInstance | null {
   const SpeechRecognitionCtor =
-    (window as Record<string, unknown>)['SpeechRecognition'] ??
-    (window as Record<string, unknown>)['webkitSpeechRecognition'];
+    (window as unknown as Record<string, unknown>)['SpeechRecognition'] ??
+    (window as unknown as Record<string, unknown>)['webkitSpeechRecognition'];
 
   if (!SpeechRecognitionCtor || typeof SpeechRecognitionCtor !== 'function') {
     return null;
@@ -286,7 +286,7 @@ export class VoiceCapture {
   // Audio analysis (for silence detection + VU meter)
   private audioContext: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
-  private amplitudeData: Uint8Array | null = null;
+  private amplitudeData: Uint8Array<ArrayBuffer> | null = null;
   private amplitudeFrameId: number | null = null;
 
   // Silence detection

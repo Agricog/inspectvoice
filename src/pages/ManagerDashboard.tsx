@@ -17,7 +17,6 @@
  * API: GET /api/dashboard
  */
 
-import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -26,7 +25,6 @@ import {
   ClipboardCheck,
   AlertTriangle,
   Calendar,
-  Clock,
   ChevronRight,
   Loader2,
   RefreshCw,
@@ -48,7 +46,6 @@ import {
   INSPECTION_STATUS_LABELS,
   RISK_RATING_LABELS,
   ACTION_TIMEFRAME_LABELS,
-  DEFECT_STATUS_LABELS,
 } from '@/types/enums';
 
 // =============================================

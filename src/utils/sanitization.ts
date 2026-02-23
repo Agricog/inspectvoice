@@ -75,6 +75,7 @@ export function sanitiseMultiline(input: string): string {
 /**
  * Recursively sanitise all string values in an object.
  * Use before sending form data to the API.
+ * Preserves Date objects, Blobs, and other non-plain-object types.
  */
 export function sanitiseObject<T extends Record<string, unknown>>(obj: T): T {
   const result: Record<string, unknown> = {};
@@ -82,13 +83,28 @@ export function sanitiseObject<T extends Record<string, unknown>>(obj: T): T {
   for (const [key, value] of Object.entries(obj)) {
     if (typeof value === 'string') {
       result[key] = sanitiseForStorage(value);
+    } else if (value instanceof Date) {
+      // Preserve Date objects — do not attempt to sanitise
+      result[key] = value;
+    } else if (value instanceof Blob || value instanceof File) {
+      // Preserve binary data
+      result[key] = value;
     } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      result[key] = sanitiseObject(value as Record<string, unknown>);
+      // Only recurse into plain objects
+      if (Object.getPrototypeOf(value) === Object.prototype) {
+        result[key] = sanitiseObject(value as Record<string, unknown>);
+      } else {
+        result[key] = value;
+      }
     } else if (Array.isArray(value)) {
       result[key] = value.map((item) => {
         if (typeof item === 'string') return sanitiseForStorage(item);
+        if (item instanceof Date || item instanceof Blob) return item;
         if (item !== null && typeof item === 'object') {
-          return sanitiseObject(item as Record<string, unknown>);
+          if (Object.getPrototypeOf(item) === Object.prototype) {
+            return sanitiseObject(item as Record<string, unknown>);
+          }
+          return item;
         }
         return item;
       });

@@ -185,8 +185,8 @@ async function handleSubscriptionCreated(
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
-  const sub = event.data.object as StripeSubscription;
-  const orgId = sub.metadata?.org_id;
+  const sub = event.data.object as unknown as StripeSubscription;
+  const orgId = sub.metadata?.['org_id'];
   if (!orgId) {
     logger.warn('Subscription created without org_id metadata', { subscriptionId: sub.id });
     return;
@@ -227,8 +227,8 @@ async function handleSubscriptionUpdated(
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
-  const sub = event.data.object as StripeSubscription;
-  const orgId = sub.metadata?.org_id;
+  const sub = event.data.object as unknown as StripeSubscription;
+  const orgId = sub.metadata?.['org_id'];
   if (!orgId) return;
 
   const { neon } = await import('@neondatabase/serverless');
@@ -262,8 +262,8 @@ async function handleSubscriptionDeleted(
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
-  const sub = event.data.object as StripeSubscription;
-  const orgId = sub.metadata?.org_id;
+  const sub = event.data.object as unknown as StripeSubscription;
+  const orgId = sub.metadata?.['org_id'];
   if (!orgId) return;
 
   const { neon } = await import('@neondatabase/serverless');
@@ -288,7 +288,7 @@ async function handleInvoicePaid(
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
-  const invoice = event.data.object as StripeInvoice;
+  const invoice = event.data.object as unknown as StripeInvoice;
 
   // Resolve org via Stripe customer ID
   const { neon } = await import('@neondatabase/serverless');
@@ -329,7 +329,7 @@ async function handleInvoicePaymentFailed(
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
-  const invoice = event.data.object as StripeInvoice;
+  const invoice = event.data.object as unknown as StripeInvoice;
 
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(ctx.env.DATABASE_URL);

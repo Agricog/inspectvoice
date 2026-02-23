@@ -13,6 +13,7 @@ import AssetForm from '@pages/AssetForm';
 import AssetDetail from '@pages/AssetDetail';
 import InspectionStart from '@pages/InspectionStart';
 import InspectionReview from '@pages/InspectionReview';
+import InspectionCapture from '@pages/InspectionCapture';
 
 // =============================================
 // PLACEHOLDER PAGES (will be replaced)
@@ -86,6 +87,7 @@ export function App(): JSX.Element {
             <Route path="/sites/:siteId/assets/:assetId/edit" element={<AssetForm />} />
             <Route path="/sites/:siteId/inspect/new" element={<InspectionStart />} />
             <Route path="/sites/:siteId/inspections/:inspectionId/review" element={<InspectionReview />} />
+            <Route path="/sites/:siteId/inspections/:inspectionId/capture" element={<InspectionCapture />} />
 
             {/* Inspections (placeholder) */}
             <Route path="/inspections" element={<InspectionsList />} />

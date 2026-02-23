@@ -28,6 +28,66 @@ import {
 } from '@/types';
 
 // =============================================
+// SIZE GUARDS (prevent storage bombs)
+// =============================================
+
+/** Max size for a single photo in bytes (10MB) */
+const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
+
+/** Max size for a single audio recording in bytes (50MB) */
+const MAX_AUDIO_SIZE_BYTES = 50 * 1024 * 1024;
+
+/** Max number of pending photos before forcing sync/purge */
+const MAX_PENDING_PHOTOS = 500;
+
+/** Max number of pending audio recordings before forcing sync/purge */
+const MAX_PENDING_AUDIO = 100;
+
+/** Max sync queue depth before refusing new entries */
+const MAX_SYNC_QUEUE_DEPTH = 1000;
+
+/** Max string field length for text inputs (100KB) */
+const MAX_TEXT_FIELD_BYTES = 100 * 1024;
+
+class StorageLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StorageLimitError';
+  }
+}
+
+/** Validate text field size */
+function validateTextSize(value: string | null | undefined, fieldName: string): void {
+  if (!value) return;
+  const byteLength = new TextEncoder().encode(value).length;
+  if (byteLength > MAX_TEXT_FIELD_BYTES) {
+    throw new StorageLimitError(
+      `${fieldName} exceeds maximum size (${Math.round(byteLength / 1024)}KB > ${MAX_TEXT_FIELD_BYTES / 1024}KB).`
+    );
+  }
+}
+
+/** Validate base64 photo size */
+function validatePhotoSize(base64Data: string): void {
+  // Base64 is ~33% larger than raw bytes
+  const estimatedBytes = Math.ceil(base64Data.length * 0.75);
+  if (estimatedBytes > MAX_PHOTO_SIZE_BYTES) {
+    throw new StorageLimitError(
+      `Photo exceeds maximum size (${Math.round(estimatedBytes / (1024 * 1024))}MB > ${MAX_PHOTO_SIZE_BYTES / (1024 * 1024)}MB).`
+    );
+  }
+}
+
+/** Validate audio blob size */
+function validateAudioSize(blob: Blob): void {
+  if (blob.size > MAX_AUDIO_SIZE_BYTES) {
+    throw new StorageLimitError(
+      `Audio recording exceeds maximum size (${Math.round(blob.size / (1024 * 1024))}MB > ${MAX_AUDIO_SIZE_BYTES / (1024 * 1024)}MB).`
+    );
+  }
+}
+
+// =============================================
 // DATABASE SCHEMA & INITIALISATION
 // =============================================
 
@@ -305,6 +365,10 @@ export const inspections = {
 export const inspectionItems = {
   /** Create a new inspection item */
   async create(data: LocalInspectionItem['data']): Promise<LocalInspectionItem> {
+    // Text size guards
+    validateTextSize(data.voice_transcript, 'voice_transcript');
+    validateTextSize(data.inspector_notes, 'inspector_notes');
+
     const db = await getDB();
     const record: LocalInspectionItem = {
       id: data.id || uuid(),
@@ -334,6 +398,10 @@ export const inspectionItems = {
 
   /** Update an inspection item */
   async update(id: string, data: Partial<LocalInspectionItem['data']>): Promise<LocalInspectionItem | null> {
+    // Text size guards on updated fields
+    if ('voice_transcript' in data) validateTextSize(data.voice_transcript, 'voice_transcript');
+    if ('inspector_notes' in data) validateTextSize(data.inspector_notes, 'inspector_notes');
+
     const db = await getDB();
     const existing = await db.get(IDB_STORE_NAMES.INSPECTION_ITEMS, id);
 
@@ -387,7 +455,19 @@ export const inspectionItems = {
 export const pendingPhotos = {
   /** Store a photo for later upload to R2 */
   async add(photo: Omit<PendingPhoto, 'id' | 'synced' | 'r2_key' | 'r2_url'>): Promise<PendingPhoto> {
+    // Size guard
+    validatePhotoSize(photo.base64Data);
+
     const db = await getDB();
+
+    // Count guard — prevent storage overflow
+    const currentCount = await db.count(IDB_STORE_NAMES.PHOTOS_PENDING);
+    if (currentCount >= MAX_PENDING_PHOTOS) {
+      throw new StorageLimitError(
+        `Cannot store photo: ${currentCount} pending photos already queued. Sync or purge first.`
+      );
+    }
+
     const record: PendingPhoto = {
       ...photo,
       id: uuid(),
@@ -459,7 +539,19 @@ export const pendingPhotos = {
 export const pendingAudio = {
   /** Store an audio recording for later transcription */
   async add(audio: Omit<PendingAudio, 'id' | 'synced' | 'r2_key'>): Promise<PendingAudio> {
+    // Size guard
+    validateAudioSize(audio.audioBlob);
+
     const db = await getDB();
+
+    // Count guard
+    const currentCount = await db.count(IDB_STORE_NAMES.AUDIO_PENDING);
+    if (currentCount >= MAX_PENDING_AUDIO) {
+      throw new StorageLimitError(
+        `Cannot store audio: ${currentCount} pending recordings already queued. Sync or purge first.`
+      );
+    }
+
     const record: PendingAudio = {
       ...audio,
       id: uuid(),
@@ -527,6 +619,17 @@ async function enqueueSync(
   payload: Record<string, unknown> = {},
 ): Promise<void> {
   const db = await getDB();
+
+  // Queue depth guard
+  const currentDepth = await db.count(IDB_STORE_NAMES.SYNC_QUEUE);
+  if (currentDepth >= MAX_SYNC_QUEUE_DEPTH) {
+    captureError(
+      new StorageLimitError(`Sync queue full: ${currentDepth} entries`),
+      { module: 'offlineStore', operation: 'enqueueSync' },
+    );
+    return; // Silently skip — don't break the user's workflow
+  }
+
   const entry: SyncQueueEntry = {
     type,
     entity_id: entityId,
@@ -835,3 +938,5 @@ export async function clearAllData(): Promise<void> {
     db.clear(IDB_STORE_NAMES.ASSETS_CACHE),
   ]);
 }
+
+export { StorageLimitError };

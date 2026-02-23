@@ -59,17 +59,17 @@ export async function handleStripeWebhook(
   // ── Step 3: Check WEBHOOKS_PAUSED ──
   if (ctx.env.WEBHOOKS_PAUSED === 'true') {
     logger.info('Webhooks paused — logged but not processed', { eventId: event.id });
-    await markEventProcessed(ctx, event.id, 'stripe');
+    await markEventProcessed(ctx, event.id);
     return jsonResponse({ success: true, message: 'Logged (paused)' }, ctx.requestId);
   }
 
   // ── Step 4: Process event ──
   try {
     await processStripeEvent(event, ctx, logger);
-    await markEventProcessed(ctx, event.id, 'stripe');
+    await markEventProcessed(ctx, event.id);
   } catch (error) {
     logger.error('Stripe event processing failed', error, { eventId: event.id });
-    await markEventFailed(ctx, event.id, 'stripe');
+    await markEventFailed(ctx, event.id, 'Stripe event processing failed');
     throw error;
   }
 

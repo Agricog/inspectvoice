@@ -72,6 +72,7 @@ import {
   InspectionType,
   INSPECTION_TYPE_LABELS,
   AIProcessingStatus,
+  TranscriptionMethod,
 } from '@/types';
 import type { Asset, Inspection, InspectionItem } from '@/types';
 import { getAssetTypeConfig, getInspectionPointsForType } from '@config/assetTypes';
@@ -235,7 +236,6 @@ export default function InspectionCapture(): JSX.Element {
   // ---- Derived ----
   const currentAsset = assets[currentIndex] ?? null;
   const totalAssets = assets.length;
-  const progressPercent = totalAssets > 0 ? Math.round(((currentIndex) / totalAssets) * 100) : 0;
 
   const inspectionType = inspection?.inspection_type ?? InspectionType.ROUTINE_VISUAL;
   const checklistPoints: InspectionPoint[] = currentAsset
@@ -541,7 +541,7 @@ export default function InspectionCapture(): JSX.Element {
         asset_type: currentAsset.asset_type,
         audio_r2_key: null, // Set after R2 upload
         voice_transcript: captureState.voiceTranscript || null,
-        transcription_method: captureState.hasAudioRecording ? 'web_speech_api' : captureState.voiceTranscript ? 'manual' : null,
+        transcription_method: captureState.hasAudioRecording ? TranscriptionMethod.WEB_SPEECH_API : captureState.voiceTranscript ? TranscriptionMethod.MANUAL : null,
         ai_analysis: null,
         ai_model_version: '',
         ai_processing_status: AIProcessingStatus.PENDING,

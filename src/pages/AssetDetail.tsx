@@ -21,7 +21,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   ArrowLeft,
@@ -57,7 +57,6 @@ import {
   SURFACE_TYPE_LABELS,
   CONDITION_LABELS,
   RISK_RATING_LABELS,
-  ACTION_TIMEFRAME_LABELS,
   ConditionRating,
   ConditionTrend,
   RiskRating,
@@ -304,7 +303,6 @@ function InspectionHistoryRow({ item }: { item: InspectionItem }): JSX.Element {
 
 export default function AssetDetail(): JSX.Element {
   const { siteId, assetId } = useParams<{ siteId: string; assetId: string }>();
-  const navigate = useNavigate();
 
   // ---- State ----
   const [loading, setLoading] = useState(true);
@@ -359,13 +357,13 @@ export default function AssetDetail(): JSX.Element {
 
           setHistory(assetHistory);
         } catch (histError) {
-          captureError(histError, { module: 'AssetDetail', operation: 'loadHistory', assetId });
+          captureError(histError, { module: 'AssetDetail', operation: 'loadHistory' });
         } finally {
           if (!cancelled) setHistoryLoading(false);
         }
       } catch (error) {
         if (cancelled) return;
-        captureError(error, { module: 'AssetDetail', operation: 'loadAsset', assetId });
+        captureError(error, { module: 'AssetDetail', operation: 'loadAsset' });
         setLoadError('Failed to load asset data. Please try again.');
         setLoading(false);
       }

@@ -280,6 +280,7 @@ export async function confirmAudioUpload(
 
   // Validate confirmation data (matches syncService.ts payload exactly)
   const inspectionItemId = validateUUID(body['inspection_item_id'], 'inspection_item_id');
+  const assetId = validateUUID(body['asset_id'], 'asset_id');
   const assetCode = validateString(body['asset_code'], 'asset_code', { maxLength: 50 });
   const assetType = validateString(body['asset_type'], 'asset_type', { maxLength: 50 });
   const durationSeconds = validateOptionalNumber(body['duration_seconds'], 'duration_seconds', { min: 0, max: 3600 }) ?? 0;
@@ -303,6 +304,7 @@ export async function confirmAudioUpload(
     payload: {
       r2Key,
       inspectionItemId,
+      assetId,
       assetCode,
       assetType,
       mimeType: request.headers.get('Content-Type') ?? 'audio/webm',
@@ -316,6 +318,7 @@ export async function confirmAudioUpload(
 
     logger.info('Audio enqueued for AI processing', {
       inspectionItemId,
+      assetId,
       assetCode,
       assetType,
       r2Key,
@@ -339,6 +342,7 @@ export async function confirmAudioUpload(
 
   void writeAuditLog(ctx, 'audio.uploaded', 'inspection_items', inspectionItemId, {
     r2_key: r2Key,
+    asset_id: assetId,
     asset_code: assetCode,
     duration_seconds: durationSeconds,
   }, request);

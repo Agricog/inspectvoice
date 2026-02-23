@@ -89,7 +89,7 @@ export async function triggerPdfGeneration(
     throw new BadRequestError('Failed to start PDF generation. Please try again.');
   }
 
-  void writeAuditLog(ctx, 'inspection.pdf_requested', 'inspections', id, null, request);
+  void writeAuditLog(ctx, 'inspection.exported', 'inspections', id, null, request);
 
   return acceptedResponse({
     success: true,

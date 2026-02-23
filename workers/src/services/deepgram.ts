@@ -15,7 +15,7 @@
  */
 
 import { Logger } from '../shared/logger';
-import { BadGatewayError } from '../shared/errors';
+import { BadGatewayError, BadRequestError } from '../shared/errors';
 
 // =============================================
 // CONFIGURATION
@@ -31,6 +31,12 @@ const MAX_RETRIES = 2;
 
 /** Delay between retries in ms */
 const RETRY_DELAY_MS = 2000;
+
+/** Minimum audio size worth transcribing (bytes) — ~0.5s of audio */
+const MIN_AUDIO_SIZE = 5_000;
+
+/** Maximum audio size (50MB — Deepgram limit) */
+const MAX_AUDIO_SIZE = 50 * 1024 * 1024;
 
 // =============================================
 // TRANSCRIPTION RESULT
@@ -72,6 +78,7 @@ export interface TranscriptionWord {
  * @param apiKey — Deepgram API key (from env bindings)
  * @param requestId — for logging
  * @returns TranscriptionResult
+ * @throws BadRequestError if audio is too small or too large
  * @throws BadGatewayError if Deepgram is unavailable or returns an error
  */
 export async function transcribeAudio(
@@ -82,29 +89,34 @@ export async function transcribeAudio(
 ): Promise<TranscriptionResult> {
   const logger = Logger.minimal(requestId);
 
+  // ── Input validation ─────────────────────
+  if (audioData.byteLength < MIN_AUDIO_SIZE) {
+    logger.warn('Audio too small for transcription', {
+      sizeBytes: audioData.byteLength,
+      minRequired: MIN_AUDIO_SIZE,
+    });
+    throw new BadRequestError(
+      `Audio file too small (${audioData.byteLength} bytes). Minimum ${MIN_AUDIO_SIZE} bytes required.`,
+    );
+  }
+
+  if (audioData.byteLength > MAX_AUDIO_SIZE) {
+    logger.warn('Audio exceeds maximum size', {
+      sizeBytes: audioData.byteLength,
+      maxAllowed: MAX_AUDIO_SIZE,
+    });
+    throw new BadRequestError(
+      `Audio file too large (${(audioData.byteLength / (1024 * 1024)).toFixed(1)}MB). Maximum 50MB.`,
+    );
+  }
+
   logger.info('Starting Deepgram transcription', {
     audioSizeBytes: audioData.byteLength,
     mimeType,
   });
 
-  // Build query parameters for Deepgram
-  const params = new URLSearchParams({
-    // Model selection
-    model: 'nova-2',
-    language: 'en-GB',
-
-    // Features
-    punctuate: 'true',
-    smart_format: 'true',
-    diarize: 'false',
-    paragraphs: 'true',
-    utterances: 'false',
-
-    // Technical inspection domain — Deepgram supports keyword boosting
-    keywords: buildKeywordBoost(),
-  });
-
-  const url = `${DEEPGRAM_API_URL}?${params.toString()}`;
+  // ── Build URL with query parameters ──────
+  const url = buildDeepgramUrl();
 
   // Resolve the base MIME type (strip codec info)
   const contentType = mimeType.split(';')[0]?.trim() ?? mimeType;
@@ -162,7 +174,7 @@ export async function transcribeAudio(
           language: 'en',
           durationSeconds: data.metadata?.duration ?? 0,
           words: [],
-          model: data.metadata?.model_info?.[Object.keys(data.metadata.model_info)[0] ?? '']?.name ?? 'nova-2',
+          model: extractModelName(data),
           deepgramRequestId: data.metadata?.request_id ?? '',
         };
       }
@@ -178,7 +190,7 @@ export async function transcribeAudio(
           end: w.end,
           confidence: w.confidence,
         })),
-        model: data.metadata?.model_info?.[Object.keys(data.metadata.model_info)[0] ?? '']?.name ?? 'nova-2',
+        model: extractModelName(data),
         deepgramRequestId: data.metadata?.request_id ?? '',
       };
 
@@ -187,11 +199,12 @@ export async function transcribeAudio(
         confidence: result.confidence,
         durationSeconds: result.durationSeconds,
         wordCount: result.words.length,
+        model: result.model,
       });
 
       return result;
     } catch (error) {
-      if (error instanceof BadGatewayError) throw error;
+      if (error instanceof BadGatewayError || error instanceof BadRequestError) throw error;
 
       lastError = error instanceof Error ? error : new Error('Unknown error');
       logger.warn('Deepgram transcription attempt failed', {
@@ -207,46 +220,91 @@ export async function transcribeAudio(
 }
 
 // =============================================
+// URL CONSTRUCTION
+// =============================================
+
+/**
+ * Build the Deepgram API URL with correct parameter format.
+ *
+ * IMPORTANT: Deepgram expects repeated `keywords=` parameters, NOT a single
+ * comma-separated value. URLSearchParams.append() handles this correctly.
+ *
+ * Correct: ?keywords=swing:3&keywords=slide:3&keywords=corrosion:4
+ * Wrong:   ?keywords=swing:3,slide:3,corrosion:4
+ */
+function buildDeepgramUrl(): string {
+  const params = new URLSearchParams();
+
+  // Model selection
+  params.set('model', 'nova-2');
+  params.set('language', 'en-GB');
+
+  // Features
+  params.set('punctuate', 'true');
+  params.set('smart_format', 'true');
+  params.set('diarize', 'false');
+  params.set('paragraphs', 'true');
+  params.set('utterances', 'false');
+
+  // Keyword boosting — each keyword:boost is a SEPARATE parameter
+  const keywords = getKeywordBoosts();
+  for (const kw of keywords) {
+    params.append('keywords', kw);
+  }
+
+  return `${DEEPGRAM_API_URL}?${params.toString()}`;
+}
+
+// =============================================
 // KEYWORD BOOSTING
 // =============================================
 
 /**
- * Build keyword boost string for Deepgram.
- * Boosts playground inspection terminology for better accuracy.
- * Format: "keyword:boost,keyword:boost" (boost is -10 to 10)
+ * Playground inspection terminology for Deepgram keyword boosting.
+ * Each entry is "keyword:boost" where boost is -10 to 10.
+ * Higher boost = more likely to be recognised in noisy outdoor audio.
+ *
+ * Includes common UK inspector colloquialisms so Deepgram doesn't
+ * mangle informal speech into unrecognisable text.
  */
-function buildKeywordBoost(): string {
-  const keywords = [
+function getKeywordBoosts(): string[] {
+  return [
     // Equipment types
     'swing:3', 'slide:3', 'climbing:3', 'roundabout:3', 'seesaw:3',
     'springer:3', 'zipline:3', 'zip wire:3', 'trim trail:3', 'MUGA:5',
     'multi-play:3', 'climbing frame:3', 'monkey bars:3', 'balance beam:3',
-    'overhead ladder:3',
+    'overhead ladder:3', 'spring rocker:3', 'sandpit:3',
 
     // Defect terminology
     'corrosion:4', 'rust:3', 'crack:3', 'splinter:3', 'entrapment:5',
     'protrusion:4', 'shearing:4', 'pinch point:4', 'trip hazard:4',
     'head entrapment:5', 'finger entrapment:5', 'clothing entrapment:5',
-    'sharp edge:4', 'missing cap:3', 'worn bearing:3',
+    'sharp edge:4', 'missing cap:3', 'worn bearing:3', 'delamination:4',
+    'UV degradation:4', 'fatigue crack:4',
 
     // Surface/impact
     'wetpour:4', 'impact area:4', 'fall height:4', 'critical fall height:5',
-    'surfacing:3', 'rubber mulch:3', 'bark mulch:3',
+    'surfacing:3', 'rubber mulch:3', 'bark mulch:3', 'impact absorber:4',
 
     // Standards
-    'BS EN 1176:5', 'BS EN 1177:5', 'RPII:5',
+    'BS EN 1176:5', 'BS EN 1177:5', 'BS EN 16630:5', 'RPII:5', 'RoSPA:5',
+
+    // Risk levels
     'very high risk:5', 'high risk:4', 'medium risk:3', 'low risk:3',
 
     // Actions
     'immediate action:4', 'closure required:5', 'repair needed:3',
-    'monitoring:3', 'replacement:3', 'decommission:4',
+    'monitoring:3', 'replacement:3', 'decommission:4', 'taken out of use:4',
 
     // Structural
     'foundation:3', 'footing:3', 'bolt:3', 'chain:3', 'bearing:3',
-    'bushing:3', 'weld:3', 'galvanising:3',
-  ];
+    'bushing:3', 'weld:3', 'galvanising:3', 'ferrule:3', 'thimble:3',
 
-  return keywords.join(',');
+    // Inspector colloquialisms (boost recognition of informal UK speech)
+    'dodgy:3', 'knackered:3', 'shot:2', 'iffy:2', 'sorted:2',
+    'bodged:3', 'botched:3', 'seized:3', 'wobble:3', 'play:2',
+    'gone:2', 'rusted through:3', 'snapped:3', 'hanging off:3',
+  ];
 }
 
 // =============================================
@@ -279,6 +337,19 @@ interface DeepgramResponse {
 // =============================================
 // HELPERS
 // =============================================
+
+/**
+ * Extract model name from Deepgram response metadata.
+ */
+function extractModelName(data: DeepgramResponse): string {
+  const modelInfo = data.metadata?.model_info;
+  if (!modelInfo) return 'nova-2';
+
+  const firstKey = Object.keys(modelInfo)[0];
+  if (!firstKey) return 'nova-2';
+
+  return modelInfo[firstKey]?.name ?? 'nova-2';
+}
 
 /**
  * Fetch with timeout using AbortController.

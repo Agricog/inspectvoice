@@ -9,6 +9,8 @@ import { Layout } from '@components/Layout';
 import { SiteList } from '@pages/SiteList';
 import { SiteForm } from '@pages/SiteForm';
 import { SiteDetail } from '@pages/SiteDetail';
+import AssetForm from '@pages/AssetForm';
+import AssetDetail from '@pages/AssetDetail';
 
 // =============================================
 // PLACEHOLDER PAGES (will be replaced)
@@ -77,6 +79,9 @@ export function App(): JSX.Element {
             <Route path="/sites/new" element={<SiteForm />} />
             <Route path="/sites/:id" element={<SiteDetail />} />
             <Route path="/sites/:id/edit" element={<SiteForm />} />
+            <Route path="/sites/:siteId/assets/new" element={<AssetForm />} />
+            <Route path="/sites/:siteId/assets/:assetId" element={<AssetDetail />} />
+            <Route path="/sites/:siteId/assets/:assetId/edit" element={<AssetForm />} />
 
             {/* Inspections (placeholder) */}
             <Route path="/inspections" element={<InspectionsList />} />

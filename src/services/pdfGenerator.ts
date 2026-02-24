@@ -1,1073 +1,1538 @@
 /**
- * InspectVoice — PDF Report Generation Service
- * Generates BS EN 1176-7 compliant inspection reports using pdf-lib.
+ * InspectVoice — PDF Report Generator
+ * Batch 16 + Feature 3 (photo cross-referencing)
  *
- * Report structure:
- *   1. Report header (company/org branding, report ref, date)
- *   2. Site details (name, address, type, contact)
- *   3. Inspection summary (type, date, inspector, weather, overall risk)
- *   4. Risk overview (overall rating + counts by severity)
- *   5. BS EN inspection schedule (checklist of all inspection points)
- *   6. Asset inspection findings (per item: condition, defects, AI summary)
- *   7. Defect register (all defects with actions, timeframes, costs, photo refs)
- *   8. Photo evidence log (cross-referenced list of all photos)
- *   9. Recommendations & compliance notes
- *   10. Inspector declaration and signature
- *   11. Compliance footer (applicable standards, report version)
+ * Generates professional BS EN 1176-compliant inspection reports.
+ * Uses pdf-lib (never jspdf) per build standard.
  *
- * Note: pdf-lib is installed in workers/package.json. It runs in Cloudflare
- * Workers (no Node.js fs dependency).
+ * Report sections:
+ *   1. Cover page — site name, inspection type, date, inspector, org branding
+ *   2. Executive summary — risk counts, condition breakdown, closure warnings
+ *   3. Site details — location, contact, compliance info
+ *   4. Asset inspection results — per-asset condition, defects, notes, photo refs
+ *   5. Defect register — all defects in tabular format with photo cross-refs
+ *   6. Photo evidence log — numbered photos cross-referenced with defects
+ *   7. Sign-off — inspector declaration, name, signature timestamp
+ *   8. Footer — page numbers, report ID, confidentiality notice
  *
- * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
+ * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
 
-import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from 'pdf-lib';
-import { Logger } from '../shared/logger';
-import { getWorkerAssetConfig, type WorkerInspectionPoint } from './ai';
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+  PDFFont,
+  PDFPage,
+} from 'pdf-lib';
+
+import {
+  INSPECTION_TYPE_LABELS,
+  INSPECTION_TYPE_DESCRIPTIONS,
+  RiskRating,
+  RISK_RATING_LABELS,
+  ConditionRating,
+  CONDITION_LABELS,
+  ACTION_TIMEFRAME_LABELS,
+  COST_BAND_LABELS,
+  InspectionStatus,
+  INSPECTION_STATUS_LABELS,
+} from '@/types';
+
+import type {
+  Inspection,
+  InspectionItem,
+  Site,
+  Asset,
+  DefectDetail,
+} from '@/types';
+
+import { getAssetTypeConfig } from '@config/assetTypes';
+import type { PhotoIndexEntry, PhotoCrossRefs } from '@services/photoCoverage';
+import { formatCompactPhotoRef } from '@services/photoCoverage';
 
 // =============================================
 // CONFIGURATION
 // =============================================
 
-const PAGE_WIDTH = 595.28;  // A4 width in points
-const PAGE_HEIGHT = 841.89; // A4 height in points
+/** Page dimensions (A4 in points: 595.28 x 841.89) */
+const PAGE_WIDTH = 595.28;
+const PAGE_HEIGHT = 841.89;
+
+/** Margins */
 const MARGIN_LEFT = 50;
 const MARGIN_RIGHT = 50;
-const MARGIN_TOP = 50;
+const MARGIN_TOP = 60;
 const MARGIN_BOTTOM = 60;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
 
-const FONT_SIZE_TITLE = 18;
-const FONT_SIZE_HEADING = 13;
+/** Usable area */
+const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
+const CONTENT_TOP = PAGE_HEIGHT - MARGIN_TOP;
+const CONTENT_BOTTOM = MARGIN_BOTTOM + 30; // Extra space for footer
+
+/** Font sizes */
+const FONT_SIZE_TITLE = 22;
+const FONT_SIZE_HEADING = 14;
 const FONT_SIZE_SUBHEADING = 11;
 const FONT_SIZE_BODY = 9.5;
 const FONT_SIZE_SMALL = 8;
-const FONT_SIZE_TINY = 7;
+const FONT_SIZE_FOOTER = 7;
 
-const LINE_HEIGHT_BODY = 14;
-const LINE_HEIGHT_HEADING = 20;
-const LINE_HEIGHT_TABLE = 13;
-const SECTION_GAP = 20;
+/** Line spacing multiplier */
+const LINE_HEIGHT_MULTIPLIER = 1.4;
 
+/** Colours (pdf-lib rgb is 0-1 scale) */
 const COLOUR_BLACK = rgb(0, 0, 0);
-const COLOUR_DARK_GREY = rgb(0.25, 0.25, 0.25);
-const COLOUR_GREY = rgb(0.5, 0.5, 0.5);
-const COLOUR_LIGHT_GREY = rgb(0.92, 0.92, 0.92);
+const COLOUR_DARK_GREY = rgb(0.2, 0.2, 0.2);
+const COLOUR_MID_GREY = rgb(0.5, 0.5, 0.5);
+const COLOUR_LIGHT_GREY = rgb(0.85, 0.85, 0.85);
 const COLOUR_WHITE = rgb(1, 1, 1);
-const COLOUR_RED = rgb(0.8, 0.1, 0.1);
-const COLOUR_AMBER = rgb(0.85, 0.55, 0.05);
-const COLOUR_YELLOW = rgb(0.7, 0.5, 0.0);
-const COLOUR_GREEN = rgb(0.1, 0.6, 0.2);
-const COLOUR_BLUE = rgb(0.15, 0.3, 0.65);
-const COLOUR_TABLE_HEADER = rgb(0.12, 0.25, 0.5);
-const COLOUR_TABLE_STRIPE = rgb(0.96, 0.96, 0.98);
+
+const COLOUR_GREEN = rgb(0.13, 0.77, 0.37); // #22C55E
+const COLOUR_YELLOW = rgb(0.92, 0.7, 0.03); // #EAB308
+const COLOUR_ORANGE = rgb(0.98, 0.45, 0.09); // #F97316
+const COLOUR_RED = rgb(0.94, 0.27, 0.27); // #EF4444
+
+const COLOUR_GREEN_BG = rgb(0.93, 0.98, 0.95);
+const COLOUR_YELLOW_BG = rgb(0.99, 0.97, 0.92);
+const COLOUR_ORANGE_BG = rgb(0.99, 0.95, 0.92);
+const COLOUR_RED_BG = rgb(0.99, 0.93, 0.93);
+
+const COLOUR_ACCENT = rgb(0.13, 0.77, 0.37); // Brand green
+const COLOUR_HEADER_BG = rgb(0.12, 0.14, 0.18); // Dark header
+const COLOUR_BLUE = rgb(0.15, 0.3, 0.65); // Photo refs
 
 // =============================================
-// INPUT TYPES
+// TYPES
 // =============================================
 
-export interface PdfReportData {
-  readonly org: {
-    readonly companyName: string;
-    readonly companyAddress: string | null;
-    readonly companyPhone: string | null;
-    readonly companyEmail: string | null;
-    readonly accreditationBody: string | null;
-    readonly accreditationNumber: string | null;
-    readonly reportFooterText: string | null;
-  };
-  readonly site: {
-    readonly name: string;
-    readonly address: string;
-    readonly postcode: string | null;
-    readonly siteType: string;
-    readonly contactName: string | null;
-    readonly contactPhone: string | null;
-  };
-  readonly inspection: {
-    readonly id: string;
-    readonly inspectionType: string;
-    readonly inspectionDate: string;
-    readonly startedAt: string;
-    readonly completedAt: string | null;
-    readonly durationMinutes: number | null;
-    readonly weatherConditions: string | null;
-    readonly temperatureC: number | null;
-    readonly surfaceConditions: string | null;
-    readonly overallRiskRating: string | null;
-    readonly veryHighRiskCount: number;
-    readonly highRiskCount: number;
-    readonly mediumRiskCount: number;
-    readonly lowRiskCount: number;
-    readonly totalDefects: number;
-    readonly closureRecommended: boolean;
-    readonly inspectorSummary: string | null;
-    readonly signedBy: string | null;
-    readonly signedAt: string | null;
-  };
-  readonly inspector: {
-    readonly displayName: string;
-    readonly rpiiNumber: string | null;
-    readonly rpiiGrade: string | null;
-    readonly qualifications: string | null;
-    readonly insuranceProvider: string | null;
-    readonly insurancePolicyNumber: string | null;
-  };
-  readonly items: readonly PdfInspectionItem[];
-  readonly photoIndex: readonly PdfPhotoIndexEntry[];
+/** Fonts loaded during PDF creation */
+interface PDFFonts {
+  regular: PDFFont;
+  bold: PDFFont;
+  italic: PDFFont;
+  mono: PDFFont;
 }
 
-export interface PdfInspectionItem {
-  readonly assetCode: string;
-  readonly assetType: string;
-  readonly overallCondition: string | null;
-  readonly riskRating: string | null;
-  readonly requiresAction: boolean;
-  readonly actionTimeframe: string | null;
-  readonly inspectorNotes: string | null;
-  readonly voiceTranscript: string | null;
-  readonly aiSummary: string | null;
-  readonly recommendations: readonly string[];
-  readonly complianceNotes: readonly string[];
-  readonly photoCount: number;
-  readonly defects: readonly PdfDefect[];
-  readonly photos: readonly PdfPhoto[];
+/** Tracks cursor position across pages */
+interface Cursor {
+  y: number;
+  page: PDFPage;
+  pageNumber: number;
 }
 
-export interface PdfDefect {
-  readonly description: string;
-  readonly severity: string;
-  readonly defectCategory: string;
-  readonly bsEnReference: string | null;
-  readonly actionRequired: string;
-  readonly actionTimeframe: string;
-  readonly estimatedCostGbp: string | null;
+/** Data required to generate a report */
+export interface ReportData {
+  inspection: Inspection;
+  items: InspectionItem[];
+  site: Site;
+  assets: Asset[];
+  orgName: string;
+  orgLogoBase64?: string;
+  /** Photo cross-reference data (from buildPhotoCoverage) */
+  photoIndex?: PhotoIndexEntry[];
+  /** Cross-ref helper for defect->photo lookups */
+  crossRefs?: PhotoCrossRefs;
 }
 
-export interface PdfPhoto {
-  readonly photoNumber: number;
-  readonly photoType: string;
-  readonly caption: string | null;
-  readonly associatedDefectDescriptions: string[];
-}
-
-export interface PdfPhotoIndexEntry {
-  readonly number: number;
-  readonly assetCode: string;
-  readonly photoType: string;
-  readonly caption: string | null;
-  readonly associatedDefects: string[];
-  readonly pdfLabel: string;
-}
-
-// =============================================
-// PDF GENERATION
-// =============================================
-
-/**
- * Generate a complete inspection report PDF.
- *
- * @param data — all report data (org, site, inspection, items, defects, photos)
- * @param requestId — for logging
- * @returns PDF bytes as Uint8Array
- */
-export async function generateInspectionPdf(
-  data: PdfReportData,
-  requestId: string,
-): Promise<Uint8Array> {
-  const logger = Logger.minimal(requestId);
-  logger.info('Generating PDF report', {
-    inspectionId: data.inspection.id,
-    itemCount: data.items.length,
-    totalDefects: data.inspection.totalDefects,
-    totalPhotos: data.photoIndex.length,
-  });
-
-  const doc = await PDFDocument.create();
-
-  // Set PDF metadata
-  doc.setTitle(`Inspection Report — ${data.site.name} — ${data.inspection.inspectionDate}`);
-  doc.setAuthor(data.org.companyName);
-  doc.setSubject(`BS EN 1176 Inspection Report`);
-  doc.setCreator('InspectVoice (inspectvoice.co.uk)');
-  doc.setProducer('InspectVoice PDF Generator');
-
-  const fontRegular = await doc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const fontItalic = await doc.embedFont(StandardFonts.HelveticaOblique);
-
-  const ctx: DrawContext = {
-    doc,
-    fontRegular,
-    fontBold,
-    fontItalic,
-    currentPage: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]),
-    cursorY: PAGE_HEIGHT - MARGIN_TOP,
-  };
-
-  // ── Section 1: Header ──
-  drawReportHeader(ctx, data);
-
-  // ── Section 2: Site Details ──
-  drawSiteDetails(ctx, data);
-
-  // ── Section 3: Inspection Summary ──
-  drawInspectionSummary(ctx, data);
-
-  // ── Section 4: Risk Overview ──
-  drawRiskOverview(ctx, data);
-
-  // ── Section 5: BS EN Inspection Schedule ──
-  drawInspectionSchedule(ctx, data);
-
-  // ── Section 6: Asset Findings ──
-  drawAssetFindingsSection(ctx, data);
-
-  // ── Section 7: Defect Register ──
-  drawDefectRegister(ctx, data);
-
-  // ── Section 8: Photo Evidence Log ──
-  drawPhotoEvidenceLog(ctx, data);
-
-  // ── Section 9: Recommendations & Compliance ──
-  drawRecommendations(ctx, data);
-
-  // ── Section 10: Declaration & Signature ──
-  drawSignature(ctx, data);
-
-  // ── Section 11: Applicable Standards ──
-  drawApplicableStandards(ctx, data);
-
-  // ── Footer on all pages ──
-  drawFooterOnAllPages(ctx, data);
-
-  const pdfBytes = await doc.save();
-
-  logger.info('PDF generated', {
-    inspectionId: data.inspection.id,
-    pages: doc.getPageCount(),
-    sizeBytes: pdfBytes.length,
-  });
-
-  return pdfBytes;
-}
-
-// =============================================
-// DRAWING CONTEXT
-// =============================================
-
-interface DrawContext {
-  doc: PDFDocument;
-  fontRegular: PDFFont;
-  fontBold: PDFFont;
-  fontItalic: PDFFont;
-  currentPage: PDFPage;
-  cursorY: number;
-}
-
-/** Ensure enough vertical space; add new page if not. */
-function ensureSpace(ctx: DrawContext, needed: number): void {
-  if (ctx.cursorY - needed < MARGIN_BOTTOM) {
-    ctx.currentPage = ctx.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    ctx.cursorY = PAGE_HEIGHT - MARGIN_TOP;
-  }
-}
-
-/** Draw text and advance cursor. Returns the number of lines drawn. */
-function drawText(
-  ctx: DrawContext,
-  text: string,
-  options: {
-    font?: PDFFont;
-    size?: number;
-    colour?: ReturnType<typeof rgb>;
-    indent?: number;
-    maxWidth?: number;
-  } = {},
-): number {
-  const font = options.font ?? ctx.fontRegular;
-  const size = options.size ?? FONT_SIZE_BODY;
-  const colour = options.colour ?? COLOUR_BLACK;
-  const indent = options.indent ?? 0;
-  const maxWidth = options.maxWidth ?? (CONTENT_WIDTH - indent);
-
-  // Word-wrap
-  const words = text.split(' ');
-  let line = '';
-  const lines: string[] = [];
-
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    const width = font.widthOfTextAtSize(test, size);
-    if (width > maxWidth && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = test;
-    }
-  }
-  if (line) lines.push(line);
-
-  for (const l of lines) {
-    ensureSpace(ctx, LINE_HEIGHT_BODY);
-    ctx.currentPage.drawText(l, {
-      x: MARGIN_LEFT + indent,
-      y: ctx.cursorY,
-      size,
-      font,
-      color: colour,
-    });
-    ctx.cursorY -= LINE_HEIGHT_BODY;
-  }
-
-  return lines.length;
-}
-
-/** Draw a horizontal rule. */
-function drawRule(ctx: DrawContext, colour: ReturnType<typeof rgb> = COLOUR_LIGHT_GREY): void {
-  ensureSpace(ctx, 8);
-  ctx.currentPage.drawLine({
-    start: { x: MARGIN_LEFT, y: ctx.cursorY },
-    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: ctx.cursorY },
-    thickness: 0.5,
-    color: colour,
-  });
-  ctx.cursorY -= 8;
-}
-
-/** Draw a section heading with number. */
-function drawHeading(ctx: DrawContext, text: string): void {
-  ctx.cursorY -= SECTION_GAP;
-  ensureSpace(ctx, LINE_HEIGHT_HEADING + 8);
-  drawText(ctx, text, { font: ctx.fontBold, size: FONT_SIZE_HEADING, colour: COLOUR_BLUE });
-  drawRule(ctx, COLOUR_BLUE);
-}
-
-/** Draw a label:value pair. */
-function drawField(ctx: DrawContext, label: string, value: string | null | undefined, indent: number = 0): void {
-  if (!value) return;
-  ensureSpace(ctx, LINE_HEIGHT_BODY);
-  const labelWidth = ctx.fontBold.widthOfTextAtSize(`${label}: `, FONT_SIZE_BODY);
-  ctx.currentPage.drawText(`${label}: `, {
-    x: MARGIN_LEFT + indent,
-    y: ctx.cursorY,
-    size: FONT_SIZE_BODY,
-    font: ctx.fontBold,
-    color: COLOUR_DARK_GREY,
-  });
-  ctx.currentPage.drawText(value, {
-    x: MARGIN_LEFT + indent + labelWidth,
-    y: ctx.cursorY,
-    size: FONT_SIZE_BODY,
-    font: ctx.fontRegular,
-    color: COLOUR_BLACK,
-  });
-  ctx.cursorY -= LINE_HEIGHT_BODY;
-}
-
-/**
- * Draw a table row with cells at specified column positions.
- */
-function drawTableRow(
-  ctx: DrawContext,
-  cells: readonly { text: string; x: number; width: number; font?: PDFFont; colour?: ReturnType<typeof rgb> }[],
-  options: {
-    size?: number;
-    rowHeight?: number;
-    bgColour?: ReturnType<typeof rgb> | null;
-  } = {},
-): void {
-  const size = options.size ?? FONT_SIZE_SMALL;
-  const rowHeight = options.rowHeight ?? LINE_HEIGHT_TABLE;
-
-  ensureSpace(ctx, rowHeight + 2);
-
-  // Background fill
-  if (options.bgColour) {
-    ctx.currentPage.drawRectangle({
-      x: MARGIN_LEFT,
-      y: ctx.cursorY - 3,
-      width: CONTENT_WIDTH,
-      height: rowHeight + 2,
-      color: options.bgColour,
-    });
-  }
-
-  for (const cell of cells) {
-    // Truncate text to fit column width
-    const font = cell.font ?? ctx.fontRegular;
-    let displayText = cell.text;
-    while (font.widthOfTextAtSize(displayText, size) > cell.width - 4 && displayText.length > 3) {
-      displayText = displayText.slice(0, -4) + '...';
-    }
-
-    ctx.currentPage.drawText(displayText, {
-      x: cell.x,
-      y: ctx.cursorY,
-      size,
-      font,
-      color: cell.colour ?? COLOUR_BLACK,
-    });
-  }
-
-  ctx.cursorY -= rowHeight;
-}
-
-// =============================================
-// SECTION DRAWERS
-// =============================================
-
-function drawReportHeader(ctx: DrawContext, data: PdfReportData): void {
-  // Adaptive title based on inspection type
-  const typeLabel = getInspectionTypeLabel(data.inspection.inspectionType);
-  drawText(ctx, `${typeLabel.toUpperCase()} REPORT`, {
-    font: ctx.fontBold,
-    size: FONT_SIZE_TITLE,
-    colour: COLOUR_BLUE,
-  });
-  ctx.cursorY -= 2;
-
-  drawText(ctx, 'In accordance with BS EN 1176-7:2020', {
-    font: ctx.fontItalic,
-    size: FONT_SIZE_SMALL,
-    colour: COLOUR_GREY,
-  });
-  ctx.cursorY -= 4;
-
-  drawText(ctx, data.org.companyName, { font: ctx.fontBold, size: FONT_SIZE_SUBHEADING });
-
-  if (data.org.companyAddress) {
-    drawText(ctx, data.org.companyAddress, { size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
-  }
-
-  const contactParts: string[] = [];
-  if (data.org.companyPhone) contactParts.push(data.org.companyPhone);
-  if (data.org.companyEmail) contactParts.push(data.org.companyEmail);
-  if (contactParts.length > 0) {
-    drawText(ctx, contactParts.join('  |  '), { size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
-  }
-
-  if (data.org.accreditationBody) {
-    drawText(ctx, `Accreditation: ${data.org.accreditationBody} ${data.org.accreditationNumber ?? ''}`.trim(), {
-      size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
-    });
-  }
-
-  ctx.cursorY -= 4;
-  drawText(ctx, `Report Ref: IV-${data.inspection.id.slice(0, 8).toUpperCase()}`, {
-    font: ctx.fontBold, size: FONT_SIZE_SMALL, colour: COLOUR_DARK_GREY,
-  });
-  drawText(ctx, `Generated: ${formatDateTime(new Date().toISOString())}`, {
-    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
-  });
-
-  drawRule(ctx);
-}
-
-function drawSiteDetails(ctx: DrawContext, data: PdfReportData): void {
-  drawHeading(ctx, '1. Site Details');
-
-  drawField(ctx, 'Site Name', data.site.name);
-  drawField(ctx, 'Address', data.site.address);
-  drawField(ctx, 'Postcode', data.site.postcode);
-  drawField(ctx, 'Site Type', formatEnum(data.site.siteType));
-  drawField(ctx, 'Contact', data.site.contactName);
-  drawField(ctx, 'Contact Phone', data.site.contactPhone);
-  drawField(ctx, 'Assets Inspected', `${data.items.length} item${data.items.length !== 1 ? 's' : ''}`);
-}
-
-function drawInspectionSummary(ctx: DrawContext, data: PdfReportData): void {
-  drawHeading(ctx, '2. Inspection Summary');
-
-  drawField(ctx, 'Inspection Type', getInspectionTypeLabel(data.inspection.inspectionType));
-  drawField(ctx, 'Date', formatDate(data.inspection.inspectionDate));
-  drawField(ctx, 'Duration', data.inspection.durationMinutes ? `${data.inspection.durationMinutes} minutes` : null);
-  drawField(ctx, 'Inspector', data.inspector.displayName);
-  drawField(ctx, 'RPII No.', data.inspector.rpiiNumber);
-  drawField(ctx, 'RPII Grade', data.inspector.rpiiGrade);
-  drawField(ctx, 'Qualifications', data.inspector.qualifications);
-  drawField(ctx, 'Weather', data.inspection.weatherConditions);
-  drawField(ctx, 'Temperature', data.inspection.temperatureC !== null ? `${data.inspection.temperatureC}°C` : null);
-  drawField(ctx, 'Surface Conditions', data.inspection.surfaceConditions);
-
-  if (data.inspection.closureRecommended) {
-    ctx.cursorY -= 8;
-    ensureSpace(ctx, 30);
-
-    // Red warning box
-    ctx.currentPage.drawRectangle({
-      x: MARGIN_LEFT,
-      y: ctx.cursorY - 6,
-      width: CONTENT_WIDTH,
-      height: 22,
-      color: rgb(1, 0.92, 0.92),
-      borderColor: COLOUR_RED,
-      borderWidth: 1,
-    });
-
-    ctx.currentPage.drawText('CLOSURE RECOMMENDED — Very high risk defects identified requiring immediate action', {
-      x: MARGIN_LEFT + 10,
-      y: ctx.cursorY,
-      size: FONT_SIZE_BODY,
-      font: ctx.fontBold,
-      color: COLOUR_RED,
-    });
-    ctx.cursorY -= 22;
-  }
-
-  if (data.inspection.inspectorSummary) {
-    ctx.cursorY -= 6;
-    drawText(ctx, 'Inspector Summary:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
-    drawText(ctx, data.inspection.inspectorSummary, { indent: 10 });
-  }
-}
-
-function drawRiskOverview(ctx: DrawContext, data: PdfReportData): void {
-  drawHeading(ctx, '3. Risk Overview');
-
-  const overallRisk = data.inspection.overallRiskRating ?? 'Not assessed';
-  const riskColour = getRiskColour(overallRisk);
-
-  drawText(ctx, `Overall Risk Rating: ${formatEnum(overallRisk)}`, {
-    font: ctx.fontBold, size: FONT_SIZE_SUBHEADING, colour: riskColour,
-  });
-
-  ctx.cursorY -= 8;
-
-  // Risk count table
-  const colSeverity = MARGIN_LEFT + 10;
-  const colCount = MARGIN_LEFT + 180;
-  const colAction = MARGIN_LEFT + 230;
-
-  // Header row
-  drawTableRow(ctx, [
-    { text: 'Severity', x: colSeverity, width: 170, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Count', x: colCount, width: 50, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Required Action', x: colAction, width: 240, font: ctx.fontBold, colour: COLOUR_WHITE },
-  ], { bgColour: COLOUR_TABLE_HEADER });
-
-  const rows = [
-    { label: 'Very High', count: data.inspection.veryHighRiskCount, colour: COLOUR_RED, action: 'Immediate closure / restriction' },
-    { label: 'High', count: data.inspection.highRiskCount, colour: COLOUR_AMBER, action: 'Urgent action within 48 hours' },
-    { label: 'Medium', count: data.inspection.mediumRiskCount, colour: COLOUR_YELLOW, action: 'Action within 1 month' },
-    { label: 'Low', count: data.inspection.lowRiskCount, colour: COLOUR_GREEN, action: 'Next scheduled maintenance' },
-  ];
-
-  rows.forEach((row, i) => {
-    drawTableRow(ctx, [
-      { text: row.label, x: colSeverity, width: 170, font: ctx.fontBold, colour: row.colour },
-      { text: String(row.count), x: colCount, width: 50, font: ctx.fontBold, colour: row.count > 0 ? row.colour : COLOUR_GREY },
-      { text: row.action, x: colAction, width: 240, colour: COLOUR_DARK_GREY },
-    ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
-  });
-
-  ctx.cursorY -= 4;
-  drawField(ctx, 'Total Defects', String(data.inspection.totalDefects), 10);
-  drawField(ctx, 'Total Assets Inspected', String(data.items.length), 10);
-  drawField(ctx, 'Total Photos', String(data.photoIndex.length), 10);
-}
-
-/**
- * BS EN Inspection Schedule — THE differentiator.
- */
-function drawInspectionSchedule(ctx: DrawContext, data: PdfReportData): void {
-  drawHeading(ctx, '4. BS EN Inspection Schedule');
-
-  drawText(ctx, 'The following inspection points were assessed for each asset in accordance with the applicable BS EN standard and the inspection type performed.', {
-    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
-  });
-
-  ctx.cursorY -= 4;
-
-  // Key
-  drawText(ctx, 'Key:  \u2713 Inspected — defect(s) found    \u25CF Inspected — satisfactory    \u25CB Not assessed for this inspection type', {
-    size: FONT_SIZE_SMALL, colour: COLOUR_GREY, font: ctx.fontItalic,
-  });
-
-  ctx.cursorY -= 8;
-
-  for (const item of data.items) {
-    const config = getWorkerAssetConfig(item.assetType);
-    const inspectionType = data.inspection.inspectionType;
-
-    ensureSpace(ctx, 60);
-
-    // Asset sub-header
-    drawText(ctx, `${item.assetCode} — ${config.name}`, {
-      font: ctx.fontBold, size: FONT_SIZE_BODY, colour: COLOUR_DARK_GREY,
-    });
-    drawText(ctx, `Standard: ${config.complianceStandard}`, {
-      size: FONT_SIZE_SMALL, colour: COLOUR_GREY, indent: 5,
-    });
-
-    ctx.cursorY -= 2;
-
-    // Table header
-    const colStatus = MARGIN_LEFT + 5;
-    const colPoint = MARGIN_LEFT + 30;
-    const colDesc = MARGIN_LEFT + 200;
-
-    drawTableRow(ctx, [
-      { text: 'Status', x: colStatus, width: 25, font: ctx.fontBold, colour: COLOUR_WHITE },
-      { text: 'Inspection Point', x: colPoint, width: 170, font: ctx.fontBold, colour: COLOUR_WHITE },
-      { text: 'Description', x: colDesc, width: 260, font: ctx.fontBold, colour: COLOUR_WHITE },
-    ], { bgColour: COLOUR_TABLE_HEADER });
-
-    // Inspection points for this asset
-    for (let i = 0; i < config.inspectionPoints.length; i++) {
-      const point = config.inspectionPoints[i];
-      if (!point) continue;
-
-      const isApplicable = point.appliesTo.includes(inspectionType);
-
-      const hasDefect = item.defects.some((d) =>
-        d.description.toLowerCase().includes(point.label.toLowerCase().split('/')[0] ?? '') ||
-        d.defectCategory.toLowerCase().includes(point.label.toLowerCase().split('/')[0] ?? ''),
-      );
-
-      const status = !isApplicable ? '\u25CB' : hasDefect ? '\u2713' : '\u25CF';
-      const statusColour = !isApplicable ? COLOUR_GREY : hasDefect ? COLOUR_AMBER : COLOUR_GREEN;
-
-      ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
-
-      drawTableRow(ctx, [
-        { text: status, x: colStatus + 5, width: 20, font: ctx.fontBold, colour: statusColour },
-        { text: point.label, x: colPoint, width: 170, font: ctx.fontRegular },
-        { text: point.description, x: colDesc, width: 260, colour: COLOUR_DARK_GREY },
-      ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
-    }
-
-    ctx.cursorY -= 6;
-  }
-}
-
-function drawAssetFindingsSection(ctx: DrawContext, data: PdfReportData): void {
-  drawHeading(ctx, '5. Asset Inspection Findings');
-
-  for (const item of data.items) {
-    drawAssetFindings(ctx, item, data.inspection.inspectionType);
-  }
-}
-
-function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem, inspectionType: string): void {
-  ensureSpace(ctx, 80);
-  ctx.cursorY -= SECTION_GAP / 2;
-
-  const config = getWorkerAssetConfig(item.assetType);
-
-  // Asset header with condition badge
-  const conditionLabel = item.overallCondition
-    ? formatEnum(item.overallCondition)
-    : 'Not assessed';
-
-  drawText(ctx, `${item.assetCode} — ${config.name}`, {
-    font: ctx.fontBold, size: FONT_SIZE_SUBHEADING, colour: COLOUR_DARK_GREY,
-  });
-
-  drawField(ctx, 'Condition', conditionLabel, 10);
-  drawField(ctx, 'Risk Rating', item.riskRating ? formatEnum(item.riskRating) : 'Not assessed', 10);
-
-  if (item.requiresAction) {
-    drawField(ctx, 'Action Required', item.actionTimeframe ? formatEnum(item.actionTimeframe) : 'Yes', 10);
-  }
-
-  // Photo references with numbered cross-refs
-  if (item.photoCount > 0) {
-    const photoNums = item.photos.map((p) => `P${p.photoNumber}`).join(', ');
-    drawField(ctx, 'Photos', `${item.photoCount} photo${item.photoCount !== 1 ? 's' : ''} (${photoNums})`, 10);
-  }
-
-  if (item.inspectorNotes) {
-    ctx.cursorY -= 2;
-    drawText(ctx, 'Inspector Notes:', { font: ctx.fontBold, size: FONT_SIZE_SMALL, indent: 10 });
-    drawText(ctx, item.inspectorNotes, { indent: 15, size: FONT_SIZE_SMALL });
-  }
-
-  if (item.aiSummary) {
-    ctx.cursorY -= 2;
-    drawText(ctx, 'Findings Summary:', { font: ctx.fontBold, size: FONT_SIZE_SMALL, indent: 10 });
-    drawText(ctx, item.aiSummary, { indent: 15, size: FONT_SIZE_SMALL });
-  }
-
-  // Defects for this asset
-  if (item.defects.length > 0) {
-    ctx.cursorY -= 6;
-    drawText(ctx, `Defects (${item.defects.length}):`, {
-      font: ctx.fontBold, size: FONT_SIZE_SMALL, indent: 10,
-    });
-
-    for (const defect of item.defects) {
-      ensureSpace(ctx, 45);
-      const sevColour = getRiskColour(defect.severity);
-
-      // Find photo refs for this defect
-      const defectPhotos = item.photos.filter((p) =>
-        p.associatedDefectDescriptions.some((d) => d === defect.description) || p.photoType === 'defect',
-      );
-      const photoRef = defectPhotos.length > 0
-        ? ` [${defectPhotos.map((p) => `P${p.photoNumber}`).join(', ')}]`
-        : '';
-
-      drawText(ctx, `[${formatEnum(defect.severity)}] ${defect.description}${photoRef}`, {
-        indent: 15, font: ctx.fontBold, size: FONT_SIZE_SMALL, colour: sevColour,
-      });
-      drawText(ctx, `Action: ${defect.actionRequired} (${formatEnum(defect.actionTimeframe)})`, {
-        indent: 25, size: FONT_SIZE_SMALL,
-      });
-      if (defect.bsEnReference) {
-        drawText(ctx, `Ref: ${defect.bsEnReference}`, { indent: 25, size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
-      }
-      if (defect.estimatedCostGbp) {
-        drawText(ctx, `Est. Cost: ${defect.estimatedCostGbp}`, { indent: 25, size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
-      }
-    }
-  } else {
-    drawText(ctx, 'No defects identified.', { indent: 10, size: FONT_SIZE_SMALL, colour: COLOUR_GREEN });
-  }
-
-  drawRule(ctx, COLOUR_LIGHT_GREY);
-}
-
-function drawDefectRegister(ctx: DrawContext, data: PdfReportData): void {
-  const allDefects = data.items.flatMap((item) =>
-    item.defects.map((d) => ({ ...d, assetCode: item.assetCode, itemPhotos: item.photos })),
-  );
-
-  if (allDefects.length === 0) return;
-
-  drawHeading(ctx, '6. Defect Register');
-
-  drawText(ctx, 'All defects identified during this inspection, listed by severity. Photo references (P1, P2, etc.) cross-reference the Photo Evidence Log. This register should be used to track remedial actions to completion.', {
-    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
-  });
-
-  ctx.cursorY -= 6;
-
-  // Table header — with Photo Ref column
-  const colNo = MARGIN_LEFT;
-  const colAsset = MARGIN_LEFT + 20;
-  const colSev = MARGIN_LEFT + 72;
-  const colDesc = MARGIN_LEFT + 128;
-  const colAction = MARGIN_LEFT + 278;
-  const colPhoto = MARGIN_LEFT + 388;
-  const colCost = MARGIN_LEFT + 442;
-
-  drawTableRow(ctx, [
-    { text: '#', x: colNo, width: 20, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Asset', x: colAsset, width: 52, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Severity', x: colSev, width: 56, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Description', x: colDesc, width: 150, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Action / Timeframe', x: colAction, width: 110, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Photo Ref', x: colPhoto, width: 54, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Est. Cost', x: colCost, width: 53, font: ctx.fontBold, colour: COLOUR_WHITE },
-  ], { bgColour: COLOUR_TABLE_HEADER });
-
-  // Sort by severity (very_high first)
-  const sorted = [...allDefects].sort((a, b) => {
-    const order: Record<string, number> = { very_high: 0, high: 1, medium: 2, low: 3 };
-    return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);
-  });
-
-  sorted.forEach((defect, i) => {
-    ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
-    const sevColour = getRiskColour(defect.severity);
-
-    // Build photo ref for this defect
-    const defectPhotos = defect.itemPhotos.filter((p) =>
-      p.associatedDefectDescriptions.some((d) => d === defect.description) || p.photoType === 'defect',
-    );
-    const photoRef = defectPhotos.length > 0
-      ? defectPhotos.map((p) => `P${p.photoNumber}`).join(', ')
-      : '\u2014';
-
-    drawTableRow(ctx, [
-      { text: String(i + 1), x: colNo, width: 20 },
-      { text: defect.assetCode, x: colAsset, width: 52, font: ctx.fontBold },
-      { text: formatEnum(defect.severity), x: colSev, width: 56, colour: sevColour, font: ctx.fontBold },
-      { text: defect.description, x: colDesc, width: 150 },
-      { text: `${formatEnum(defect.actionTimeframe)}`, x: colAction, width: 110 },
-      { text: photoRef, x: colPhoto, width: 54, colour: COLOUR_BLUE },
-      { text: defect.estimatedCostGbp ?? '\u2014', x: colCost, width: 53, colour: COLOUR_GREY },
-    ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
-  });
-}
-
-/**
- * Photo Evidence Log — cross-referenced table of all photos taken.
- * Each photo is numbered P1, P2, etc. and linked back to defects.
- */
-function drawPhotoEvidenceLog(ctx: DrawContext, data: PdfReportData): void {
-  if (!data.photoIndex || data.photoIndex.length === 0) return;
-
-  drawHeading(ctx, '7. Photo Evidence Log');
-
-  drawText(ctx, `${data.photoIndex.length} photograph${data.photoIndex.length !== 1 ? 's' : ''} captured during this inspection. Each photo is cross-referenced with the relevant asset and defect(s) in the defect register above.`, {
-    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
-  });
-
-  ctx.cursorY -= 6;
-
-  // Table header
-  const colNum = MARGIN_LEFT;
-  const colAsset = MARGIN_LEFT + 30;
-  const colType = MARGIN_LEFT + 90;
-  const colDesc = MARGIN_LEFT + 150;
-
-  drawTableRow(ctx, [
-    { text: 'Photo', x: colNum, width: 30, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Asset', x: colAsset, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Type', x: colType, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Description / Associated Defect', x: colDesc, width: 345, font: ctx.fontBold, colour: COLOUR_WHITE },
-  ], { bgColour: COLOUR_TABLE_HEADER });
-
-  for (let i = 0; i < data.photoIndex.length; i++) {
-    const entry = data.photoIndex[i];
-    if (!entry) continue;
-
-    ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
-
-    const description = entry.associatedDefects.length > 0
-      ? entry.associatedDefects[0] ?? ''
-      : entry.caption ?? formatEnum(entry.photoType);
-
-    drawTableRow(ctx, [
-      { text: `P${entry.number}`, x: colNum, width: 30, font: ctx.fontBold, colour: COLOUR_BLUE },
-      { text: entry.assetCode, x: colAsset, width: 60, font: ctx.fontBold },
-      { text: formatEnum(entry.photoType), x: colType, width: 60, colour: COLOUR_GREY },
-      { text: description, x: colDesc, width: 345 },
-    ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
-  }
-
-  ctx.cursorY -= 6;
-}
-
-/**
- * Consolidated recommendations and compliance notes from all AI analyses.
- */
-function drawRecommendations(ctx: DrawContext, data: PdfReportData): void {
-  const allRecs = data.items.flatMap((item) =>
-    item.recommendations.map((r) => ({ assetCode: item.assetCode, text: r })),
-  );
-  const allNotes = data.items.flatMap((item) =>
-    item.complianceNotes.map((n) => ({ assetCode: item.assetCode, text: n })),
-  );
-
-  if (allRecs.length === 0 && allNotes.length === 0) return;
-
-  drawHeading(ctx, '8. Recommendations & Compliance Notes');
-
-  if (allRecs.length > 0) {
-    drawText(ctx, 'Recommendations:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
-    for (const rec of allRecs) {
-      ensureSpace(ctx, LINE_HEIGHT_BODY);
-      drawText(ctx, `\u2022 [${rec.assetCode}] ${rec.text}`, { indent: 10, size: FONT_SIZE_SMALL });
-    }
-    ctx.cursorY -= 6;
-  }
-
-  if (allNotes.length > 0) {
-    drawText(ctx, 'Compliance Notes:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
-    for (const note of allNotes) {
-      ensureSpace(ctx, LINE_HEIGHT_BODY);
-      drawText(ctx, `\u2022 [${note.assetCode}] ${note.text}`, { indent: 10, size: FONT_SIZE_SMALL });
-    }
-  }
-}
-
-function drawSignature(ctx: DrawContext, data: PdfReportData): void {
-  const sectionNum = hasRecommendations(data) ? '9' : '8';
-  drawHeading(ctx, `${sectionNum}. Inspector Declaration`);
-
-  drawText(ctx, 'I confirm that this inspection has been carried out in accordance with BS EN 1176-7:2020 and represents an accurate record of findings at the time of inspection. Equipment not listed in this report was not inspected.', {
-    size: FONT_SIZE_BODY,
-  });
-
-  ctx.cursorY -= 10;
-
-  drawField(ctx, 'Inspector', data.inspector.displayName);
-  drawField(ctx, 'RPII No.', data.inspector.rpiiNumber);
-  drawField(ctx, 'Qualifications', data.inspector.qualifications);
-  drawField(ctx, 'Insurance', data.inspector.insuranceProvider
-    ? `${data.inspector.insuranceProvider} (${data.inspector.insurancePolicyNumber ?? 'N/A'})`
-    : null);
-
-  ctx.cursorY -= 10;
-
-  if (data.inspection.signedBy) {
-    drawField(ctx, 'Signed By', data.inspection.signedBy);
-    drawField(ctx, 'Signed At', data.inspection.signedAt ? formatDateTime(data.inspection.signedAt) : null);
-
-    // Signature line
-    ctx.cursorY -= 8;
-    ctx.currentPage.drawLine({
-      start: { x: MARGIN_LEFT, y: ctx.cursorY },
-      end: { x: MARGIN_LEFT + 200, y: ctx.cursorY },
-      thickness: 0.5,
-      color: COLOUR_BLACK,
-    });
-    ctx.cursorY -= LINE_HEIGHT_BODY;
-    drawText(ctx, 'Digital Signature', { size: FONT_SIZE_SMALL, colour: COLOUR_GREY });
-  } else {
-    drawText(ctx, '[NOT YET SIGNED]', { font: ctx.fontBold, colour: COLOUR_AMBER });
-  }
-}
-
-/**
- * List all BS EN standards referenced in this report.
- */
-function drawApplicableStandards(ctx: DrawContext, data: PdfReportData): void {
-  const sectionNum = hasRecommendations(data) ? '10' : '9';
-  drawHeading(ctx, `${sectionNum}. Applicable Standards`);
-
-  // Collect unique standards from all inspected asset types
-  const standards = new Set<string>();
-  standards.add('BS EN 1176-1:2017 — Playground equipment — General safety requirements and test methods');
-  standards.add('BS EN 1176-7:2020 — Playground equipment — Guidance on installation, inspection, maintenance and operation');
-  standards.add('BS EN 1177:2018 — Impact attenuating playground surfacing');
-
-  for (const item of data.items) {
-    const config = getWorkerAssetConfig(item.assetType);
-    const parts = config.complianceStandard.split(',').map((s) => s.trim());
-    for (const part of parts) {
-      if (part.startsWith('BS EN')) {
-        standards.add(part);
-      }
-    }
-  }
-
-  const sortedStandards = [...standards].sort();
-  for (const std of sortedStandards) {
-    drawText(ctx, `\u2022 ${std}`, { size: FONT_SIZE_SMALL, indent: 5 });
-  }
-}
-
-function drawFooterOnAllPages(ctx: DrawContext, data: PdfReportData): void {
-  const pages = ctx.doc.getPages();
-  const totalPages = pages.length;
-
-  for (let i = 0; i < totalPages; i++) {
-    const page = pages[i];
-    if (!page) continue;
-
-    // Top border line
-    page.drawLine({
-      start: { x: MARGIN_LEFT, y: PAGE_HEIGHT - MARGIN_TOP + 15 },
-      end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: PAGE_HEIGHT - MARGIN_TOP + 15 },
-      thickness: 0.5,
-      color: COLOUR_LIGHT_GREY,
-    });
-
-    // Bottom border line
-    page.drawLine({
-      start: { x: MARGIN_LEFT, y: MARGIN_BOTTOM - 15 },
-      end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: MARGIN_BOTTOM - 15 },
-      thickness: 0.5,
-      color: COLOUR_LIGHT_GREY,
-    });
-
-    // Page number (right)
-    const pageText = `Page ${i + 1} of ${totalPages}`;
-    const pageTextWidth = ctx.fontRegular.widthOfTextAtSize(pageText, FONT_SIZE_SMALL);
-    page.drawText(pageText, {
-      x: PAGE_WIDTH - MARGIN_RIGHT - pageTextWidth,
-      y: 25,
-      size: FONT_SIZE_SMALL,
-      font: ctx.fontRegular,
-      color: COLOUR_GREY,
-    });
-
-    // Report ref (left)
-    page.drawText(`IV-${data.inspection.id.slice(0, 8).toUpperCase()}`, {
-      x: MARGIN_LEFT,
-      y: 25,
-      size: FONT_SIZE_SMALL,
-      font: ctx.fontRegular,
-      color: COLOUR_GREY,
-    });
-
-    // Custom footer text (left, lower)
-    if (data.org.reportFooterText) {
-      page.drawText(data.org.reportFooterText.slice(0, 100), {
-        x: MARGIN_LEFT,
-        y: 15,
-        size: FONT_SIZE_TINY,
-        font: ctx.fontRegular,
-        color: COLOUR_GREY,
-      });
-    }
-
-    // Generated by line (centre, lower)
-    const genText = 'Generated by InspectVoice — inspectvoice.co.uk';
-    const genWidth = ctx.fontRegular.widthOfTextAtSize(genText, FONT_SIZE_TINY);
-    page.drawText(genText, {
-      x: (PAGE_WIDTH - genWidth) / 2,
-      y: 15,
-      size: FONT_SIZE_TINY,
-      font: ctx.fontRegular,
-      color: COLOUR_GREY,
-    });
-  }
+/** Generated report output */
+export interface GeneratedReport {
+  pdfBytes: Uint8Array;
+  filename: string;
+  pageCount: number;
 }
 
 // =============================================
 // HELPERS
 // =============================================
 
-function hasRecommendations(data: PdfReportData): boolean {
-  return data.items.some((item) => item.recommendations.length > 0 || item.complianceNotes.length > 0);
+/** Format ISO date to UK display format */
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '\u2014';
+  try {
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
 }
 
-function getRiskColour(rating: string): ReturnType<typeof rgb> {
+/** Format ISO datetime to UK display format with time */
+function formatDateTime(dateStr: string | null): string {
+  if (!dateStr) return '\u2014';
+  try {
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+/** Get colour for risk rating */
+function riskColour(rating: RiskRating | null): ReturnType<typeof rgb> {
   switch (rating) {
-    case 'very_high': return COLOUR_RED;
-    case 'high': return COLOUR_AMBER;
-    case 'medium': return COLOUR_YELLOW;
-    case 'low': return COLOUR_GREEN;
-    default: return COLOUR_DARK_GREY;
+    case RiskRating.VERY_HIGH: return COLOUR_RED;
+    case RiskRating.HIGH: return COLOUR_ORANGE;
+    case RiskRating.MEDIUM: return COLOUR_YELLOW;
+    case RiskRating.LOW: return COLOUR_GREEN;
+    default: return COLOUR_MID_GREY;
   }
 }
 
-function getConditionColour(condition: string | null): ReturnType<typeof rgb> {
-  switch (condition) {
-    case 'good': return COLOUR_GREEN;
-    case 'fair': return COLOUR_YELLOW;
-    case 'poor': return COLOUR_AMBER;
-    case 'dangerous': return COLOUR_RED;
-    default: return COLOUR_DARK_GREY;
+/** Get background colour for risk rating */
+function riskBgColour(rating: RiskRating | null): ReturnType<typeof rgb> {
+  switch (rating) {
+    case RiskRating.VERY_HIGH: return COLOUR_RED_BG;
+    case RiskRating.HIGH: return COLOUR_ORANGE_BG;
+    case RiskRating.MEDIUM: return COLOUR_YELLOW_BG;
+    case RiskRating.LOW: return COLOUR_GREEN_BG;
+    default: return COLOUR_LIGHT_GREY;
   }
 }
 
-function getInspectionTypeLabel(type: string): string {
+/** Get colour for condition rating */
+function conditionColour(rating: ConditionRating | null): ReturnType<typeof rgb> {
+  switch (rating) {
+    case ConditionRating.GOOD: return COLOUR_GREEN;
+    case ConditionRating.FAIR: return COLOUR_YELLOW;
+    case ConditionRating.POOR: return COLOUR_ORANGE;
+    case ConditionRating.DANGEROUS: return COLOUR_RED;
+    default: return COLOUR_MID_GREY;
+  }
+}
+
+/** Wrap text to fit within a given width, returning array of lines */
+function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
+  const lines: string[] = [];
+  const paragraphs = text.split('\n');
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.trim() === '') {
+      lines.push('');
+      continue;
+    }
+
+    const words = paragraph.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const testWidth = font.widthOfTextAtSize(testLine, fontSize);
+
+      if (testWidth > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+  }
+
+  return lines;
+}
+
+/** Truncate text to fit width, adding ellipsis */
+function truncateText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string {
+  if (font.widthOfTextAtSize(text, fontSize) <= maxWidth) return text;
+
+  let truncated = text;
+  while (truncated.length > 0 && font.widthOfTextAtSize(truncated + '\u2026', fontSize) > maxWidth) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated + '\u2026';
+}
+
+/** Build a safe filename for the PDF */
+function buildFilename(site: Site, inspection: Inspection): string {
+  const siteName = site.name.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-').substring(0, 40);
+  const typeLabel = INSPECTION_TYPE_LABELS[inspection.inspection_type]
+    .replace(/\s+/g, '-');
+  const date = inspection.inspection_date.split('T')[0] ?? inspection.inspection_date;
+  return `InspectVoice-${siteName}-${typeLabel}-${date}.pdf`;
+}
+
+// =============================================
+// PAGE MANAGEMENT
+// =============================================
+
+/** Add a new page and return updated cursor */
+function addPage(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  reportId: string,
+): Cursor {
+  const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  const pageNumber = cursor.pageNumber + 1;
+
+  // Draw footer on new page
+  drawFooter(page, fonts, reportId, pageNumber);
+
   return {
-    routine_visual: 'Routine Visual Inspection',
-    operational: 'Operational Inspection',
-    annual_main: 'Annual Main Inspection',
-    post_repair: 'Post-Repair Inspection',
-    ad_hoc: 'Ad Hoc Inspection',
-  }[type] ?? type;
+    y: CONTENT_TOP,
+    page,
+    pageNumber,
+  };
 }
 
-/** Format snake_case enum values for display: "very_high" -> "Very High" */
-function formatEnum(value: string): string {
-  return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-  } catch {
-    return iso;
+/** Check if we need a new page, create one if so */
+function ensureSpace(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  reportId: string,
+  requiredHeight: number,
+): Cursor {
+  if (cursor.y - requiredHeight < CONTENT_BOTTOM) {
+    return addPage(doc, cursor, fonts, reportId);
   }
+  return cursor;
 }
 
-function formatDateTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
-      + ' at '
-      + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return iso;
+/** Draw footer on a page */
+function drawFooter(page: PDFPage, fonts: PDFFonts, reportId: string, pageNumber: number): void {
+  // Separator line
+  page.drawLine({
+    start: { x: MARGIN_LEFT, y: MARGIN_BOTTOM + 15 },
+    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: MARGIN_BOTTOM + 15 },
+    thickness: 0.5,
+    color: COLOUR_LIGHT_GREY,
+  });
+
+  // Left: Report ID
+  page.drawText(`Report: ${reportId}`, {
+    x: MARGIN_LEFT,
+    y: MARGIN_BOTTOM,
+    size: FONT_SIZE_FOOTER,
+    font: fonts.regular,
+    color: COLOUR_MID_GREY,
+  });
+
+  // Centre: Confidentiality
+  const confText = 'CONFIDENTIAL \u2014 For authorised use only';
+  const confWidth = fonts.italic.widthOfTextAtSize(confText, FONT_SIZE_FOOTER);
+  page.drawText(confText, {
+    x: (PAGE_WIDTH - confWidth) / 2,
+    y: MARGIN_BOTTOM,
+    size: FONT_SIZE_FOOTER,
+    font: fonts.italic,
+    color: COLOUR_MID_GREY,
+  });
+
+  // Right: Page number
+  const pageText = `Page ${pageNumber}`;
+  const pageWidth = fonts.regular.widthOfTextAtSize(pageText, FONT_SIZE_FOOTER);
+  page.drawText(pageText, {
+    x: PAGE_WIDTH - MARGIN_RIGHT - pageWidth,
+    y: MARGIN_BOTTOM,
+    size: FONT_SIZE_FOOTER,
+    font: fonts.regular,
+    color: COLOUR_MID_GREY,
+  });
+}
+
+// =============================================
+// DRAWING HELPERS
+// =============================================
+
+/** Draw a section heading with accent bar */
+function drawSectionHeading(
+  cursor: Cursor,
+  fonts: PDFFonts,
+  title: string,
+): Cursor {
+  const lineHeight = FONT_SIZE_HEADING * LINE_HEIGHT_MULTIPLIER;
+
+  // Accent bar
+  cursor.page.drawRectangle({
+    x: MARGIN_LEFT,
+    y: cursor.y - lineHeight + 2,
+    width: 3,
+    height: lineHeight,
+    color: COLOUR_ACCENT,
+  });
+
+  // Title
+  cursor.page.drawText(title.toUpperCase(), {
+    x: MARGIN_LEFT + 10,
+    y: cursor.y - FONT_SIZE_HEADING + 2,
+    size: FONT_SIZE_HEADING,
+    font: fonts.bold,
+    color: COLOUR_DARK_GREY,
+  });
+
+  // Underline
+  cursor.page.drawLine({
+    start: { x: MARGIN_LEFT, y: cursor.y - lineHeight - 2 },
+    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y - lineHeight - 2 },
+    thickness: 0.5,
+    color: COLOUR_LIGHT_GREY,
+  });
+
+  return { ...cursor, y: cursor.y - lineHeight - 12 };
+}
+
+/** Draw a label-value pair */
+function drawLabelValue(
+  cursor: Cursor,
+  fonts: PDFFonts,
+  label: string,
+  value: string,
+  labelWidth: number = 140,
+): Cursor {
+  const lineHeight = FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
+
+  cursor.page.drawText(label, {
+    x: MARGIN_LEFT,
+    y: cursor.y - FONT_SIZE_BODY,
+    size: FONT_SIZE_BODY,
+    font: fonts.bold,
+    color: COLOUR_MID_GREY,
+  });
+
+  // Wrap value text
+  const valueLines = wrapText(value || '\u2014', fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - labelWidth);
+
+  for (let i = 0; i < valueLines.length; i++) {
+    cursor.page.drawText(valueLines[i] ?? '', {
+      x: MARGIN_LEFT + labelWidth,
+      y: cursor.y - FONT_SIZE_BODY - (i * lineHeight),
+      size: FONT_SIZE_BODY,
+      font: fonts.regular,
+      color: COLOUR_BLACK,
+    });
   }
+
+  const totalHeight = Math.max(1, valueLines.length) * lineHeight + 2;
+  return { ...cursor, y: cursor.y - totalHeight };
+}
+
+/** Draw a coloured status badge */
+function drawBadge(
+  page: PDFPage,
+  fonts: PDFFonts,
+  text: string,
+  x: number,
+  y: number,
+  textColour: ReturnType<typeof rgb>,
+  bgColour: ReturnType<typeof rgb>,
+): void {
+  const fontSize = FONT_SIZE_SMALL;
+  const textWidth = fonts.bold.widthOfTextAtSize(text, fontSize);
+  const padding = 6;
+  const badgeWidth = textWidth + padding * 2;
+  const badgeHeight = fontSize + 6;
+
+  page.drawRectangle({
+    x,
+    y: y - 2,
+    width: badgeWidth,
+    height: badgeHeight,
+    color: bgColour,
+    borderColor: textColour,
+    borderWidth: 0.5,
+  });
+
+  page.drawText(text, {
+    x: x + padding,
+    y: y + 2,
+    size: fontSize,
+    font: fonts.bold,
+    color: textColour,
+  });
+}
+
+/** Draw a horizontal rule */
+function drawHorizontalRule(cursor: Cursor): Cursor {
+  cursor.page.drawLine({
+    start: { x: MARGIN_LEFT, y: cursor.y },
+    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y },
+    thickness: 0.5,
+    color: COLOUR_LIGHT_GREY,
+  });
+  return { ...cursor, y: cursor.y - 8 };
+}
+
+// =============================================
+// SECTION RENDERERS
+// =============================================
+
+/** 1. Cover page */
+function renderCoverPage(
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+): Cursor {
+  const { inspection, site } = data;
+
+  // Dark header band
+  cursor.page.drawRectangle({
+    x: 0,
+    y: PAGE_HEIGHT - 180,
+    width: PAGE_WIDTH,
+    height: 180,
+    color: COLOUR_HEADER_BG,
+  });
+
+  // Org name
+  cursor.page.drawText(data.orgName || 'InspectVoice', {
+    x: MARGIN_LEFT,
+    y: PAGE_HEIGHT - 60,
+    size: 12,
+    font: fonts.bold,
+    color: COLOUR_ACCENT,
+  });
+
+  // Report title
+  cursor.page.drawText('INSPECTION REPORT', {
+    x: MARGIN_LEFT,
+    y: PAGE_HEIGHT - 90,
+    size: FONT_SIZE_TITLE,
+    font: fonts.bold,
+    color: COLOUR_WHITE,
+  });
+
+  // Inspection type
+  const typeLabel = INSPECTION_TYPE_LABELS[inspection.inspection_type];
+  cursor.page.drawText(typeLabel, {
+    x: MARGIN_LEFT,
+    y: PAGE_HEIGHT - 118,
+    size: 16,
+    font: fonts.regular,
+    color: COLOUR_GREEN,
+  });
+
+  // Type description
+  const typeDesc = INSPECTION_TYPE_DESCRIPTIONS[inspection.inspection_type];
+  const descLines = wrapText(typeDesc, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH);
+  for (let i = 0; i < descLines.length; i++) {
+    cursor.page.drawText(descLines[i] ?? '', {
+      x: MARGIN_LEFT,
+      y: PAGE_HEIGHT - 140 - (i * FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER),
+      size: FONT_SIZE_BODY,
+      font: fonts.italic,
+      color: rgb(0.7, 0.7, 0.7),
+    });
+  }
+
+  // Compliance reference
+  cursor.page.drawText('Conducted in accordance with BS EN 1176-7:2020', {
+    x: MARGIN_LEFT,
+    y: PAGE_HEIGHT - 170,
+    size: FONT_SIZE_SMALL,
+    font: fonts.italic,
+    color: rgb(0.6, 0.6, 0.6),
+  });
+
+  // Site name (large, below header band)
+  let y = PAGE_HEIGHT - 220;
+
+  cursor.page.drawText(site.name, {
+    x: MARGIN_LEFT,
+    y,
+    size: 18,
+    font: fonts.bold,
+    color: COLOUR_DARK_GREY,
+  });
+  y -= 24;
+
+  // Address
+  const addressLines = wrapText(site.address, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
+  for (const line of addressLines) {
+    cursor.page.drawText(line, {
+      x: MARGIN_LEFT,
+      y,
+      size: FONT_SIZE_BODY,
+      font: fonts.regular,
+      color: COLOUR_MID_GREY,
+    });
+    y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
+  }
+
+  if (site.postcode) {
+    cursor.page.drawText(site.postcode, {
+      x: MARGIN_LEFT,
+      y,
+      size: FONT_SIZE_BODY,
+      font: fonts.bold,
+      color: COLOUR_MID_GREY,
+    });
+    y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
+  }
+
+  y -= 20;
+
+  // Key info grid
+  const photoCount = data.photoIndex?.length ?? 0;
+  const infoItems: Array<[string, string]> = [
+    ['Report ID', inspection.id.substring(0, 8).toUpperCase()],
+    ['Inspection Date', formatDate(inspection.inspection_date)],
+    ['Inspector', inspection.signed_by ?? '\u2014'],
+    ['Status', INSPECTION_STATUS_LABELS[inspection.status]],
+    ['Duration', inspection.duration_minutes ? `${inspection.duration_minutes} minutes` : '\u2014'],
+    ['Weather', inspection.weather_conditions ?? '\u2014'],
+    ['Surface', inspection.surface_conditions ?? '\u2014'],
+    ['Photos', photoCount > 0 ? `${photoCount} photo${photoCount !== 1 ? 's' : ''} captured` : 'None'],
+  ];
+
+  // Draw as two-column grid
+  const colWidth = CONTENT_WIDTH / 2;
+  for (let i = 0; i < infoItems.length; i++) {
+    const [label, value] = infoItems[i]!;
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = MARGIN_LEFT + (col * colWidth);
+    const rowY = y - (row * (FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER * 2 + 4));
+
+    cursor.page.drawText(label, {
+      x,
+      y: rowY,
+      size: FONT_SIZE_SMALL,
+      font: fonts.bold,
+      color: COLOUR_MID_GREY,
+    });
+
+    cursor.page.drawText(value, {
+      x,
+      y: rowY - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER,
+      size: FONT_SIZE_BODY,
+      font: fonts.regular,
+      color: COLOUR_BLACK,
+    });
+  }
+
+  const gridRows = Math.ceil(infoItems.length / 2);
+  y -= gridRows * (FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER * 2 + 4) + 20;
+
+  // Closure warning banner if applicable
+  if (inspection.closure_recommended || inspection.immediate_action_required) {
+    cursor.page.drawRectangle({
+      x: MARGIN_LEFT,
+      y: y - 40,
+      width: CONTENT_WIDTH,
+      height: 40,
+      color: COLOUR_RED_BG,
+      borderColor: COLOUR_RED,
+      borderWidth: 1,
+    });
+
+    const warningText = inspection.closure_recommended
+      ? '\u26A0 CLOSURE RECOMMENDED \u2014 Dangerous conditions identified'
+      : '\u26A0 IMMEDIATE ACTION REQUIRED \u2014 High risk items identified';
+
+    cursor.page.drawText(warningText, {
+      x: MARGIN_LEFT + 12,
+      y: y - 26,
+      size: FONT_SIZE_SUBHEADING,
+      font: fonts.bold,
+      color: COLOUR_RED,
+    });
+
+    y -= 60;
+  }
+
+  return { ...cursor, y };
+}
+
+/** 2. Executive summary */
+function renderExecutiveSummary(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+  reportId: string,
+): Cursor {
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 200);
+  cursor = drawSectionHeading(cursor, fonts, 'Executive Summary');
+
+  const { inspection, items } = data;
+
+  // Risk count boxes
+  const boxWidth = CONTENT_WIDTH / 4 - 4;
+  const boxHeight = 50;
+  const riskData: Array<[string, number, ReturnType<typeof rgb>, ReturnType<typeof rgb>]> = [
+    ['Very High', inspection.very_high_risk_count, COLOUR_RED, COLOUR_RED_BG],
+    ['High', inspection.high_risk_count, COLOUR_ORANGE, COLOUR_ORANGE_BG],
+    ['Medium', inspection.medium_risk_count, COLOUR_YELLOW, COLOUR_YELLOW_BG],
+    ['Low', inspection.low_risk_count, COLOUR_GREEN, COLOUR_GREEN_BG],
+  ];
+
+  for (let i = 0; i < riskData.length; i++) {
+    const [label, count, textCol, bgCol] = riskData[i]!;
+    const x = MARGIN_LEFT + i * (boxWidth + 5);
+
+    cursor.page.drawRectangle({
+      x,
+      y: cursor.y - boxHeight,
+      width: boxWidth,
+      height: boxHeight,
+      color: bgCol,
+      borderColor: textCol,
+      borderWidth: 0.5,
+    });
+
+    // Count
+    const countStr = String(count);
+    const countWidth = fonts.bold.widthOfTextAtSize(countStr, 20);
+    cursor.page.drawText(countStr, {
+      x: x + (boxWidth - countWidth) / 2,
+      y: cursor.y - 22,
+      size: 20,
+      font: fonts.bold,
+      color: textCol,
+    });
+
+    // Label
+    const labelWidth = fonts.regular.widthOfTextAtSize(label, FONT_SIZE_SMALL);
+    cursor.page.drawText(label, {
+      x: x + (boxWidth - labelWidth) / 2,
+      y: cursor.y - 40,
+      size: FONT_SIZE_SMALL,
+      font: fonts.regular,
+      color: textCol,
+    });
+  }
+
+  cursor = { ...cursor, y: cursor.y - boxHeight - 16 };
+
+  // Summary stats
+  const conditionCounts = {
+    good: items.filter((i) => i.overall_condition === ConditionRating.GOOD).length,
+    fair: items.filter((i) => i.overall_condition === ConditionRating.FAIR).length,
+    poor: items.filter((i) => i.overall_condition === ConditionRating.POOR).length,
+    dangerous: items.filter((i) => i.overall_condition === ConditionRating.DANGEROUS).length,
+  };
+
+  cursor = drawLabelValue(cursor, fonts, 'Assets Inspected', String(items.length));
+  cursor = drawLabelValue(cursor, fonts, 'Total Defects', String(inspection.total_defects));
+  cursor = drawLabelValue(cursor, fonts, 'Condition Breakdown',
+    `Good: ${conditionCounts.good} \u00B7 Fair: ${conditionCounts.fair} \u00B7 Poor: ${conditionCounts.poor} \u00B7 Dangerous: ${conditionCounts.dangerous}`);
+
+  if (data.photoIndex && data.photoIndex.length > 0) {
+    cursor = drawLabelValue(cursor, fonts, 'Photo Evidence', `${data.photoIndex.length} photos cross-referenced (see Photo Evidence Log)`);
+  }
+
+  if (inspection.immediate_action_required) {
+    cursor = drawLabelValue(cursor, fonts, 'Immediate Action', 'REQUIRED \u2014 see defect register');
+  }
+
+  if (inspection.closure_recommended && inspection.closure_reason) {
+    cursor = drawLabelValue(cursor, fonts, 'Closure Reason', inspection.closure_reason);
+  }
+
+  // Inspector summary
+  if (inspection.inspector_summary) {
+    cursor = ensureSpace(doc, cursor, fonts, reportId, 60);
+    cursor = { ...cursor, y: cursor.y - 8 };
+
+    cursor.page.drawText('Inspector Summary', {
+      x: MARGIN_LEFT,
+      y: cursor.y - FONT_SIZE_SUBHEADING,
+      size: FONT_SIZE_SUBHEADING,
+      font: fonts.bold,
+      color: COLOUR_DARK_GREY,
+    });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_SUBHEADING * LINE_HEIGHT_MULTIPLIER - 4 };
+
+    const summaryLines = wrapText(inspection.inspector_summary, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
+    for (const line of summaryLines) {
+      cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
+      cursor.page.drawText(line, {
+        x: MARGIN_LEFT,
+        y: cursor.y - FONT_SIZE_BODY,
+        size: FONT_SIZE_BODY,
+        font: fonts.regular,
+        color: COLOUR_DARK_GREY,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+    }
+  }
+
+  cursor = { ...cursor, y: cursor.y - 12 };
+  return cursor;
+}
+
+/** 3. Site details */
+function renderSiteDetails(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+  reportId: string,
+): Cursor {
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 160);
+  cursor = drawSectionHeading(cursor, fonts, 'Site Details');
+
+  const { site } = data;
+
+  cursor = drawLabelValue(cursor, fonts, 'Site Name', site.name);
+  cursor = drawLabelValue(cursor, fonts, 'Address', `${site.address}${site.postcode ? ', ' + site.postcode : ''}`);
+  cursor = drawLabelValue(cursor, fonts, 'Coordinates', `${site.latitude.toFixed(6)}, ${site.longitude.toFixed(6)}`);
+
+  if (site.contact_name) {
+    cursor = drawLabelValue(cursor, fonts, 'Contact', site.contact_name);
+  }
+  if (site.contact_phone) {
+    cursor = drawLabelValue(cursor, fonts, 'Phone', site.contact_phone);
+  }
+  if (site.contact_email) {
+    cursor = drawLabelValue(cursor, fonts, 'Email', site.contact_email);
+  }
+  if (site.access_notes) {
+    cursor = drawLabelValue(cursor, fonts, 'Access Notes', site.access_notes);
+  }
+
+  cursor = { ...cursor, y: cursor.y - 12 };
+  return cursor;
+}
+
+/** 4. Asset inspection results */
+function renderAssetResults(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+  reportId: string,
+): Cursor {
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 80);
+  cursor = drawSectionHeading(cursor, fonts, 'Asset Inspection Results');
+
+  const { items, assets } = data;
+  const assetMap = new Map<string, Asset>();
+  for (const asset of assets) {
+    assetMap.set(asset.id, asset);
+    assetMap.set(asset.asset_code, asset);
+  }
+
+  const sortedItems = [...items].sort((a, b) => a.asset_code.localeCompare(b.asset_code));
+
+  for (let idx = 0; idx < sortedItems.length; idx++) {
+    const item = sortedItems[idx]!;
+    const asset = assetMap.get(item.asset_id ?? '') ?? assetMap.get(item.asset_code);
+    const config = getAssetTypeConfig(item.asset_type);
+    const typeName = config?.name ?? item.asset_type;
+
+    // Estimate required height for this asset block
+    const estimatedHeight = 80 + (item.defects.length * 50) + (item.inspector_notes ? 40 : 0);
+    cursor = ensureSpace(doc, cursor, fonts, reportId, Math.min(estimatedHeight, 200));
+
+    // Asset header bar
+    const headerHeight = 22;
+    cursor.page.drawRectangle({
+      x: MARGIN_LEFT,
+      y: cursor.y - headerHeight,
+      width: CONTENT_WIDTH,
+      height: headerHeight,
+      color: rgb(0.95, 0.95, 0.95),
+    });
+
+    // Asset code + type
+    cursor.page.drawText(`${item.asset_code} \u2014 ${typeName}`, {
+      x: MARGIN_LEFT + 6,
+      y: cursor.y - 15,
+      size: FONT_SIZE_SUBHEADING,
+      font: fonts.bold,
+      color: COLOUR_DARK_GREY,
+    });
+
+    // Condition badge
+    if (item.overall_condition) {
+      const condLabel = CONDITION_LABELS[item.overall_condition];
+      drawBadge(
+        cursor.page,
+        fonts,
+        condLabel,
+        PAGE_WIDTH - MARGIN_RIGHT - 80,
+        cursor.y - 16,
+        conditionColour(item.overall_condition),
+        riskBgColour(item.risk_rating),
+      );
+    }
+
+    cursor = { ...cursor, y: cursor.y - headerHeight - 8 };
+
+    // Photo references for this asset
+    if (data.crossRefs) {
+      const itemPhotoRef = data.crossRefs.getItemPhotoRef(item.id);
+      if (itemPhotoRef !== 'No photos') {
+        cursor.page.drawText(`Evidence: ${itemPhotoRef}`, {
+          x: MARGIN_LEFT + 6,
+          y: cursor.y - FONT_SIZE_SMALL,
+          size: FONT_SIZE_SMALL,
+          font: fonts.bold,
+          color: COLOUR_BLUE,
+        });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+      }
+    }
+
+    // Compliance standard
+    if (config?.complianceStandard) {
+      cursor.page.drawText(config.complianceStandard, {
+        x: MARGIN_LEFT + 6,
+        y: cursor.y - FONT_SIZE_SMALL,
+        size: FONT_SIZE_SMALL,
+        font: fonts.italic,
+        color: COLOUR_ACCENT,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+    }
+
+    // Manufacturer info if available
+    if (asset?.manufacturer) {
+      const mfgText = [asset.manufacturer, asset.model, asset.serial_number]
+        .filter(Boolean)
+        .join(' \u00B7 ');
+      cursor.page.drawText(mfgText, {
+        x: MARGIN_LEFT + 6,
+        y: cursor.y - FONT_SIZE_SMALL,
+        size: FONT_SIZE_SMALL,
+        font: fonts.regular,
+        color: COLOUR_MID_GREY,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+    }
+
+    // Voice transcript
+    if (item.voice_transcript) {
+      cursor = ensureSpace(doc, cursor, fonts, reportId, 40);
+      cursor.page.drawText('Voice Observation:', {
+        x: MARGIN_LEFT + 6,
+        y: cursor.y - FONT_SIZE_BODY,
+        size: FONT_SIZE_BODY,
+        font: fonts.bold,
+        color: COLOUR_DARK_GREY,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+
+      const transcriptLines = wrapText(item.voice_transcript, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
+      for (const line of transcriptLines) {
+        cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
+        cursor.page.drawText(line, {
+          x: MARGIN_LEFT + 6,
+          y: cursor.y - FONT_SIZE_BODY,
+          size: FONT_SIZE_BODY,
+          font: fonts.italic,
+          color: COLOUR_DARK_GREY,
+        });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+      }
+      cursor = { ...cursor, y: cursor.y - 4 };
+    }
+
+    // Inspector notes
+    if (item.inspector_notes) {
+      cursor = ensureSpace(doc, cursor, fonts, reportId, 40);
+      cursor.page.drawText('Inspector Notes:', {
+        x: MARGIN_LEFT + 6,
+        y: cursor.y - FONT_SIZE_BODY,
+        size: FONT_SIZE_BODY,
+        font: fonts.bold,
+        color: COLOUR_DARK_GREY,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+
+      const noteLines = wrapText(item.inspector_notes, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
+      for (const line of noteLines) {
+        cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
+        cursor.page.drawText(line, {
+          x: MARGIN_LEFT + 6,
+          y: cursor.y - FONT_SIZE_BODY,
+          size: FONT_SIZE_BODY,
+          font: fonts.regular,
+          color: COLOUR_DARK_GREY,
+        });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+      }
+      cursor = { ...cursor, y: cursor.y - 4 };
+    }
+
+    // Defects for this item — now with photo cross-refs
+    if (item.defects.length > 0) {
+      cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
+      cursor.page.drawText(`Defects (${item.defects.length}):`, {
+        x: MARGIN_LEFT + 6,
+        y: cursor.y - FONT_SIZE_BODY,
+        size: FONT_SIZE_BODY,
+        font: fonts.bold,
+        color: COLOUR_ORANGE,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 4 };
+
+      for (let dIdx = 0; dIdx < item.defects.length; dIdx++) {
+        const defect = item.defects[dIdx]!;
+        const pRef = data.crossRefs?.getDefectPhotoRef(item.id, dIdx);
+        cursor = renderDefectBlock(doc, cursor, fonts, defect, reportId, pRef);
+      }
+    }
+
+    // Separator between assets
+    if (idx < sortedItems.length - 1) {
+      cursor = ensureSpace(doc, cursor, fonts, reportId, 12);
+      cursor = drawHorizontalRule(cursor);
+    }
+  }
+
+  cursor = { ...cursor, y: cursor.y - 12 };
+  return cursor;
+}
+
+/** Render a single defect block within an asset */
+function renderDefectBlock(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  defect: DefectDetail,
+  reportId: string,
+  photoRef?: string,
+): Cursor {
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 60);
+
+  const lineHeight = FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
+  const indent = MARGIN_LEFT + 12;
+
+  // Risk badge + description
+  const riskLabel = RISK_RATING_LABELS[defect.risk_rating];
+  drawBadge(
+    cursor.page,
+    fonts,
+    riskLabel,
+    indent,
+    cursor.y - FONT_SIZE_BODY - 1,
+    riskColour(defect.risk_rating),
+    riskBgColour(defect.risk_rating),
+  );
+
+  const badgeOffset = fonts.bold.widthOfTextAtSize(riskLabel, FONT_SIZE_SMALL) + 20;
+
+  // Description (wrapped)
+  const descLines = wrapText(
+    defect.description,
+    fonts.regular,
+    FONT_SIZE_BODY,
+    CONTENT_WIDTH - 24 - badgeOffset,
+  );
+
+  for (let i = 0; i < descLines.length; i++) {
+    const xPos = i === 0 ? indent + badgeOffset : indent;
+    cursor.page.drawText(descLines[i] ?? '', {
+      x: xPos,
+      y: cursor.y - FONT_SIZE_BODY - (i * lineHeight),
+      size: FONT_SIZE_BODY,
+      font: fonts.regular,
+      color: COLOUR_DARK_GREY,
+    });
+  }
+  cursor = { ...cursor, y: cursor.y - (Math.max(1, descLines.length) * lineHeight) - 2 };
+
+  // BS EN reference + action + timeframe + cost + photo ref
+  const metaItems: string[] = [];
+  if (defect.bs_en_reference) metaItems.push(`Ref: ${defect.bs_en_reference}`);
+  metaItems.push(`Action: ${defect.remedial_action.substring(0, 80)}`);
+  metaItems.push(`Timeframe: ${ACTION_TIMEFRAME_LABELS[defect.action_timeframe]}`);
+  metaItems.push(`Est. Cost: ${COST_BAND_LABELS[defect.estimated_cost_band]}`);
+  if (photoRef && photoRef !== 'No photo') metaItems.push(`Photo: ${photoRef}`);
+
+  const metaText = metaItems.join(' \u00B7 ');
+  const metaLines = wrapText(metaText, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 24);
+
+  for (const line of metaLines) {
+    cursor = ensureSpace(doc, cursor, fonts, reportId, lineHeight);
+    cursor.page.drawText(line, {
+      x: indent,
+      y: cursor.y - FONT_SIZE_SMALL,
+      size: FONT_SIZE_SMALL,
+      font: fonts.regular,
+      color: COLOUR_MID_GREY,
+    });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
+  }
+
+  cursor = { ...cursor, y: cursor.y - 6 };
+  return cursor;
+}
+
+/** 5. Defect register (table) */
+function renderDefectRegister(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+  reportId: string,
+): Cursor {
+  // Collect all defects across items
+  const allDefects: Array<{ assetCode: string; itemId: string; defectIdx: number; defect: DefectDetail }> = [];
+  for (const item of data.items) {
+    for (let dIdx = 0; dIdx < item.defects.length; dIdx++) {
+      allDefects.push({ assetCode: item.asset_code, itemId: item.id, defectIdx: dIdx, defect: item.defects[dIdx]! });
+    }
+  }
+
+  if (allDefects.length === 0) return cursor;
+
+  // Sort by risk severity (very_high first)
+  const riskOrder: Record<string, number> = {
+    [RiskRating.VERY_HIGH]: 0,
+    [RiskRating.HIGH]: 1,
+    [RiskRating.MEDIUM]: 2,
+    [RiskRating.LOW]: 3,
+  };
+  allDefects.sort((a, b) => (riskOrder[a.defect.risk_rating] ?? 4) - (riskOrder[b.defect.risk_rating] ?? 4));
+
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 80);
+  cursor = drawSectionHeading(cursor, fonts, 'Defect Register');
+
+  // Table header — with Photo Ref column
+  const colWidths = [45, 45, 160, 70, 55, 55, 65];
+  const headers = ['Asset', 'Risk', 'Description', 'Action', 'Timeframe', 'Photo Ref', 'Cost'];
+  const rowHeight = 18;
+
+  function drawTableHeader(c: Cursor): Cursor {
+    c.page.drawRectangle({
+      x: MARGIN_LEFT,
+      y: c.y - rowHeight,
+      width: CONTENT_WIDTH,
+      height: rowHeight,
+      color: rgb(0.93, 0.93, 0.93),
+    });
+
+    let xPos = MARGIN_LEFT + 4;
+    for (let i = 0; i < headers.length; i++) {
+      c.page.drawText(headers[i]!, {
+        x: xPos,
+        y: c.y - 13,
+        size: FONT_SIZE_SMALL,
+        font: fonts.bold,
+        color: COLOUR_DARK_GREY,
+      });
+      xPos += colWidths[i]!;
+    }
+
+    return { ...c, y: c.y - rowHeight };
+  }
+
+  cursor = drawTableHeader(cursor);
+
+  // Table rows
+  for (const { assetCode, itemId, defectIdx, defect } of allDefects) {
+    cursor = ensureSpace(doc, cursor, fonts, reportId, rowHeight + 4);
+
+    // Check if we need to re-draw header on new page
+    if (cursor.y > CONTENT_TOP - 5) {
+      cursor = drawTableHeader(cursor);
+    }
+
+    const rowY = cursor.y;
+
+    // Alternating row background
+    cursor.page.drawRectangle({
+      x: MARGIN_LEFT,
+      y: rowY - rowHeight,
+      width: CONTENT_WIDTH,
+      height: rowHeight,
+      color: riskBgColour(defect.risk_rating),
+    });
+
+    // Build photo ref
+    let photoRefText = '\u2014';
+    if (data.crossRefs) {
+      const key = `${itemId}:${defectIdx}`;
+      const nums = data.crossRefs.defectToPhotos.get(key);
+      if (nums && nums.length > 0) {
+        photoRefText = formatCompactPhotoRef(nums);
+      }
+    }
+
+    let xPos = MARGIN_LEFT + 4;
+
+    // Asset code
+    cursor.page.drawText(
+      truncateText(assetCode, fonts.mono, FONT_SIZE_SMALL, colWidths[0]! - 8),
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.mono, color: COLOUR_DARK_GREY },
+    );
+    xPos += colWidths[0]!;
+
+    // Risk
+    cursor.page.drawText(
+      RISK_RATING_LABELS[defect.risk_rating],
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.bold, color: riskColour(defect.risk_rating) },
+    );
+    xPos += colWidths[1]!;
+
+    // Description
+    cursor.page.drawText(
+      truncateText(defect.description, fonts.regular, FONT_SIZE_SMALL, colWidths[2]! - 8),
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY },
+    );
+    xPos += colWidths[2]!;
+
+    // Remedial action
+    cursor.page.drawText(
+      truncateText(defect.remedial_action, fonts.regular, FONT_SIZE_SMALL, colWidths[3]! - 8),
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY },
+    );
+    xPos += colWidths[3]!;
+
+    // Timeframe
+    cursor.page.drawText(
+      truncateText(ACTION_TIMEFRAME_LABELS[defect.action_timeframe], fonts.regular, FONT_SIZE_SMALL, colWidths[4]! - 8),
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY },
+    );
+    xPos += colWidths[4]!;
+
+    // Photo Ref
+    cursor.page.drawText(
+      truncateText(photoRefText, fonts.bold, FONT_SIZE_SMALL, colWidths[5]! - 8),
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_BLUE },
+    );
+    xPos += colWidths[5]!;
+
+    // Cost band
+    cursor.page.drawText(
+      COST_BAND_LABELS[defect.estimated_cost_band],
+      { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY },
+    );
+
+    cursor = { ...cursor, y: rowY - rowHeight };
+  }
+
+  cursor = { ...cursor, y: cursor.y - 12 };
+  return cursor;
+}
+
+/** 6. Photo Evidence Log */
+function renderPhotoEvidenceLog(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+  reportId: string,
+): Cursor {
+  if (!data.photoIndex || data.photoIndex.length === 0) return cursor;
+
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 80);
+  cursor = drawSectionHeading(cursor, fonts, 'Photo Evidence Log');
+
+  // Intro text
+  const introText = `${data.photoIndex.length} photograph${data.photoIndex.length !== 1 ? 's' : ''} captured. Each photo is cross-referenced with the defect register.`;
+  const introLines = wrapText(introText, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH);
+  for (const line of introLines) {
+    cursor.page.drawText(line, {
+      x: MARGIN_LEFT,
+      y: cursor.y - FONT_SIZE_SMALL,
+      size: FONT_SIZE_SMALL,
+      font: fonts.italic,
+      color: COLOUR_MID_GREY,
+    });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
+  }
+  cursor = { ...cursor, y: cursor.y - 6 };
+
+  // Table header
+  const rowHeight = 16;
+  const colNum = MARGIN_LEFT;
+  const colAsset = MARGIN_LEFT + 35;
+  const colType = MARGIN_LEFT + 100;
+  const colDesc = MARGIN_LEFT + 165;
+
+  function drawPhotoTableHeader(c: Cursor): Cursor {
+    c.page.drawRectangle({
+      x: MARGIN_LEFT,
+      y: c.y - rowHeight,
+      width: CONTENT_WIDTH,
+      height: rowHeight,
+      color: rgb(0.93, 0.93, 0.93),
+    });
+
+    c.page.drawText('Photo', { x: colNum + 4, y: c.y - 12, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_DARK_GREY });
+    c.page.drawText('Asset', { x: colAsset, y: c.y - 12, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_DARK_GREY });
+    c.page.drawText('Type', { x: colType, y: c.y - 12, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_DARK_GREY });
+    c.page.drawText('Description / Associated Defect', { x: colDesc, y: c.y - 12, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_DARK_GREY });
+
+    return { ...c, y: c.y - rowHeight };
+  }
+
+  cursor = drawPhotoTableHeader(cursor);
+
+  for (let i = 0; i < data.photoIndex.length; i++) {
+    const entry = data.photoIndex[i]!;
+    cursor = ensureSpace(doc, cursor, fonts, reportId, rowHeight + 2);
+
+    // Re-draw header on new page
+    if (cursor.y > CONTENT_TOP - 5) {
+      cursor = drawPhotoTableHeader(cursor);
+    }
+
+    const rowY = cursor.y;
+
+    // Alternating background
+    if (i % 2 === 1) {
+      cursor.page.drawRectangle({
+        x: MARGIN_LEFT,
+        y: rowY - rowHeight,
+        width: CONTENT_WIDTH,
+        height: rowHeight,
+        color: COLOUR_LIGHT_GREY,
+      });
+    }
+
+    const description = entry.associatedDefects.length > 0
+      ? truncateText(entry.associatedDefects[0] ?? '', fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 170)
+      : entry.caption
+        ? truncateText(entry.caption, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 170)
+        : entry.photoType.replace(/_/g, ' ');
+
+    cursor.page.drawText(`P${entry.number}`, { x: colNum + 4, y: rowY - 12, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_BLUE });
+    cursor.page.drawText(truncateText(entry.assetCode, fonts.mono, FONT_SIZE_SMALL, 60), { x: colAsset, y: rowY - 12, size: FONT_SIZE_SMALL, font: fonts.mono, color: COLOUR_DARK_GREY });
+    cursor.page.drawText(entry.photoType.replace(/_/g, ' '), { x: colType, y: rowY - 12, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_MID_GREY });
+    cursor.page.drawText(description, { x: colDesc, y: rowY - 12, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
+
+    cursor = { ...cursor, y: rowY - rowHeight };
+  }
+
+  cursor = { ...cursor, y: cursor.y - 12 };
+  return cursor;
+}
+
+/** 7. Sign-off section */
+function renderSignOff(
+  doc: PDFDocument,
+  cursor: Cursor,
+  fonts: PDFFonts,
+  data: ReportData,
+  reportId: string,
+): Cursor {
+  cursor = ensureSpace(doc, cursor, fonts, reportId, 180);
+  cursor = drawSectionHeading(cursor, fonts, 'Declaration & Sign-Off');
+
+  const { inspection } = data;
+
+  // Declaration text
+  const declaration =
+    'I declare that this inspection has been carried out in accordance with BS EN 1176-7:2020. ' +
+    'All observations have been made to the best of my professional ability and the findings recorded ' +
+    'in this report are an accurate representation of the condition of the equipment and surfacing ' +
+    'at the time of inspection. This report should be read in conjunction with any previous inspection ' +
+    'reports and manufacturer maintenance instructions.';
+
+  const declLines = wrapText(declaration, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
+  for (const line of declLines) {
+    cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
+    cursor.page.drawText(line, {
+      x: MARGIN_LEFT,
+      y: cursor.y - FONT_SIZE_BODY,
+      size: FONT_SIZE_BODY,
+      font: fonts.regular,
+      color: COLOUR_DARK_GREY,
+    });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+  }
+
+  cursor = { ...cursor, y: cursor.y - 20 };
+
+  // Signature block
+  if (inspection.status === InspectionStatus.SIGNED || inspection.status === InspectionStatus.EXPORTED) {
+    cursor = drawLabelValue(cursor, fonts, 'Signed By', inspection.signed_by ?? '\u2014');
+    cursor = drawLabelValue(cursor, fonts, 'Signed At', formatDateTime(inspection.signed_at));
+
+    // Signature line
+    cursor = { ...cursor, y: cursor.y - 20 };
+    cursor.page.drawLine({
+      start: { x: MARGIN_LEFT, y: cursor.y },
+      end: { x: MARGIN_LEFT + 200, y: cursor.y },
+      thickness: 1,
+      color: COLOUR_BLACK,
+    });
+    cursor.page.drawText('Inspector Signature', {
+      x: MARGIN_LEFT,
+      y: cursor.y - 12,
+      size: FONT_SIZE_SMALL,
+      font: fonts.italic,
+      color: COLOUR_MID_GREY,
+    });
+
+    // Date line
+    cursor.page.drawLine({
+      start: { x: MARGIN_LEFT + 260, y: cursor.y },
+      end: { x: MARGIN_LEFT + 400, y: cursor.y },
+      thickness: 1,
+      color: COLOUR_BLACK,
+    });
+    cursor.page.drawText('Date', {
+      x: MARGIN_LEFT + 260,
+      y: cursor.y - 12,
+      size: FONT_SIZE_SMALL,
+      font: fonts.italic,
+      color: COLOUR_MID_GREY,
+    });
+
+    cursor = { ...cursor, y: cursor.y - 30 };
+
+    // Immutability notice
+    cursor.page.drawText(
+      'This report was digitally signed and is immutable. Any modifications will require a new inspection.',
+      {
+        x: MARGIN_LEFT,
+        y: cursor.y - FONT_SIZE_SMALL,
+        size: FONT_SIZE_SMALL,
+        font: fonts.italic,
+        color: COLOUR_MID_GREY,
+      },
+    );
+  } else {
+    cursor.page.drawText('DRAFT \u2014 This inspection has not yet been signed off.', {
+      x: MARGIN_LEFT,
+      y: cursor.y - FONT_SIZE_SUBHEADING,
+      size: FONT_SIZE_SUBHEADING,
+      font: fonts.bold,
+      color: COLOUR_ORANGE,
+    });
+  }
+
+  return cursor;
+}
+
+// =============================================
+// MAIN GENERATOR
+// =============================================
+
+/**
+ * Generate a professional BS EN 1176 inspection report PDF.
+ *
+ * @param data - All data required for the report
+ * @returns Generated PDF bytes, filename, and page count
+ */
+export async function generateInspectionReport(data: ReportData): Promise<GeneratedReport> {
+  const doc = await PDFDocument.create();
+  const reportId = data.inspection.id.substring(0, 8).toUpperCase();
+
+  // Embed standard fonts
+  const fonts: PDFFonts = {
+    regular: await doc.embedFont(StandardFonts.Helvetica),
+    bold: await doc.embedFont(StandardFonts.HelveticaBold),
+    italic: await doc.embedFont(StandardFonts.HelveticaOblique),
+    mono: await doc.embedFont(StandardFonts.Courier),
+  };
+
+  // Set document metadata
+  doc.setTitle(`Inspection Report \u2014 ${data.site.name}`);
+  doc.setSubject(`${INSPECTION_TYPE_LABELS[data.inspection.inspection_type]} Inspection`);
+  doc.setAuthor(data.inspection.signed_by ?? data.orgName);
+  doc.setCreator('InspectVoice');
+  doc.setProducer('InspectVoice PDF Generator (pdf-lib)');
+  doc.setCreationDate(new Date());
+
+  // Create first page
+  const firstPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  drawFooter(firstPage, fonts, reportId, 1);
+
+  let cursor: Cursor = {
+    y: CONTENT_TOP,
+    page: firstPage,
+    pageNumber: 1,
+  };
+
+  // Render sections
+  cursor = renderCoverPage(cursor, fonts, data);
+
+  // New page for body content
+  cursor = addPage(doc, cursor, fonts, reportId);
+
+  cursor = renderExecutiveSummary(doc, cursor, fonts, data, reportId);
+  cursor = renderSiteDetails(doc, cursor, fonts, data, reportId);
+  cursor = renderAssetResults(doc, cursor, fonts, data, reportId);
+  cursor = renderDefectRegister(doc, cursor, fonts, data, reportId);
+  cursor = renderPhotoEvidenceLog(doc, cursor, fonts, data, reportId);
+  cursor = renderSignOff(doc, cursor, fonts, data, reportId);
+
+  // Update total page count in footers
+  const totalPages = doc.getPageCount();
+  for (let i = 0; i < totalPages; i++) {
+    const page = doc.getPage(i);
+    const pageNum = i + 1;
+
+    // Overwrite page number with "Page X of Y"
+    const pageText = `Page ${pageNum} of ${totalPages}`;
+    const pageWidth = fonts.regular.widthOfTextAtSize(pageText, FONT_SIZE_FOOTER);
+
+    // White rectangle to cover old text
+    page.drawRectangle({
+      x: PAGE_WIDTH - MARGIN_RIGHT - pageWidth - 5,
+      y: MARGIN_BOTTOM - 3,
+      width: pageWidth + 10,
+      height: FONT_SIZE_FOOTER + 6,
+      color: COLOUR_WHITE,
+    });
+
+    page.drawText(pageText, {
+      x: PAGE_WIDTH - MARGIN_RIGHT - pageWidth,
+      y: MARGIN_BOTTOM,
+      size: FONT_SIZE_FOOTER,
+      font: fonts.regular,
+      color: COLOUR_MID_GREY,
+    });
+  }
+
+  // Serialise
+  const pdfBytes = await doc.save();
+  const filename = buildFilename(data.site, data.inspection);
+
+  return {
+    pdfBytes,
+    filename,
+    pageCount: totalPages,
+  };
+}
+
+/**
+ * Generate a PDF and return as a downloadable Blob.
+ * Convenience wrapper for browser usage.
+ */
+export async function generateReportBlob(data: ReportData): Promise<{
+  blob: Blob;
+  filename: string;
+  pageCount: number;
+}> {
+  const report = await generateInspectionReport(data);
+
+  const blob = new Blob([report.pdfBytes as BlobPart], { type: 'application/pdf' });
+  return {
+    blob,
+    filename: report.filename,
+    pageCount: report.pageCount,
+  };
+}
+
+/**
+ * Generate and trigger browser download of the PDF.
+ */
+export async function downloadReport(data: ReportData): Promise<void> {
+  const { blob, filename } = await generateReportBlob(data);
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+
+  document.body.appendChild(link);
+  link.click();
+
+  // Cleanup
+  setTimeout(() => {
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, 100);
 }

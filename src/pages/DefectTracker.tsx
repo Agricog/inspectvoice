@@ -13,9 +13,10 @@
  * - Severity and status badges with colour coding
  * - Overdue/due-soon visual warnings
  * - Cost band display (estimated vs actual)
+ * - Excel/CSV defect export with citywide summary
+ * - One-tap Make Safe / Close Asset with photo + recommendation
  * - Responsive: cards on mobile, table on desktop
  * - Loading, error, and empty states
- * - Excel/CSV defect export with citywide summary
  *
  * API: GET /api/defects?page=1&limit=20&status=...&severity=...&search=...&sort=...&order=...
  */
@@ -48,6 +49,7 @@ import {
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
 import { DefectExportButton } from '@components/DefectExportButton';
+import { MakeSafeButton } from '@components/MakeSafeModal';
 import type { Defect } from '@/types/entities';
 import {
   DefectStatus,
@@ -68,6 +70,7 @@ interface DefectListItem extends Defect {
   asset_code_display: string;
   assigned_to_name: string | null;
   inspection_date: string;
+  made_safe?: boolean;
 }
 
 interface DefectListResponse {
@@ -509,7 +512,7 @@ function Pagination({
 // DEFECT CARD (Mobile)
 // =============================================
 
-function DefectCard({ defect }: { defect: DefectListItem }): JSX.Element {
+function DefectCard({ defect, onRefresh }: { defect: DefectListItem; onRefresh: () => void }): JSX.Element {
   const dueDateInfo = getDueDateInfo(defect.due_date);
   const isTerminal = defect.status === DefectStatus.RESOLVED || defect.status === DefectStatus.VERIFIED;
 
@@ -521,10 +524,23 @@ function DefectCard({ defect }: { defect: DefectListItem }): JSX.Element {
           : 'border-iv-border hover:border-iv-accent/30'
       }`}
     >
-      {/* Header: severity + status */}
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <SeverityBadge severity={defect.severity} />
-        <DefectStatusBadge status={defect.status} />
+      {/* Header: severity + status + make safe */}
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SeverityBadge severity={defect.severity} />
+          <DefectStatusBadge status={defect.status} />
+        </div>
+        {!isTerminal && (
+          <MakeSafeButton
+            defectId={defect.id}
+            severity={defect.severity}
+            description={defect.description}
+            siteName={defect.site_name}
+            assetCode={defect.asset_code_display}
+            alreadyMadeSafe={defect.made_safe}
+            onSuccess={onRefresh}
+          />
+        )}
       </div>
 
       {/* Description */}
@@ -595,7 +611,7 @@ function DefectCard({ defect }: { defect: DefectListItem }): JSX.Element {
 // DEFECT TABLE ROW (Desktop)
 // =============================================
 
-function DefectRow({ defect }: { defect: DefectListItem }): JSX.Element {
+function DefectRow({ defect, onRefresh }: { defect: DefectListItem; onRefresh: () => void }): JSX.Element {
   const dueDateInfo = getDueDateInfo(defect.due_date);
   const isTerminal = defect.status === DefectStatus.RESOLVED || defect.status === DefectStatus.VERIFIED;
 
@@ -664,11 +680,21 @@ function DefectRow({ defect }: { defect: DefectListItem }): JSX.Element {
         </div>
       </td>
 
-      {/* Cost */}
+      {/* Make Safe */}
       <td className="py-3 px-4">
-        <span className="text-sm text-iv-muted whitespace-nowrap">
-          {formatCost(defect.estimated_cost_gbp, defect.actual_cost_gbp)}
-        </span>
+        {!isTerminal ? (
+          <MakeSafeButton
+            defectId={defect.id}
+            severity={defect.severity}
+            description={defect.description}
+            siteName={defect.site_name}
+            assetCode={defect.asset_code_display}
+            alreadyMadeSafe={defect.made_safe}
+            onSuccess={onRefresh}
+          />
+        ) : (
+          <span className="text-xs text-iv-muted-2">—</span>
+        )}
       </td>
     </tr>
   );
@@ -912,13 +938,13 @@ export function DefectTracker(): JSX.Element {
                         <SortButton field="due_date" label="Due Date" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} />
                       </th>
                       <th className="py-3 px-4 text-left">
-                        <span className="text-xs font-medium text-iv-muted">Cost</span>
+                        <span className="text-xs font-medium text-iv-muted">Actions</span>
                       </th>
                     </tr>
                   </thead>
                   <tbody>
                     {defects.map((defect) => (
-                      <DefectRow key={defect.id} defect={defect} />
+                      <DefectRow key={defect.id} defect={defect} onRefresh={refetch} />
                     ))}
                   </tbody>
                 </table>
@@ -928,7 +954,7 @@ export function DefectTracker(): JSX.Element {
             {/* Mobile cards (hidden on desktop) */}
             <div className="lg:hidden space-y-3">
               {defects.map((defect) => (
-                <DefectCard key={defect.id} defect={defect} />
+                <DefectCard key={defect.id} defect={defect} onRefresh={refetch} />
               ))}
             </div>
 

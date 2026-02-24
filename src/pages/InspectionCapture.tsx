@@ -256,7 +256,7 @@ export default function InspectionCapture(): JSX.Element {
 
   // ---- Baseline data for current asset ----
   // These fields come from migration 003 — cast needed until Asset type is updated
-  const assetRecord = currentAsset as Record<string, unknown>;
+  const assetRecord = currentAsset as unknown as Record<string, unknown>;
   const baselinePhoto: BaselinePhoto | null = assetRecord['baseline_photo_url']
     ? {
         src: assetRecord['baseline_photo_url'] as string,

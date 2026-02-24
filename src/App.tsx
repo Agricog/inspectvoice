@@ -1,10 +1,17 @@
 /**
  * InspectVoice — App Root
- * Route definitions with Layout shell.
+ * Route definitions with Layout shell and PWA update prompt.
+ *
+ * Note: BrowserRouter and HelmetProvider live here (not in main.tsx)
+ * to avoid duplication.
+ *
+ * Build Standard: Autaimate v3
  */
+
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import { Layout } from '@components/Layout';
+import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
 import { SiteList } from '@pages/SiteList';
 import { SiteForm } from '@pages/SiteForm';
 import { SiteDetail } from '@pages/SiteDetail';
@@ -39,6 +46,9 @@ export function App(): JSX.Element {
   return (
     <HelmetProvider>
       <BrowserRouter>
+        {/* PWA: offline banner, update prompt, offline-ready toast */}
+        <PWAUpdatePrompt />
+
         <Routes>
           <Route element={<Layout />}>
             {/* Dashboard */}

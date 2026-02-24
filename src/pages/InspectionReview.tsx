@@ -1,6 +1,6 @@
 /**
  * InspectVoice — Inspection Review & Summary
- * Batch 15
+ * Batch 15 + Feature 4 (AI completeness check gate)
  *
  * Route: /sites/:siteId/inspections/:inspectionId/review
  *
@@ -9,8 +9,9 @@
  *   2. Per-asset results — condition, transcript, photos, notes
  *   3. Inspector summary notes (free text)
  *   4. Closure recommendation (if dangerous conditions found)
- *   5. Digital sign-off → marks inspection as COMPLETED
- *   6. Navigates to site page (PDF generation happens async via sync)
+ *   5. AI completeness check (review gate before sign-off)
+ *   6. Digital sign-off → marks inspection as COMPLETED
+ *   7. Navigates to site page (PDF generation happens async via sync)
  *
  * Features:
  *   - Loads all inspection items from IndexedDB
@@ -18,6 +19,7 @@
  *   - Per-asset expandable cards with full detail
  *   - Inspector summary textarea
  *   - Closure recommendation toggle (visible if dangerous/very high risk found)
+ *   - AI completeness check modal before sign-off
  *   - Sign-off confirmation with name + timestamp
  *   - Updates inspection status to COMPLETED in IndexedDB
  *   - Dark theme, mobile-first, accessible
@@ -42,6 +44,7 @@ import {
   PenTool,
   Send,
   Edit,
+  ShieldCheck,
 } from 'lucide-react';
 
 import { inspections, inspectionItems } from '@services/offlineStore';
@@ -56,13 +59,14 @@ import {
 } from '@/types';
 import type { Inspection, InspectionItem } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
+import CompletenessCheckModal from '@components/CompletenessCheckModal';
 
 // =============================================
 // HELPERS
 // =============================================
 
 function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '—';
+  if (!dateStr) return '\u2014';
   try {
     return new Date(dateStr).toLocaleDateString('en-GB', {
       day: 'numeric',
@@ -318,6 +322,9 @@ export default function InspectionReview(): JSX.Element {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
 
+  // ---- Completeness check modal ----
+  const [showCompletenessCheck, setShowCompletenessCheck] = useState(false);
+
   // ---- Load data ----
   useEffect(() => {
     if (!siteId || !inspectionId) return;
@@ -386,12 +393,19 @@ export default function InspectionReview(): JSX.Element {
   const totalDefects = items.reduce((sum, i) => sum + i.defects.length, 0);
   const hasDangerous = conditionCounts.dangerous > 0 || riskCounts.veryHigh > 0;
 
-  // ---- Sign off ----
+  // ---- Completeness check → opens modal instead of directly signing ----
   const canSubmit = signedByName.trim().length >= 2 && !completed;
 
+  const handleRequestSignOff = useCallback(() => {
+    if (!canSubmit) return;
+    setShowCompletenessCheck(true);
+  }, [canSubmit]);
+
+  // ---- Actual sign off (called after completeness check passes) ----
   const handleSignOff = useCallback(async () => {
     if (!canSubmit || !inspectionId || !inspection) return;
 
+    setShowCompletenessCheck(false);
     setSubmitting(true);
     setSubmitError(null);
 
@@ -728,9 +742,10 @@ export default function InspectionReview(): JSX.Element {
           )}
         </div>
 
+        {/* Button now opens completeness check modal instead of directly signing */}
         <button
           type="button"
-          onClick={handleSignOff}
+          onClick={handleRequestSignOff}
           disabled={!canSubmit || submitting}
           className="iv-btn-primary flex items-center gap-2 w-full sm:w-auto justify-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -741,12 +756,29 @@ export default function InspectionReview(): JSX.Element {
             </>
           ) : (
             <>
-              <Send className="w-4 h-4" />
-              Complete &amp; Sign Off
+              <ShieldCheck className="w-4 h-4" />
+              Review &amp; Sign Off
             </>
           )}
         </button>
+        <p className="text-xs iv-muted mt-2">
+          An AI completeness check will run before final sign-off
+        </p>
       </div>
+
+      {/* ── Completeness Check Modal ── */}
+      {inspection && (
+        <CompletenessCheckModal
+          isOpen={showCompletenessCheck}
+          onClose={() => setShowCompletenessCheck(false)}
+          onProceed={() => void handleSignOff()}
+          inspection={inspection}
+          items={items}
+          inspectorSummary={summary}
+          closureRecommended={closureRecommended}
+          closureReason={closureReason}
+        />
+      )}
     </div>
   );
 }

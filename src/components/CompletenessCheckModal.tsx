@@ -19,7 +19,7 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Loader2,
   ShieldCheck,
@@ -40,7 +40,6 @@ import {
 import type { Inspection, InspectionItem } from '@/types';
 import { RiskRating, ConditionRating } from '@/types';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
-import { getAssetTypeConfig } from '@config/assetTypes';
 
 // =============================================
 // TYPES
@@ -104,7 +103,7 @@ const CATEGORY_ORDER = ['condition', 'defect', 'evidence', 'compliance', 'summar
 // =============================================
 
 function runOfflineChecks(
-  inspection: Inspection,
+  _inspection: Inspection,
   items: InspectionItem[],
   inspectorSummary: string,
   closureRecommended: boolean,

@@ -149,7 +149,7 @@ export function buildPhotoCoverage(
   const photoIndex = buildPhotoIndex(items, photosByItem);
 
   // Build cross-reference maps
-  const crossRefs = buildCrossRefs(items, photosByItem, photoIndex);
+  const crossRefs = buildCrossRefs(items, photoIndex);
 
   // Run validation rules
   const validation = runValidation(items, photosByItem);
@@ -261,7 +261,6 @@ function buildPhotoIndex(
 
 function buildCrossRefs(
   items: InspectionItem[],
-  photosByItem: Map<string, Photo[]>,
   photoIndex: PhotoIndexEntry[],
 ): PhotoCrossRefs {
   // Item → photos

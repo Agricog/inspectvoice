@@ -2,7 +2,7 @@
 
 ## Overview
 
-Full-day build session covering PWA implementation, 6 production features for council tender readiness, and a complete procurement documentation pack. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
+Full-day build session covering PWA implementation, 6 production features for council tender readiness, a complete procurement documentation pack, and 3 additional advanced features (Hotlist, Longitudinal Risk, Incident/Claims Pack) with full backend infrastructure deployed to Neon and Cloudflare. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
 
 ---
 
@@ -186,6 +186,141 @@ Full-day build session covering PWA implementation, 6 production features for co
 
 ---
 
+## Session 3: Infrastructure Deployment & Advanced Features
+
+### Migration Deployment
+- **Migration 002** (`asset_safety_actions` table) — deployed to Neon ✅
+- **Migration 003** (`baseline_photos` — 6 columns on assets + `asset_baseline_history` audit table) — deployed to Neon ✅
+- **Migration 004** (`incidents` — 40+ column incident/complaint/claim tracking table) — deployed to Neon ✅
+
+### Batch 20 Closure
+- All three core pages (`InspectionList.tsx`, `DefectTracker.tsx`, `ManagerDashboard.tsx`) confirmed fully built — no stubs
+- `SettingsPage.tsx` also complete
+- Batch 20 closed with zero additional work needed
+
+### Dashboard Worker/Frontend Mismatch Fix
+- Worker response shape didn't match frontend `DashboardResponse` type
+- Worker returned `{ success, data: { sites, inspections, defects } }` but frontend expected `{ summary, risk_overview, upcoming_inspections }`
+- Dashboard was rendering all zeros due to key mismatch
+- **Complete rewrite of `workers/src/routes/dashboard.ts`** — 5 parallel queries, response shape now matches frontend contract exactly
+- API URL corrected from `/api/dashboard` to `/api/v1/dashboard/stats`
+
+---
+
+### Feature 7: Hotlist on Manager Dashboard ✅
+
+**Purpose:** Top 20 very_high/high open defects displayed prominently on dashboard for daily checking — action-oriented with SLA timers and one-click drill-in.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Worker route | `workers/src/routes/dashboard.ts` | Complete rewrite — 5 parallel queries including hotlist (top 20 open VH/H defects sorted by severity then age) |
+| Dashboard page | `src/pages/ManagerDashboard.tsx` | Complete rewrite — Hotlist section with severity badges, made-safe indicators, age (days open), SLA status, site links, BS EN refs, drill-in buttons |
+
+**Hotlist query highlights:**
+- Joins defects → inspection_items → inspections → sites → assets
+- Filters: status NOT IN (resolved, verified), severity IN (very_high, high)
+- Computes: days_open, days_overdue, made_safe status
+- Sorted by severity (VH first) then age (oldest first)
+- Limit 20
+
+**Key details:**
+- Hotlist positioned full-width directly below stat cards (most prominent position)
+- Each row: severity badge, made-safe indicator (green shield), age ("12d open"), SLA status ("3d overdue" red / "Due today" yellow / "5d left" yellow if ≤7 days), description (1 line truncated), site name (clickable), asset code, action timeframe, BS EN reference, one-click drill-in button
+- Overdue rows highlighted with red background (`bg-red-500/5`)
+- Footer shows total overdue count
+- Empty state: green checkmark + "No high-risk defects outstanding"
+- Layout: Hotlist (pos 2), Risk Overview + Upcoming Inspections two-column grid (pos 3), Recent Inspections full-width (pos 4)
+
+---
+
+### Feature 8: Longitudinal Risk + Asset History ✅
+
+**Purpose:** Turns inspection data into asset management signal — condition trends over time, repeat defects on the same asset, deterioration tracking.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Worker route | `workers/src/routes/assetHistory.ts` | New endpoint `GET /api/v1/assets/:id/history` — 4 parallel queries |
+| Asset detail page | `src/pages/AssetDetail.tsx` | Complete rewrite — condition timeline chart, history stats, repeat defect alerts, API-fetched history |
+| Router update | `workers/src/index.ts` | Added `getAssetHistory` import and route (before `:id` catch-all) |
+
+**4 parallel queries:**
+1. **Inspection timeline** — every inspection that included this asset (newest first, limit 50)
+2. **Defect history** — all defects ever raised against this asset (limit 100)
+3. **Repeat defect patterns** — same BS EN reference appearing 2+ times (flags recurring issues)
+4. **Condition data points** — chronological condition ratings for timeline chart
+
+**Condition summary computed server-side:**
+- Total inspections, first/last inspected dates, current condition
+- Condition trend from last 3 ratings: `improving` / `stable` / `deteriorating`
+- Total/open/resolved defect counts
+- Repeat defect types with occurrence counts
+
+**Frontend components:**
+- **ConditionTimelineChart** — inline SVG chart mapping condition ratings (Good=4, Fair=3, Poor=2, Dangerous=1) to Y-axis with colour-coded data points and trend line
+- **HistoryStatsSummary** — 4 stat cards: total inspections, current condition (colour-coded), trend direction (with icon), open defects
+- **RepeatDefectAlert** — orange banner when same BS EN reference flagged 2+ times, showing occurrence count, last seen date, severities. Indicates systemic problem requiring capital intervention
+- **Inspection history** — server-fetched (replaces IndexedDB-only), each row links to inspection review
+- **Defect history** — collapsible section with severity badges, status, BS EN refs, resolution dates, made-safe indicators
+
+---
+
+### Feature 9: Incident/Complaint Linking + One-Click Claims Pack ✅
+
+**Purpose:** Makes InspectVoice a legal defence tool. Records incidents/complaints with full UK regulatory fields (RIDDOR, HSE, police) and generates a one-click evidence pack proving the operator was exercising reasonable care under BS EN 1176.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Migration | `migrations/004_incidents.sql` | `incidents` table — 40+ columns, 7 indexes, RLS policy, updated_at trigger |
+| Worker CRUD | `workers/src/routes/incidents.ts` | Full CRUD: list (filterable), get (with joins), create (validates ownership), update (partial) |
+| Worker claims pack | `workers/src/routes/claimsPack.ts` | `GET /api/v1/incidents/:id/claims-pack` — 9 parallel queries |
+| Router update | `workers/src/index.ts` | Added incident imports + 5 routes |
+| Incident list page | `src/pages/IncidentList.tsx` | Filterable register with summary cards, search, pagination, claims pack download |
+| Incident form page | `src/pages/IncidentForm.tsx` | 8-section create/edit form |
+| App router update | `src/App.tsx` | 3 incident routes added |
+
+**Incidents table columns cover:**
+- Incident details: date, time, type (injury/complaint/near_miss/vandalism/property_damage/other), severity (minor/moderate/serious/major), description, location
+- Reporter: name, contact, role
+- Injured party: name, age, contact, injury description, body part affected
+- Immediate response: action taken, ambulance_called, first_aid_given, area_closed, equipment_isolated
+- Witnesses: details
+- Regulatory: reported_to_riddor, riddor_reference, police_reference, hse_notified
+- Claims: status (open/investigating/closed/claim_received/claim_settled), claim_reference, claim_received_date, claimant_solicitor, insurer_notified, insurer_reference
+- Links: site_id (required), asset_id (optional), defect_id (optional)
+
+**Claims Pack — 9 parallel queries:**
+1. The incident record itself
+2. Site details and inspection schedule frequencies
+3. All inspections at site in 12-month window before incident
+4. All defects at site in 12-month window
+5. Make-safe actions taken at site in evidence window
+6. Linked asset details (if applicable)
+7. Linked asset condition history (if applicable)
+8. Linked defect full remedial trail (if applicable)
+9. Compliance gap analysis — were inspections on schedule?
+
+**Compliance summary output:**
+- Evidence window (12 months before incident to incident date)
+- Total inspections, defects found, defects resolved, defects open at time of incident
+- Make-safe actions taken
+- Schedule compliance percentage
+- Plain-English verdict: "All inspections were carried out within the required schedule" or flags gaps
+
+**Incident form — 8 collapsible sections:**
+1. Incident Details (site, date, time, type, severity, status, description, location)
+2. Reporter (name, role, contact)
+3. Injury Details (injured party name/age/contact, injury description, body part)
+4. Immediate Response (action taken, checkboxes for ambulance/first aid/area closed/equipment isolated)
+5. Witnesses (names and contact details)
+6. Regulatory Reporting (RIDDOR/HSE checkboxes, references)
+7. Claims & Insurance (claim reference, received date, solicitor, insurer reference)
+8. Investigation & Follow-up (findings, corrective actions, internal notes)
+
+---
+
 ## Complete File Inventory
 
 ### Code Files (Features 1–5)
@@ -220,6 +355,29 @@ migrations/
 └── 003_baseline_photos.sql      # Feature 5: Baseline photo columns + history
 ```
 
+### Code Files (Features 7–9, Session 3)
+
+```
+src/
+└── pages/
+    ├── ManagerDashboard.tsx      # Feature 7: Complete rewrite with Hotlist
+    ├── AssetDetail.tsx           # Feature 8: Complete rewrite with condition timeline + history
+    ├── IncidentList.tsx          # Feature 9: Filterable incident register
+    ├── IncidentForm.tsx          # Feature 9: Multi-section incident form
+    └── App.tsx                   # Feature 9: Updated router with incident routes
+
+workers/src/
+├── routes/
+│   ├── dashboard.ts             # Feature 7: Restructured dashboard + hotlist query
+│   ├── assetHistory.ts          # Feature 8: Asset history endpoint (4 parallel queries)
+│   ├── incidents.ts             # Feature 9: Incident CRUD (list/get/create/update)
+│   └── claimsPack.ts            # Feature 9: One-click claims evidence pack (9 parallel queries)
+└── index.ts                     # Features 7–9: Updated router with all new imports + routes
+
+migrations/
+└── 004_incidents.sql            # Feature 9: Incidents table (40+ columns, RLS, indexes)
+```
+
 ### Procurement Pack Documents (Feature 6)
 
 ```
@@ -249,11 +407,34 @@ procurement-pack/
 
 ---
 
+## Deployment Status (End of Day — 24 Feb 2026)
+
+| Item | Status |
+|------|--------|
+| Migration 002 (asset_safety_actions) | ✅ Deployed to Neon |
+| Migration 003 (baseline_photos) | ✅ Deployed to Neon |
+| Migration 004 (incidents) | ✅ Deployed to Neon |
+| Worker: dashboard.ts (rewrite + hotlist) | ✅ Committed & deployed |
+| Worker: assetHistory.ts (new) | ✅ Committed & deployed |
+| Worker: incidents.ts (new) | ✅ Committed & deployed |
+| Worker: claimsPack.ts (new) | ✅ Committed & deployed |
+| Worker: index.ts (router updates) | ✅ Committed & deployed |
+| Frontend: ManagerDashboard.tsx (rewrite) | ✅ Committed & deployed |
+| Frontend: AssetDetail.tsx (rewrite) | ✅ Committed & deployed |
+| Frontend: IncidentList.tsx (new) | ✅ Committed & deployed |
+| Frontend: IncidentForm.tsx (new) | ✅ Committed & deployed |
+| Frontend: App.tsx (router update) | ✅ Committed & deployed |
+| Features 1–5 code files | ⏳ Built, pending commit to repo |
+| Procurement pack (9 documents) | ✅ Downloaded |
+
+---
+
 ## What's Next
 
-1. **Deploy migrations** — Run 002_make_safe.sql and 003_baseline_photos.sql against Neon
-2. **Wire Features 1–5** — Integrate code files into the existing InspectVoice codebase (Batch 20+)
-3. **Customise procurement pack** — Fill in placeholder fields, verify pricing, get DPA reviewed by solicitor
-4. **Cyber Essentials certification** — Apply Q3 2026, controls already mapped and met
-5. **Sample PDF report** — Generate a redacted sample inspection PDF for inclusion in procurement pack
-6. **Pilot outreach** — Procurement pack enables approaching councils with a 60-day free pilot offer
+1. **Commit Features 1–5** — Wire remaining code files from Session 2 into the codebase
+2. **Batches 21–22** — UI polish, offline sync UI, PWA install prompts
+3. **Batch 23** — Infrastructure go-live (domain, DNS, secrets, SSL)
+4. **Customise procurement pack** — Fill in placeholder fields, verify pricing, get DPA reviewed by solicitor
+5. **Cyber Essentials certification** — Apply Q3 2026, controls already mapped and met
+6. **Sample PDF report** — Generate a redacted sample inspection PDF for inclusion in procurement pack
+7. **Pilot outreach** — Procurement pack enables approaching councils with a 60-day free pilot offer

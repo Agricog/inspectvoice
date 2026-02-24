@@ -1,7 +1,5 @@
 /**
  * InspectVoice — Asset Detail Page
- * Batch 10, File 2
- *
  * Route: /sites/:siteId/assets/:assetId
  *
  * Features:
@@ -9,7 +7,10 @@
  *   - Compliance standard from assetTypes config
  *   - Inspection points reference per asset type
  *   - Risk criteria reference per severity level
- *   - Inspection history (from IndexedDB inspection items)
+ *   - CONDITION TIMELINE: SVG chart of condition ratings over time (Feature 2)
+ *   - API-FETCHED inspection history with condition + defect counts (Feature 2)
+ *   - DEFECT HISTORY: all defects ever raised against this asset (Feature 2)
+ *   - REPEAT DEFECT DETECTION: flags recurring BS EN references (Feature 2)
  *   - Condition trend indicator
  *   - Edit / Decommission actions
  *   - Reference photo placeholder (ready for Phase 4)
@@ -17,10 +18,12 @@
  *   - Mobile-first responsive
  *   - Accessible: semantic headings, aria-labels, keyboard navigation
  *
- * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
+ * API: GET /api/v1/assets/:id/history
+ *
+ * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -48,10 +51,14 @@ import {
   ChevronDown,
   ChevronRight,
   Eye,
+  RefreshCw,
+  Repeat,
+  ExternalLink,
 } from 'lucide-react';
 
-import { assetsCache, inspectionItems } from '@services/offlineStore';
+import { assetsCache } from '@services/offlineStore';
 import { captureError } from '@utils/errorTracking';
+import { useFetch } from '@hooks/useFetch';
 import {
   ASSET_CATEGORY_LABELS,
   SURFACE_TYPE_LABELS,
@@ -63,7 +70,7 @@ import {
   SurfaceType,
   AssetCategory,
 } from '@/types';
-import type { Asset, InspectionItem } from '@/types';
+import type { Asset } from '@/types';
 import {
   getAssetTypeConfig,
   getInspectionPointsForType,
@@ -71,10 +78,78 @@ import {
 } from '@config/assetTypes';
 
 // =============================================
+// TYPES — Asset History API Response
+// =============================================
+
+interface AssetHistoryResponse {
+  success: boolean;
+  data: {
+    asset_id: string;
+    inspection_history: InspectionHistoryItem[];
+    defect_history: DefectHistoryItem[];
+    condition_timeline: ConditionPoint[];
+    condition_summary: ConditionSummary;
+  };
+}
+
+interface InspectionHistoryItem {
+  inspection_id: string;
+  inspection_date: string;
+  inspection_type: string;
+  inspector_name: string;
+  overall_condition: ConditionRating | null;
+  risk_rating: RiskRating | null;
+  defect_count: number;
+  inspector_notes: string | null;
+  site_name: string;
+}
+
+interface DefectHistoryItem {
+  id: string;
+  description: string;
+  severity: string;
+  status: string;
+  bs_en_reference: string | null;
+  action_timeframe: string;
+  remedial_action: string;
+  due_date: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  inspection_id: string;
+  inspection_date: string;
+  made_safe: boolean;
+  made_safe_at: string | null;
+}
+
+interface ConditionPoint {
+  inspection_date: string;
+  overall_condition: string;
+  risk_rating: string | null;
+}
+
+interface RepeatDefect {
+  bs_en_reference: string;
+  occurrence_count: number;
+  last_seen: string;
+  severities: string;
+}
+
+interface ConditionSummary {
+  total_inspections: number;
+  first_inspected: string | null;
+  last_inspected: string | null;
+  current_condition: string | null;
+  condition_trend: 'improving' | 'stable' | 'deteriorating' | null;
+  total_defects: number;
+  open_defects: number;
+  resolved_defects: number;
+  repeat_defect_types: RepeatDefect[];
+}
+
+// =============================================
 // HELPERS
 // =============================================
 
-/** Format a date string for display */
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—';
   try {
@@ -88,7 +163,13 @@ function formatDate(dateStr: string | null): string {
   }
 }
 
-/** Format currency */
+function formatShortDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
 function formatGBP(value: number | null): string {
   if (value === null) return '—';
   return new Intl.NumberFormat('en-GB', {
@@ -99,91 +180,140 @@ function formatGBP(value: number | null): string {
   }).format(value);
 }
 
-/** Get colour class for condition rating */
-function conditionColour(condition: ConditionRating | null): string {
+function conditionColour(condition: ConditionRating | string | null): string {
   switch (condition) {
     case ConditionRating.GOOD:
+    case 'good':
       return 'text-[#22C55E]';
     case ConditionRating.FAIR:
+    case 'fair':
       return 'text-[#EAB308]';
     case ConditionRating.POOR:
+    case 'poor':
       return 'text-[#F97316]';
     case ConditionRating.DANGEROUS:
+    case 'dangerous':
       return 'text-[#EF4444]';
     default:
       return 'iv-muted';
   }
 }
 
-/** Get background colour class for condition badge */
-function conditionBadgeBg(condition: ConditionRating | null): string {
+function conditionBadgeBg(condition: ConditionRating | string | null): string {
   switch (condition) {
     case ConditionRating.GOOD:
+    case 'good':
       return 'bg-[#22C55E]/15 text-[#22C55E] border-[#22C55E]/30';
     case ConditionRating.FAIR:
+    case 'fair':
       return 'bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/30';
     case ConditionRating.POOR:
+    case 'poor':
       return 'bg-[#F97316]/15 text-[#F97316] border-[#F97316]/30';
     case ConditionRating.DANGEROUS:
+    case 'dangerous':
       return 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30';
     default:
       return 'bg-[#2A2F3A] iv-muted border-[#2A2F3A]';
   }
 }
 
-/** Get risk rating colour class */
-function riskColour(risk: RiskRating): string {
-  switch (risk) {
-    case RiskRating.VERY_HIGH:
-      return 'text-[#EF4444]';
-    case RiskRating.HIGH:
-      return 'text-[#F97316]';
-    case RiskRating.MEDIUM:
-      return 'text-[#EAB308]';
-    case RiskRating.LOW:
-      return 'text-[#22C55E]';
+function conditionHexColour(condition: string): string {
+  switch (condition) {
+    case 'good': return '#22C55E';
+    case 'fair': return '#EAB308';
+    case 'poor': return '#F97316';
+    case 'dangerous': return '#EF4444';
+    default: return '#6B7280';
   }
 }
 
-/** Get trend icon and label */
-function trendDisplay(trend: ConditionTrend | null): {
+function conditionLabel(condition: string | null): string {
+  if (!condition) return 'Unknown';
+  const map: Record<string, string> = {
+    good: 'Good',
+    fair: 'Fair',
+    poor: 'Poor',
+    dangerous: 'Dangerous',
+  };
+  return map[condition] ?? condition;
+}
+
+function riskColour(risk: RiskRating | string): string {
+  switch (risk) {
+    case RiskRating.VERY_HIGH:
+    case 'very_high':
+      return 'text-[#EF4444]';
+    case RiskRating.HIGH:
+    case 'high':
+      return 'text-[#F97316]';
+    case RiskRating.MEDIUM:
+    case 'medium':
+      return 'text-[#EAB308]';
+    case RiskRating.LOW:
+    case 'low':
+      return 'text-[#22C55E]';
+    default:
+      return 'iv-muted';
+  }
+}
+
+function severityBadgeBg(severity: string): string {
+  switch (severity) {
+    case 'very_high': return 'bg-[#EF4444]/15 text-[#EF4444]';
+    case 'high': return 'bg-[#F97316]/15 text-[#F97316]';
+    case 'medium': return 'bg-[#EAB308]/15 text-[#EAB308]';
+    case 'low': return 'bg-[#22C55E]/15 text-[#22C55E]';
+    default: return 'bg-[#2A2F3A] iv-muted';
+  }
+}
+
+function trendDisplay(trend: ConditionTrend | string | null): {
   icon: JSX.Element;
   label: string;
   className: string;
 } {
   switch (trend) {
     case ConditionTrend.IMPROVING:
-      return {
-        icon: <TrendingUp className="w-4 h-4" />,
-        label: 'Improving',
-        className: 'text-[#22C55E]',
-      };
+    case 'improving':
+      return { icon: <TrendingUp className="w-4 h-4" />, label: 'Improving', className: 'text-[#22C55E]' };
     case ConditionTrend.STABLE:
-      return {
-        icon: <Minus className="w-4 h-4" />,
-        label: 'Stable',
-        className: 'text-[#EAB308]',
-      };
+    case 'stable':
+      return { icon: <Minus className="w-4 h-4" />, label: 'Stable', className: 'text-[#EAB308]' };
     case ConditionTrend.DETERIORATING:
-      return {
-        icon: <TrendingDown className="w-4 h-4" />,
-        label: 'Deteriorating',
-        className: 'text-[#EF4444]',
-      };
+    case 'deteriorating':
+      return { icon: <TrendingDown className="w-4 h-4" />, label: 'Deteriorating', className: 'text-[#EF4444]' };
     default:
-      return {
-        icon: <Minus className="w-4 h-4" />,
-        label: 'No trend data',
-        className: 'iv-muted',
-      };
+      return { icon: <Minus className="w-4 h-4" />, label: 'No trend data', className: 'iv-muted' };
   }
 }
+
+const INSPECTION_TYPE_LABELS: Record<string, string> = {
+  routine_visual: 'Routine Visual',
+  operational: 'Operational',
+  annual_main: 'Annual Main',
+};
+
+const DEFECT_STATUS_LABELS: Record<string, string> = {
+  open: 'Open',
+  in_progress: 'In Progress',
+  resolved: 'Resolved',
+  verified: 'Verified',
+  deferred: 'Deferred',
+};
+
+const DEFECT_STATUS_STYLES: Record<string, string> = {
+  open: 'bg-[#EF4444]/15 text-[#EF4444]',
+  in_progress: 'bg-[#EAB308]/15 text-[#EAB308]',
+  resolved: 'bg-[#22C55E]/15 text-[#22C55E]',
+  verified: 'bg-[#22C55E]/15 text-[#22C55E]',
+  deferred: 'bg-[#6B7280]/15 text-[#6B7280]',
+};
 
 // =============================================
 // SUB-COMPONENTS
 // =============================================
 
-/** Detail row — label + value */
 function DetailRow({
   icon,
   label,
@@ -208,7 +338,6 @@ function DetailRow({
   );
 }
 
-/** Collapsible section */
 function CollapsibleSection({
   title,
   icon,
@@ -248,51 +377,220 @@ function CollapsibleSection({
   );
 }
 
-/** Inspection history item */
-function InspectionHistoryRow({ item }: { item: InspectionItem }): JSX.Element {
-  const conditionLabel = item.overall_condition
-    ? CONDITION_LABELS[item.overall_condition]
-    : 'Not assessed';
-  const riskLabel = item.risk_rating ? RISK_RATING_LABELS[item.risk_rating] : '—';
+// =============================================
+// CONDITION TIMELINE CHART (Feature 2)
+// =============================================
+
+const CONDITION_VALUES: Record<string, number> = {
+  good: 4,
+  fair: 3,
+  poor: 2,
+  dangerous: 1,
+};
+
+function ConditionTimelineChart({ points }: { points: ConditionPoint[] }): JSX.Element {
+  const chartData = useMemo(() => {
+    if (points.length === 0) return null;
+
+    const width = 320;
+    const height = 120;
+    const padX = 32;
+    const padTop = 16;
+    const padBottom = 24;
+    const plotW = width - padX * 2;
+    const plotH = height - padTop - padBottom;
+
+    // Map condition to Y (4=top, 1=bottom)
+    const toY = (val: number): number => padTop + plotH - ((val - 1) / 3) * plotH;
+
+    // Distribute points evenly across X if only one date or same date
+    const toX = (idx: number): number => {
+      if (points.length === 1) return padX + plotW / 2;
+      return padX + (idx / (points.length - 1)) * plotW;
+    };
+
+    const mapped = points.map((p, i) => ({
+      x: toX(i),
+      y: toY(CONDITION_VALUES[p.overall_condition] ?? 2),
+      condition: p.overall_condition,
+      date: p.inspection_date,
+      risk: p.risk_rating,
+    }));
+
+    // Build polyline path
+    const pathD = mapped.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+    // Y-axis labels
+    const yLabels = [
+      { label: 'Good', y: toY(4), colour: '#22C55E' },
+      { label: 'Fair', y: toY(3), colour: '#EAB308' },
+      { label: 'Poor', y: toY(2), colour: '#F97316' },
+      { label: 'Dang.', y: toY(1), colour: '#EF4444' },
+    ];
+
+    return { width, height, mapped, pathD, yLabels, padX, plotW, padTop, padBottom, plotH };
+  }, [points]);
+
+  if (!chartData || points.length < 2) {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <p className="text-xs iv-muted">
+          {points.length === 0
+            ? 'No condition data recorded yet'
+            : 'Need at least 2 inspections to show trend'}
+        </p>
+      </div>
+    );
+  }
+
+  const { width, height, mapped, pathD, yLabels, padX, plotW, padTop, plotH } = chartData;
 
   return (
-    <div className="flex items-center justify-between py-3 border-b border-[#2A2F3A] last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <p className="text-sm iv-text">{formatDate(item.timestamp)}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <span
-            className={`text-xs font-medium ${
-              item.overall_condition ? conditionColour(item.overall_condition) : 'iv-muted'
-            }`}
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full h-auto"
+      role="img"
+      aria-label="Asset condition trend over time"
+    >
+      {/* Horizontal grid lines */}
+      {yLabels.map((yl) => (
+        <g key={yl.label}>
+          <line
+            x1={padX}
+            y1={yl.y}
+            x2={padX + plotW}
+            y2={yl.y}
+            stroke="#2A2F3A"
+            strokeWidth="1"
+          />
+          <text
+            x={padX - 4}
+            y={yl.y + 3}
+            textAnchor="end"
+            fill={yl.colour}
+            fontSize="8"
+            fontFamily="system-ui"
           >
-            {conditionLabel}
-          </span>
-          {item.risk_rating && (
-            <>
-              <span className="iv-muted text-xs">·</span>
-              <span className={`text-xs font-medium ${riskColour(item.risk_rating)}`}>
-                {riskLabel} risk
-              </span>
-            </>
+            {yl.label}
+          </text>
+        </g>
+      ))}
+
+      {/* Trend line */}
+      <path
+        d={pathD}
+        fill="none"
+        stroke="#22C55E"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity="0.7"
+      />
+
+      {/* Data points */}
+      {mapped.map((p, i) => (
+        <g key={i}>
+          <circle
+            cx={p.x}
+            cy={p.y}
+            r="4"
+            fill={conditionHexColour(p.condition)}
+            stroke="#0F1117"
+            strokeWidth="2"
+          />
+          {/* Date label (show first, last, and middle-ish) */}
+          {(i === 0 || i === mapped.length - 1 || (mapped.length > 4 && i === Math.floor(mapped.length / 2))) && (
+            <text
+              x={p.x}
+              y={height - 4}
+              textAnchor="middle"
+              fill="#6B7280"
+              fontSize="7"
+              fontFamily="system-ui"
+            >
+              {formatShortDate(p.date)}
+            </text>
           )}
-          {item.defects.length > 0 && (
-            <>
-              <span className="iv-muted text-xs">·</span>
-              <span className="text-xs iv-muted">
-                {item.defects.length} defect{item.defects.length !== 1 ? 's' : ''}
-              </span>
-            </>
-          )}
-        </div>
-        {item.inspector_notes && (
-          <p className="text-xs iv-muted mt-1 line-clamp-2">{item.inspector_notes}</p>
-        )}
-      </div>
-      {item.requires_action && (
-        <span className="flex-shrink-0 ml-2">
-          <AlertCircle className="w-4 h-4 text-[#F97316]" aria-label="Action required" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// =============================================
+// REPEAT DEFECT ALERT (Feature 2)
+// =============================================
+
+function RepeatDefectAlert({ repeats }: { repeats: RepeatDefect[] }): JSX.Element | null {
+  if (repeats.length === 0) return null;
+
+  return (
+    <div className="iv-panel p-4 mb-4 border-l-4 border-l-[#F97316]">
+      <div className="flex items-center gap-2 mb-3">
+        <Repeat className="w-4 h-4 text-[#F97316]" />
+        <h2 className="text-sm font-semibold iv-text">Repeat Issues Detected</h2>
+        <span className="text-xs bg-[#F97316]/15 text-[#F97316] px-2 py-0.5 rounded-full font-medium">
+          {repeats.length}
         </span>
-      )}
+      </div>
+      <p className="text-xs iv-muted mb-3">
+        These BS EN references have been flagged multiple times on this asset — may indicate
+        a systemic problem requiring capital intervention.
+      </p>
+      <div className="space-y-2">
+        {repeats.map((r) => (
+          <div
+            key={r.bs_en_reference}
+            className="flex items-center justify-between p-2.5 rounded-lg bg-[#1C2029]"
+          >
+            <div className="min-w-0 flex-1">
+              <span className="text-sm font-mono text-[#F97316]">{r.bs_en_reference}</span>
+              <p className="text-xs iv-muted mt-0.5">
+                Last seen {formatDate(r.last_seen)} · Severities: {r.severities}
+              </p>
+            </div>
+            <span className="text-sm font-bold text-[#F97316] shrink-0 ml-3">
+              ×{r.occurrence_count}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// HISTORY STATS SUMMARY (Feature 2)
+// =============================================
+
+function HistoryStatsSummary({ summary }: { summary: ConditionSummary }): JSX.Element {
+  const trend = trendDisplay(summary.condition_trend);
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div className="iv-panel p-3 text-center">
+        <p className="text-lg font-bold iv-text">{summary.total_inspections}</p>
+        <p className="text-2xs iv-muted">Inspections</p>
+      </div>
+      <div className="iv-panel p-3 text-center">
+        <p className={`text-lg font-bold ${conditionColour(summary.current_condition)}`}>
+          {conditionLabel(summary.current_condition)}
+        </p>
+        <p className="text-2xs iv-muted">Current</p>
+      </div>
+      <div className="iv-panel p-3 text-center">
+        <div className={`flex items-center justify-center gap-1 ${trend.className}`}>
+          {trend.icon}
+          <p className="text-sm font-bold">{trend.label}</p>
+        </div>
+        <p className="text-2xs iv-muted">Trend</p>
+      </div>
+      <div className="iv-panel p-3 text-center">
+        <p className={`text-lg font-bold ${summary.open_defects > 0 ? 'text-[#F97316]' : 'text-[#22C55E]'}`}>
+          {summary.open_defects}
+        </p>
+        <p className="text-2xs iv-muted">Open Defects</p>
+      </div>
     </div>
   );
 }
@@ -304,15 +602,30 @@ function InspectionHistoryRow({ item }: { item: InspectionItem }): JSX.Element {
 export default function AssetDetail(): JSX.Element {
   const { siteId, assetId } = useParams<{ siteId: string; assetId: string }>();
 
-  // ---- State ----
+  // ---- State: local asset data ----
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [asset, setAsset] = useState<Asset | null>(null);
   const [assetConfig, setAssetConfig] = useState<AssetTypeConfig | null>(null);
-  const [history, setHistory] = useState<InspectionItem[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
 
-  // ---- Load asset ----
+  // ---- State: API history ----
+  const {
+    data: historyData,
+    loading: historyLoading,
+    error: historyError,
+    refetch: refetchHistory,
+  } = useFetch<AssetHistoryResponse>(
+    assetId ? `/api/v1/assets/${assetId}/history` : null,
+  );
+
+  const historyPayload = historyData?.data ?? null;
+  const inspectionHistory = historyPayload?.inspection_history ?? [];
+  const defectHistory = historyPayload?.defect_history ?? [];
+  const conditionTimeline = historyPayload?.condition_timeline ?? [];
+  const conditionSummary = historyPayload?.condition_summary ?? null;
+  const repeatDefects = conditionSummary?.repeat_defect_types ?? [];
+
+  // ---- Load local asset ----
   useEffect(() => {
     if (!assetId || !siteId) return;
 
@@ -339,28 +652,6 @@ export default function AssetDetail(): JSX.Element {
         setAsset(assetData);
         setAssetConfig(getAssetTypeConfig(assetData.asset_type));
         setLoading(false);
-
-        // Load inspection history for this asset
-        setHistoryLoading(true);
-        try {
-          // Get all local inspection items — filter by asset_id
-          // In a full build, this would query the API. For offline, we scan local items.
-          // Note: inspectionItems doesn't have a getByAsset method yet, so we
-          // check all items and filter. This is acceptable for offline cache sizes.
-          const allDirtyItems = await inspectionItems.getDirty();
-          if (cancelled) return;
-
-          const assetHistory = allDirtyItems
-            .filter((item) => item.data.asset_id === assetId || item.data.asset_code === assetData.asset_code)
-            .map((item) => item.data)
-            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-          setHistory(assetHistory);
-        } catch (histError) {
-          captureError(histError, { module: 'AssetDetail', operation: 'loadHistory' });
-        } finally {
-          if (!cancelled) setHistoryLoading(false);
-        }
       } catch (error) {
         if (cancelled) return;
         captureError(error, { module: 'AssetDetail', operation: 'loadAsset' });
@@ -421,7 +712,11 @@ export default function AssetDetail(): JSX.Element {
   const surfaceLabel = asset.surface_type
     ? SURFACE_TYPE_LABELS[asset.surface_type as SurfaceType] ?? asset.surface_type
     : null;
-  const trend = trendDisplay(asset.condition_trend);
+
+  // Use API trend if available, fall back to local asset trend
+  const effectiveTrend = conditionSummary?.condition_trend ?? asset.condition_trend;
+  const trend = trendDisplay(effectiveTrend);
+
   const showPlaygroundFields =
     asset.asset_category === AssetCategory.PLAYGROUND ||
     asset.asset_category === AssetCategory.OUTDOOR_GYM;
@@ -481,27 +776,25 @@ export default function AssetDetail(): JSX.Element {
         </Link>
       </div>
 
-      {/* ── Condition Summary (if inspected) ── */}
-      {asset.last_inspection_date && (
+      {/* ── Condition Summary (uses API data if available) ── */}
+      {(asset.last_inspection_date || conditionSummary?.last_inspected) && (
         <div className="iv-panel p-4 mb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Condition badge */}
               <div
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border ${conditionBadgeBg(asset.last_inspection_condition)}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border ${conditionBadgeBg(
+                  conditionSummary?.current_condition ?? asset.last_inspection_condition,
+                )}`}
               >
-                {asset.last_inspection_condition === ConditionRating.GOOD && (
+                {(conditionSummary?.current_condition ?? asset.last_inspection_condition) === 'good' && (
                   <CheckCircle2 className="w-3.5 h-3.5" />
                 )}
-                {asset.last_inspection_condition === ConditionRating.DANGEROUS && (
+                {(conditionSummary?.current_condition ?? asset.last_inspection_condition) === 'dangerous' && (
                   <AlertTriangle className="w-3.5 h-3.5" />
                 )}
-                {asset.last_inspection_condition
-                  ? CONDITION_LABELS[asset.last_inspection_condition]
-                  : 'Unknown'}
+                {conditionLabel(conditionSummary?.current_condition ?? asset.last_inspection_condition)}
               </div>
 
-              {/* Trend */}
               <div className={`flex items-center gap-1 text-xs ${trend.className}`}>
                 {trend.icon}
                 <span>{trend.label}</span>
@@ -509,14 +802,14 @@ export default function AssetDetail(): JSX.Element {
             </div>
 
             <p className="text-xs iv-muted">
-              Last inspected {formatDate(asset.last_inspection_date)}
+              Last inspected {formatDate(conditionSummary?.last_inspected ?? asset.last_inspection_date)}
             </p>
           </div>
         </div>
       )}
 
       {/* ── No inspection yet banner ── */}
-      {!asset.last_inspection_date && (
+      {!asset.last_inspection_date && !conditionSummary?.last_inspected && (
         <div className="iv-panel p-4 mb-4 border-l-4 border-l-[#EAB308]">
           <div className="flex items-start gap-2">
             <Info className="w-4 h-4 text-[#EAB308] flex-shrink-0 mt-0.5" />
@@ -527,6 +820,34 @@ export default function AssetDetail(): JSX.Element {
           </div>
         </div>
       )}
+
+      {/* ══════════════════════════════════════════ */}
+      {/* FEATURE 2: Longitudinal History Section   */}
+      {/* ══════════════════════════════════════════ */}
+
+      {/* History stats summary */}
+      {conditionSummary && conditionSummary.total_inspections > 0 && (
+        <HistoryStatsSummary summary={conditionSummary} />
+      )}
+
+      {/* Condition Timeline Chart */}
+      {conditionTimeline.length > 0 && (
+        <div className="iv-panel p-4 mb-4">
+          <h2 className="text-base font-semibold iv-text mb-2 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-[#22C55E]" />
+            Condition Over Time
+          </h2>
+          <ConditionTimelineChart points={conditionTimeline} />
+          <p className="text-2xs iv-muted mt-2 text-center">
+            {conditionTimeline.length} inspection{conditionTimeline.length !== 1 ? 's' : ''} from{' '}
+            {formatShortDate(conditionTimeline[0].inspection_date)} to{' '}
+            {formatShortDate(conditionTimeline[conditionTimeline.length - 1].inspection_date)}
+          </p>
+        </div>
+      )}
+
+      {/* Repeat Defect Alert */}
+      <RepeatDefectAlert repeats={repeatDefects} />
 
       {/* ── Reference Photo Placeholder ── */}
       <div className="iv-panel p-5 mb-4">
@@ -542,9 +863,7 @@ export default function AssetDetail(): JSX.Element {
           <div className="aspect-video bg-[#1C2029] rounded-lg flex flex-col items-center justify-center border-2 border-dashed border-[#2A2F3A]">
             <Camera className="w-8 h-8 iv-muted mb-2" />
             <p className="text-sm iv-muted">No reference photo</p>
-            <p className="text-xs iv-muted mt-1">
-              Photo capture available in Phase 4
-            </p>
+            <p className="text-xs iv-muted mt-1">Photo capture available in Phase 4</p>
           </div>
         )}
       </div>
@@ -555,23 +874,10 @@ export default function AssetDetail(): JSX.Element {
           <Package className="w-4 h-4 text-[#22C55E]" />
           Asset Information
         </h2>
-
         <div className="divide-y divide-[#2A2F3A]">
-          <DetailRow
-            icon={<Hash className="w-3.5 h-3.5" />}
-            label="Asset Code"
-            value={asset.asset_code}
-          />
-          <DetailRow
-            icon={<Package className="w-3.5 h-3.5" />}
-            label="Type"
-            value={typeName}
-          />
-          <DetailRow
-            icon={<Package className="w-3.5 h-3.5" />}
-            label="Category"
-            value={categoryLabel}
-          />
+          <DetailRow icon={<Hash className="w-3.5 h-3.5" />} label="Asset Code" value={asset.asset_code} />
+          <DetailRow icon={<Package className="w-3.5 h-3.5" />} label="Type" value={typeName} />
+          <DetailRow icon={<Package className="w-3.5 h-3.5" />} label="Category" value={categoryLabel} />
           {assetConfig?.complianceStandard && (
             <DetailRow
               icon={<ShieldCheck className="w-3.5 h-3.5" />}
@@ -589,37 +895,16 @@ export default function AssetDetail(): JSX.Element {
           <Factory className="w-4 h-4 text-[#22C55E]" />
           Manufacturer Details
         </h2>
-
         <div className="divide-y divide-[#2A2F3A]">
-          <DetailRow
-            icon={<Factory className="w-3.5 h-3.5" />}
-            label="Manufacturer"
-            value={asset.manufacturer}
-          />
+          <DetailRow icon={<Factory className="w-3.5 h-3.5" />} label="Manufacturer" value={asset.manufacturer} />
           <DetailRow label="Model" value={asset.model} />
-          <DetailRow
-            icon={<Hash className="w-3.5 h-3.5" />}
-            label="Serial Number"
-            value={asset.serial_number}
-          />
-          <DetailRow
-            icon={<Calendar className="w-3.5 h-3.5" />}
-            label="Install Date"
-            value={formatDate(asset.install_date)}
-          />
-          <DetailRow
-            icon={<PoundSterling className="w-3.5 h-3.5" />}
-            label="Purchase Cost"
-            value={formatGBP(asset.purchase_cost_gbp)}
-          />
+          <DetailRow icon={<Hash className="w-3.5 h-3.5" />} label="Serial Number" value={asset.serial_number} />
+          <DetailRow icon={<Calendar className="w-3.5 h-3.5" />} label="Install Date" value={formatDate(asset.install_date)} />
+          <DetailRow icon={<PoundSterling className="w-3.5 h-3.5" />} label="Purchase Cost" value={formatGBP(asset.purchase_cost_gbp)} />
           <DetailRow
             icon={<Clock className="w-3.5 h-3.5" />}
             label="Expected Lifespan"
-            value={
-              asset.expected_lifespan_years !== null
-                ? `${asset.expected_lifespan_years} years`
-                : '—'
-            }
+            value={asset.expected_lifespan_years !== null ? `${asset.expected_lifespan_years} years` : '—'}
           />
         </div>
       </div>
@@ -631,19 +916,12 @@ export default function AssetDetail(): JSX.Element {
             <Ruler className="w-4 h-4 text-[#22C55E]" />
             Safety Measurements
           </h2>
-
           <div className="divide-y divide-[#2A2F3A]">
-            <DetailRow
-              icon={<Ruler className="w-3.5 h-3.5" />}
-              label="Impact Surface Type"
-              value={surfaceLabel}
-            />
+            <DetailRow icon={<Ruler className="w-3.5 h-3.5" />} label="Impact Surface Type" value={surfaceLabel} />
             <DetailRow
               icon={<Ruler className="w-3.5 h-3.5" />}
               label="Critical Fall Height"
-              value={
-                asset.fall_height_mm !== null ? `${asset.fall_height_mm.toLocaleString()}mm` : '—'
-              }
+              value={asset.fall_height_mm !== null ? `${asset.fall_height_mm.toLocaleString()}mm` : '—'}
             />
             <DetailRow
               label="Required Surfacing Depth"
@@ -663,18 +941,9 @@ export default function AssetDetail(): JSX.Element {
           <FileText className="w-4 h-4 text-[#22C55E]" />
           Maintenance
         </h2>
-
         <div className="divide-y divide-[#2A2F3A]">
-          <DetailRow
-            icon={<Calendar className="w-3.5 h-3.5" />}
-            label="Last Maintenance"
-            value={formatDate(asset.last_maintenance_date)}
-          />
-          <DetailRow
-            icon={<Calendar className="w-3.5 h-3.5" />}
-            label="Next Maintenance Due"
-            value={formatDate(asset.next_maintenance_due)}
-          />
+          <DetailRow icon={<Calendar className="w-3.5 h-3.5" />} label="Last Maintenance" value={formatDate(asset.last_maintenance_date)} />
+          <DetailRow icon={<Calendar className="w-3.5 h-3.5" />} label="Next Maintenance Due" value={formatDate(asset.next_maintenance_due)} />
           {asset.maintenance_notes && (
             <div className="py-2">
               <p className="text-xs iv-muted mb-1">Notes</p>
@@ -696,12 +965,9 @@ export default function AssetDetail(): JSX.Element {
           }
         >
           <div className="mt-3 space-y-4">
-            {/* Routine Visual */}
             {routinePoints.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold iv-muted uppercase tracking-wider mb-2">
-                  Routine Visual
-                </h3>
+                <h3 className="text-xs font-semibold iv-muted uppercase tracking-wider mb-2">Routine Visual</h3>
                 <ul className="space-y-1.5">
                   {routinePoints.map((point, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-sm">
@@ -715,13 +981,9 @@ export default function AssetDetail(): JSX.Element {
                 </ul>
               </div>
             )}
-
-            {/* Operational */}
             {operationalPoints.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold iv-muted uppercase tracking-wider mb-2">
-                  Operational
-                </h3>
+                <h3 className="text-xs font-semibold iv-muted uppercase tracking-wider mb-2">Operational</h3>
                 <ul className="space-y-1.5">
                   {operationalPoints.map((point, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-sm">
@@ -735,13 +997,9 @@ export default function AssetDetail(): JSX.Element {
                 </ul>
               </div>
             )}
-
-            {/* Annual Main */}
             {annualPoints.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold iv-muted uppercase tracking-wider mb-2">
-                  Annual Main
-                </h3>
+                <h3 className="text-xs font-semibold iv-muted uppercase tracking-wider mb-2">Annual Main</h3>
                 <ul className="space-y-1.5">
                   {annualPoints.map((point, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-sm">
@@ -824,25 +1082,112 @@ export default function AssetDetail(): JSX.Element {
         </CollapsibleSection>
       )}
 
-      {/* ── Inspection History ── */}
+      {/* ══════════════════════════════════════════ */}
+      {/* INSPECTION HISTORY — API-fetched (F2)     */}
+      {/* ══════════════════════════════════════════ */}
+
       <div className="iv-panel mb-4 overflow-hidden">
-        <div className="p-4">
+        <div className="p-4 flex items-center justify-between">
           <h2 className="text-base font-semibold iv-text flex items-center gap-2">
             <ClipboardList className="w-4 h-4 text-[#22C55E]" />
             Inspection History
+            {inspectionHistory.length > 0 && (
+              <span className="text-xs iv-muted font-normal ml-1">
+                ({inspectionHistory.length})
+              </span>
+            )}
           </h2>
+          <button
+            type="button"
+            onClick={refetchHistory}
+            disabled={historyLoading}
+            className="iv-btn-icon"
+            aria-label="Refresh history"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
 
         <div className="px-4 pb-4 border-t border-[#2A2F3A]">
-          {historyLoading ? (
+          {historyLoading && inspectionHistory.length === 0 ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-5 h-5 iv-muted animate-spin" />
             </div>
-          ) : history.length > 0 ? (
-            <div className="mt-2">
-              {history.map((item) => (
-                <InspectionHistoryRow key={item.id} item={item} />
-              ))}
+          ) : historyError ? (
+            <div className="py-6 text-center">
+              <AlertCircle className="w-6 h-6 text-[#F97316] mx-auto mb-2" />
+              <p className="text-sm iv-muted">Failed to load history</p>
+              <button
+                type="button"
+                onClick={refetchHistory}
+                className="text-xs text-[#22C55E] mt-2 hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          ) : inspectionHistory.length > 0 ? (
+            <div className="mt-2 space-y-0">
+              {inspectionHistory.map((item) => {
+                const condLabel = item.overall_condition
+                  ? conditionLabel(item.overall_condition)
+                  : 'Not assessed';
+                const riskLabel = item.risk_rating
+                  ? RISK_RATING_LABELS[item.risk_rating] ?? item.risk_rating
+                  : null;
+                const typeLabel = INSPECTION_TYPE_LABELS[item.inspection_type] ?? item.inspection_type;
+
+                return (
+                  <div
+                    key={item.inspection_id}
+                    className="flex items-center justify-between py-3 border-b border-[#2A2F3A] last:border-b-0"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm iv-text">{formatDate(item.inspection_date)}</p>
+                        <span className="text-2xs iv-muted">{typeLabel}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span
+                          className={`text-xs font-medium ${
+                            item.overall_condition ? conditionColour(item.overall_condition) : 'iv-muted'
+                          }`}
+                        >
+                          {condLabel}
+                        </span>
+                        {riskLabel && (
+                          <>
+                            <span className="iv-muted text-xs">·</span>
+                            <span className={`text-xs font-medium ${riskColour(item.risk_rating!)}`}>
+                              {riskLabel} risk
+                            </span>
+                          </>
+                        )}
+                        {item.defect_count > 0 && (
+                          <>
+                            <span className="iv-muted text-xs">·</span>
+                            <span className="text-xs iv-muted">
+                              {item.defect_count} defect{item.defect_count !== 1 ? 's' : ''}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-2xs iv-muted mt-0.5">{item.inspector_name}</p>
+                      {item.inspector_notes && (
+                        <p className="text-xs iv-muted mt-1 line-clamp-2">{item.inspector_notes}</p>
+                      )}
+                    </div>
+
+                    <Link
+                      to={`/sites/${siteId}/inspections/${item.inspection_id}/review`}
+                      className="iv-btn-icon shrink-0 ml-2"
+                      title="View inspection"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="py-6 text-center">
@@ -856,6 +1201,85 @@ export default function AssetDetail(): JSX.Element {
         </div>
       </div>
 
+      {/* ══════════════════════════════════════════ */}
+      {/* DEFECT HISTORY — API-fetched (Feature 2)  */}
+      {/* ══════════════════════════════════════════ */}
+
+      {defectHistory.length > 0 && (
+        <CollapsibleSection
+          title="Defect History"
+          icon={<AlertTriangle className="w-4 h-4" />}
+          defaultOpen={defectHistory.some((d) => d.status !== 'resolved' && d.status !== 'verified')}
+          badge={
+            <span className="text-xs iv-muted ml-2">
+              {defectHistory.length} total
+              {conditionSummary && conditionSummary.open_defects > 0 && (
+                <span className="text-[#F97316] ml-1">
+                  · {conditionSummary.open_defects} open
+                </span>
+              )}
+            </span>
+          }
+        >
+          <div className="mt-3 space-y-2">
+            {defectHistory.map((defect) => {
+              const isOpen = defect.status !== 'resolved' && defect.status !== 'verified';
+              const statusLabel = DEFECT_STATUS_LABELS[defect.status] ?? defect.status;
+              const statusStyle = DEFECT_STATUS_STYLES[defect.status] ?? 'bg-[#2A2F3A] iv-muted';
+
+              return (
+                <div
+                  key={defect.id}
+                  className={`p-3 rounded-lg ${isOpen ? 'bg-[#F97316]/5' : 'bg-[#1C2029]'}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-2xs font-medium px-2 py-0.5 rounded-full ${severityBadgeBg(defect.severity)}`}>
+                          {RISK_RATING_LABELS[defect.severity as RiskRating] ?? defect.severity}
+                        </span>
+                        <span className={`text-2xs font-medium px-1.5 py-0.5 rounded ${statusStyle}`}>
+                          {statusLabel}
+                        </span>
+                        {defect.made_safe && (
+                          <span className="text-2xs text-[#22C55E]">
+                            <ShieldCheck className="w-3 h-3 inline" /> Safe
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm iv-text line-clamp-2">{defect.description}</p>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-2xs iv-muted">{formatDate(defect.created_at)}</span>
+                        {defect.bs_en_reference && (
+                          <>
+                            <span className="text-2xs iv-muted">·</span>
+                            <span className="text-2xs font-mono iv-muted">{defect.bs_en_reference}</span>
+                          </>
+                        )}
+                        {defect.resolved_at && (
+                          <>
+                            <span className="text-2xs iv-muted">·</span>
+                            <span className="text-2xs text-[#22C55E]">Resolved {formatDate(defect.resolved_at)}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <Link
+                      to={`/sites/${siteId}/inspections/${defect.inspection_id}/review`}
+                      className="iv-btn-icon shrink-0"
+                      title="View inspection"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CollapsibleSection>
+      )}
+
       {/* ── Decommission info (if inactive) ── */}
       {!asset.is_active && (
         <div className="iv-panel p-5 mb-4 border-l-4 border-l-[#EF4444]">
@@ -864,11 +1288,7 @@ export default function AssetDetail(): JSX.Element {
             Decommissioned
           </h2>
           <div className="divide-y divide-[#2A2F3A]">
-            <DetailRow
-              icon={<Calendar className="w-3.5 h-3.5" />}
-              label="Decommissioned Date"
-              value={formatDate(asset.decommissioned_date)}
-            />
+            <DetailRow icon={<Calendar className="w-3.5 h-3.5" />} label="Decommissioned Date" value={formatDate(asset.decommissioned_date)} />
             {asset.decommission_reason && (
               <DetailRow label="Reason" value={asset.decommission_reason} />
             )}

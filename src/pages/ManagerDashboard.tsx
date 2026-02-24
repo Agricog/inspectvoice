@@ -1,20 +1,23 @@
 /**
  * InspectVoice — Manager Dashboard
  * Organisation-wide overview: compliance status, risk summary, upcoming inspections,
- * recent activity, and high-priority defects.
+ * recent activity, and high-priority defect hotlist.
  *
- * Route: / (replaces placeholder Dashboard)
+ * Route: / (home page)
  *
  * Features:
  * - Summary stat cards (sites, assets, inspections, defects)
  * - Risk distribution overview (defects by severity)
  * - Upcoming inspections due (compliance calendar)
  * - Recent inspection activity
- * - High-priority open defects requiring action
+ * - HOTLIST: top 20 very_high/high open defects — action-oriented,
+ *   with SLA indicators, age, made-safe status, one-click drill-in
  * - Responsive grid layout
  * - Loading, error, and empty states
  *
- * API: GET /api/dashboard
+ * API: GET /api/v1/dashboard/stats
+ *
+ * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
 import { Link } from 'react-router-dom';
@@ -34,6 +37,9 @@ import {
   CheckCircle,
   Layers,
   TrendingUp,
+  ShieldCheck,
+  Clock,
+  ExternalLink,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
 import {
@@ -71,7 +77,8 @@ interface DashboardResponse {
   };
   upcoming_inspections: UpcomingInspection[];
   recent_inspections: RecentInspection[];
-  priority_defects: PriorityDefect[];
+  priority_defects: HotlistItem[];
+  hotlist: HotlistItem[];
 }
 
 interface UpcomingInspection {
@@ -95,17 +102,26 @@ interface RecentInspection {
   total_defects: number;
 }
 
-interface PriorityDefect {
+interface HotlistItem {
   id: string;
-  site_id: string;
-  site_name: string;
-  asset_code: string;
   description: string;
   severity: RiskRating;
   status: DefectStatus;
   action_timeframe: ActionTimeframe;
+  bs_en_reference: string | null;
+  remedial_action: string;
   due_date: string | null;
+  estimated_cost_gbp: number | null;
+  created_at: string;
+  site_id: string;
+  site_name: string;
+  asset_id: string | null;
+  asset_code: string | null;
+  inspection_id: string;
+  days_open: number;
   days_overdue: number | null;
+  made_safe: boolean;
+  made_safe_at: string | null;
 }
 
 // =============================================
@@ -410,7 +426,6 @@ function RecentInspections({ inspections }: { inspections: RecentInspection[] })
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Risk indicator */}
                   {riskStyle && (
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${riskStyle.bg} ${riskStyle.text}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${riskStyle.dot}`} />
@@ -418,14 +433,12 @@ function RecentInspections({ inspections }: { inspections: RecentInspection[] })
                     </span>
                   )}
 
-                  {/* Defect count */}
                   {item.total_defects > 0 && (
                     <span className="text-2xs text-iv-muted">
                       {item.total_defects} defect{item.total_defects !== 1 ? 's' : ''}
                     </span>
                   )}
 
-                  {/* Action */}
                   <Link
                     to={actionUrl}
                     className="iv-btn-icon"
@@ -448,16 +461,134 @@ function RecentInspections({ inspections }: { inspections: RecentInspection[] })
 }
 
 // =============================================
-// PRIORITY DEFECTS
+// HOTLIST — High-Risk Defect Action Panel
 // =============================================
 
-function PriorityDefects({ defects }: { defects: PriorityDefect[] }): JSX.Element {
+function HotlistRow({ defect }: { defect: HotlistItem }): JSX.Element {
+  const sevStyle = RISK_STYLES[defect.severity];
+
+  // SLA status
+  const slaLabel = defect.days_overdue !== null && defect.days_overdue > 0
+    ? `${defect.days_overdue}d overdue`
+    : defect.due_date
+      ? (() => {
+          const daysLeft = Math.round(
+            (new Date(defect.due_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+          );
+          if (daysLeft === 0) return 'Due today';
+          if (daysLeft > 0) return `${daysLeft}d left`;
+          return `${Math.abs(daysLeft)}d overdue`;
+        })()
+      : null;
+
+  const slaColor = defect.days_overdue !== null && defect.days_overdue > 0
+    ? 'text-red-400'
+    : slaLabel && slaLabel.includes('left') && parseInt(slaLabel) <= 7
+      ? 'text-yellow-400'
+      : 'text-iv-muted';
+
+  const inspectionUrl = `/sites/${defect.site_id}/inspections/${defect.inspection_id}/review`;
+
+  return (
+    <li
+      className={`p-3 rounded-lg transition-colors ${
+        defect.days_overdue !== null && defect.days_overdue > 0
+          ? 'bg-red-500/5 hover:bg-red-500/10'
+          : 'bg-iv-surface-2/50 hover:bg-iv-surface-2'
+      }`}
+    >
+      {/* Row 1: severity + description + drill-in */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            {/* Severity badge */}
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold ${sevStyle.bg} ${sevStyle.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${sevStyle.dot}`} />
+              {RISK_RATING_LABELS[defect.severity]}
+            </span>
+
+            {/* Made Safe indicator */}
+            {defect.made_safe && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium bg-emerald-500/15 text-emerald-400">
+                <ShieldCheck className="w-3 h-3" />
+                Made Safe
+              </span>
+            )}
+
+            {/* Age */}
+            <span className="inline-flex items-center gap-1 text-2xs text-iv-muted">
+              <Clock className="w-3 h-3" />
+              {defect.days_open}d open
+            </span>
+
+            {/* SLA */}
+            {slaLabel && (
+              <span className={`text-2xs font-medium ${slaColor}`}>
+                {defect.days_overdue !== null && defect.days_overdue > 0 && (
+                  <AlertCircle className="w-3 h-3 inline mr-0.5" />
+                )}
+                {slaLabel}
+              </span>
+            )}
+          </div>
+
+          {/* Description */}
+          <p className="text-sm text-iv-text line-clamp-1">{defect.description}</p>
+
+          {/* Context: site · asset · timeframe */}
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <Link
+              to={`/sites/${defect.site_id}`}
+              className="text-2xs text-iv-muted hover:text-iv-accent transition-colors"
+            >
+              {defect.site_name}
+            </Link>
+            {defect.asset_code && (
+              <>
+                <span className="text-2xs text-iv-muted-2">·</span>
+                <span className="text-2xs text-iv-muted">{defect.asset_code}</span>
+              </>
+            )}
+            <span className="text-2xs text-iv-muted-2">·</span>
+            <span className="text-2xs text-iv-muted">
+              {ACTION_TIMEFRAME_LABELS[defect.action_timeframe]}
+            </span>
+            {defect.bs_en_reference && (
+              <>
+                <span className="text-2xs text-iv-muted-2">·</span>
+                <span className="text-2xs text-iv-muted font-mono">{defect.bs_en_reference}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Drill-in link */}
+        <Link
+          to={inspectionUrl}
+          className="iv-btn-icon shrink-0"
+          title="View inspection"
+        >
+          <ExternalLink className="w-4 h-4" />
+        </Link>
+      </div>
+    </li>
+  );
+}
+
+function Hotlist({ defects }: { defects: HotlistItem[] }): JSX.Element {
   return (
     <div className="bg-iv-surface border border-iv-border rounded-xl p-4">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-orange-400" />
-          <h2 className="text-sm font-semibold text-iv-text">Priority Defects</h2>
+          <AlertTriangle className="w-4 h-4 text-red-400" />
+          <h2 className="text-sm font-semibold text-iv-text">
+            Hotlist
+          </h2>
+          {defects.length > 0 && (
+            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-2xs font-bold bg-red-500/15 text-red-400">
+              {defects.length}
+            </span>
+          )}
         </div>
         <Link
           to="/defects?severity=very_high&severity=high"
@@ -469,64 +600,39 @@ function PriorityDefects({ defects }: { defects: PriorityDefect[] }): JSX.Elemen
       </div>
 
       {defects.length === 0 ? (
-        <div className="flex items-center gap-2 py-4 justify-center">
-          <CheckCircle className="w-4 h-4 text-emerald-400" />
-          <span className="text-sm text-emerald-400 font-medium">No high-priority defects</span>
+        <div className="flex items-center gap-2 py-6 justify-center">
+          <CheckCircle className="w-5 h-5 text-emerald-400" />
+          <span className="text-sm text-emerald-400 font-medium">
+            No high-risk defects outstanding
+          </span>
         </div>
       ) : (
-        <ul className="space-y-2">
-          {defects.map((defect) => {
-            const sevStyle = RISK_STYLES[defect.severity];
-            const overdueLabel = defect.days_overdue !== null && defect.days_overdue > 0
-              ? `${defect.days_overdue}d overdue`
-              : null;
+        <>
+          {/* Column headers (desktop only) */}
+          <div className="hidden lg:flex items-center gap-3 px-3 pb-2 mb-1 border-b border-iv-border">
+            <span className="text-2xs font-medium text-iv-muted flex-1">
+              Severity · Status · Description · Location
+            </span>
+            <span className="text-2xs font-medium text-iv-muted shrink-0 w-8" />
+          </div>
 
-            return (
-              <li
-                key={defect.id}
-                className={`p-2.5 rounded-lg transition-colors ${
-                  overdueLabel ? 'bg-red-500/5' : 'bg-iv-surface-2/50'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-iv-text line-clamp-1">{defect.description}</p>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <Link
-                        to={`/sites/${defect.site_id}`}
-                        className="text-2xs text-iv-muted hover:text-iv-accent transition-colors"
-                      >
-                        {defect.site_name}
-                      </Link>
-                      {defect.asset_code && (
-                        <>
-                          <span className="text-2xs text-iv-muted-2">·</span>
-                          <span className="text-2xs text-iv-muted">{defect.asset_code}</span>
-                        </>
-                      )}
-                      <span className="text-2xs text-iv-muted-2">·</span>
-                      <span className="text-2xs text-iv-muted">
-                        {ACTION_TIMEFRAME_LABELS[defect.action_timeframe]}
-                      </span>
-                    </div>
-                  </div>
+          <ul className="space-y-2">
+            {defects.map((defect) => (
+              <HotlistRow key={defect.id} defect={defect} />
+            ))}
+          </ul>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${sevStyle.bg} ${sevStyle.text}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${sevStyle.dot}`} />
-                      {RISK_RATING_LABELS[defect.severity]}
-                    </span>
-                    {overdueLabel && (
-                      <span className="text-2xs font-medium text-red-400">
-                        {overdueLabel}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+          {/* Overdue summary */}
+          {defects.some((d) => d.days_overdue !== null && d.days_overdue > 0) && (
+            <div className="mt-3 pt-3 border-t border-iv-border">
+              <p className="text-2xs text-red-400 font-medium">
+                <AlertCircle className="w-3 h-3 inline mr-1" />
+                {defects.filter((d) => d.days_overdue !== null && d.days_overdue > 0).length} defect{defects.filter((d) => d.days_overdue !== null && d.days_overdue > 0).length !== 1 ? 's' : ''} overdue
+                — action required
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -537,7 +643,7 @@ function PriorityDefects({ defects }: { defects: PriorityDefect[] }): JSX.Elemen
 // =============================================
 
 export function ManagerDashboard(): JSX.Element {
-  const { data, loading, error, refetch } = useFetch<DashboardResponse>('/api/dashboard');
+  const { data, loading, error, refetch } = useFetch<DashboardResponse>('/api/v1/dashboard/stats');
 
   // Provide safe defaults while loading
   const summary = data?.summary ?? {
@@ -560,13 +666,13 @@ export function ManagerDashboard(): JSX.Element {
 
   const upcomingInspections = data?.upcoming_inspections ?? [];
   const recentInspections = data?.recent_inspections ?? [];
-  const priorityDefects = data?.priority_defects ?? [];
+  const hotlist = data?.hotlist ?? [];
 
   return (
     <>
       <Helmet>
         <title>Dashboard — InspectVoice</title>
-        <meta name="description" content="InspectVoice compliance dashboard — risk overview, upcoming inspections, and priority defects." />
+        <meta name="description" content="InspectVoice compliance dashboard — risk overview, upcoming inspections, and high-risk defect hotlist." />
       </Helmet>
 
       <div className="space-y-6">
@@ -625,17 +731,17 @@ export function ManagerDashboard(): JSX.Element {
             {/* Summary stats */}
             <SummaryStats summary={summary} />
 
+            {/* HOTLIST — full width, prominent position */}
+            <Hotlist defects={hotlist} />
+
             {/* Two-column grid: risk + upcoming */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <RiskOverview riskData={riskOverview} />
               <UpcomingInspections inspections={upcomingInspections} />
             </div>
 
-            {/* Two-column grid: recent + priority defects */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <RecentInspections inspections={recentInspections} />
-              <PriorityDefects defects={priorityDefects} />
-            </div>
+            {/* Recent inspections — full width */}
+            <RecentInspections inspections={recentInspections} />
           </>
         )}
       </div>

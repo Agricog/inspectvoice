@@ -62,7 +62,6 @@ import { useFetch } from '@hooks/useFetch';
 import {
   ASSET_CATEGORY_LABELS,
   SURFACE_TYPE_LABELS,
-  CONDITION_LABELS,
   RISK_RATING_LABELS,
   ConditionRating,
   ConditionTrend,
@@ -443,7 +442,7 @@ function ConditionTimelineChart({ points }: { points: ConditionPoint[] }): JSX.E
     );
   }
 
-  const { width, height, mapped, pathD, yLabels, padX, plotW, padTop, plotH } = chartData;
+  const { width, height, mapped, pathD, yLabels, padX, plotW } = chartData;
 
   return (
     <svg
@@ -615,7 +614,7 @@ export default function AssetDetail(): JSX.Element {
     error: historyError,
     refetch: refetchHistory,
   } = useFetch<AssetHistoryResponse>(
-    assetId ? `/api/v1/assets/${assetId}/history` : null,
+    assetId ? `/api/v1/assets/${assetId}/history` : '',
   );
 
   const historyPayload = historyData?.data ?? null;
@@ -840,8 +839,8 @@ export default function AssetDetail(): JSX.Element {
           <ConditionTimelineChart points={conditionTimeline} />
           <p className="text-2xs iv-muted mt-2 text-center">
             {conditionTimeline.length} inspection{conditionTimeline.length !== 1 ? 's' : ''} from{' '}
-            {formatShortDate(conditionTimeline[0].inspection_date)} to{' '}
-            {formatShortDate(conditionTimeline[conditionTimeline.length - 1].inspection_date)}
+            {formatShortDate(conditionTimeline[0]!.inspection_date)} to{' '}
+            {formatShortDate(conditionTimeline[conditionTimeline.length - 1]!.inspection_date)}
           </p>
         </div>
       )}

@@ -56,42 +56,36 @@ export interface PendingPhoto {
   readonly id: string;
   inspection_item_id: string;
   asset_id: string | null;
-
   /** Base64 image data (JPEG) */
   base64Data: string;
   mime_type: string;
   file_size_bytes: number;
-
   /** Capture metadata */
   captured_at: string;
   latitude: number | null;
   longitude: number | null;
   is_reference_photo: boolean;
   caption: string | null;
-
   /** Sync state */
   synced: boolean;
   r2_key: string | null;
   r2_url: string | null;
 }
 
-/** Audio recording stored as blob in IndexedDB, awaiting Deepgram */
+/** Audio recording stored as blob in IndexedDB, awaiting Speechmatics transcription */
 export interface PendingAudio {
   readonly id: string;
   inspection_item_id: string;
-
+  asset_id: string;
   /** Audio data */
   audioBlob: Blob;
   duration_seconds: number;
   mime_type: string;
-
   /** Context for AI processing */
   asset_code: string;
   asset_type: string;
-
   /** Capture metadata */
   timestamp: string;
-
   /** Sync state */
   synced: boolean;
   r2_key: string | null;

@@ -15,6 +15,7 @@
  * - Cost band display (estimated vs actual)
  * - Responsive: cards on mobile, table on desktop
  * - Loading, error, and empty states
+ * - Excel/CSV defect export with citywide summary
  *
  * API: GET /api/defects?page=1&limit=20&status=...&severity=...&search=...&sort=...&order=...
  */
@@ -799,16 +800,24 @@ export function DefectTracker(): JSX.Element {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={refetch}
-            disabled={loading}
-            className="iv-btn-icon"
-            aria-label="Refresh defects"
-            title="Refresh"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            <DefectExportButton
+              filters={{
+                status: filters.status || undefined,
+                severity: filters.severity || undefined,
+              }}
+            />
+            <button
+              type="button"
+              onClick={refetch}
+              disabled={loading}
+              className="iv-btn-icon"
+              aria-label="Refresh defects"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
 
         {/* Summary cards */}

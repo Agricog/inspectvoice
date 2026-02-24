@@ -25,6 +25,7 @@ import { Logger } from './shared/logger';
 // ── Route Handlers ──
 import { listSites, getSite, createSite, updateSite } from './routes/sites';
 import { listAssetsBySite, getAsset, createAsset, updateAsset } from './routes/assets';
+import { getAssetHistory } from './routes/assetHistory';
 import { listInspections, getInspection, createInspection, updateInspection } from './routes/inspections';
 import { listInspectionItems, createInspectionItem, updateInspectionItem, getAiStatus } from './routes/inspectionItems';
 import { requestPhotoUpload, requestAudioUpload, proxyUploadToR2, confirmPhotoUpload, confirmAudioUpload, downloadFile } from './routes/uploads';
@@ -62,6 +63,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
 
   // ── Assets ──
   ['GET', '/api/v1/sites/:siteId/assets', listAssetsBySite],
+  ['GET', '/api/v1/assets/:id/history', getAssetHistory],
   ['GET', '/api/v1/assets/:id', getAsset],
   ['POST', '/api/v1/assets', createAsset],
   ['PUT', '/api/v1/assets/:id', updateAsset],

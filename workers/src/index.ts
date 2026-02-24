@@ -29,6 +29,7 @@ import { listInspections, getInspection, createInspection, updateInspection } fr
 import { listInspectionItems, createInspectionItem, updateInspectionItem, getAiStatus } from './routes/inspectionItems';
 import { requestPhotoUpload, requestAudioUpload, proxyUploadToR2, confirmPhotoUpload, confirmAudioUpload, downloadFile } from './routes/uploads';
 import { listDefects, getDefect, updateDefect } from './routes/defects';
+import { exportDefects } from './routes/defectsExport';
 import { getMe, updateMe } from './routes/users';
 import { getOrgSettings, updateOrgSettings } from './routes/org';
 import { getDashboardStats } from './routes/dashboard';
@@ -86,6 +87,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
 
   // ── Defects ──
   ['GET', '/api/v1/defects', listDefects],
+  ['GET', '/api/v1/defects/export', exportDefects],
   ['GET', '/api/v1/defects/:id', getDefect],
   ['PUT', '/api/v1/defects/:id', updateDefect],
 

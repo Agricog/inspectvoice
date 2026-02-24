@@ -168,7 +168,6 @@ class SyncService {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-
     if (this.maintenanceTimer) {
       clearInterval(this.maintenanceTimer);
       this.maintenanceTimer = null;
@@ -211,13 +210,11 @@ class SyncService {
   /** Update status and notify listeners */
   private updateStatus(status: SyncStatus, detail?: Partial<SyncStatusDetail>): void {
     this.status = status;
-
     const fullDetail: SyncStatusDetail = {
       pendingCount: 0,
       ...detail,
       lastSyncedAt: this.lastSyncedAt ?? undefined,
     };
-
     for (const listener of this.listeners) {
       try {
         listener(status, fullDetail);
@@ -283,7 +280,6 @@ class SyncService {
             BACKOFF_BASE_MS * Math.pow(2, entry.attempts - 1),
             BACKOFF_MAX_MS,
           );
-
           // Skip if not enough time has elapsed since last attempt
           if (entry.last_attempt_at) {
             const elapsed = Date.now() - new Date(entry.last_attempt_at).getTime();
@@ -294,7 +290,6 @@ class SyncService {
         }
 
         const success = await this.processEntry(entry);
-
         if (success) {
           successCount++;
           await syncQueue.remove(entry.id);
@@ -306,7 +301,6 @@ class SyncService {
 
       // Update status
       const remaining = await syncQueue.count();
-
       if (remaining === 0) {
         this.lastSyncedAt = Date.now();
         this.updateStatus(SyncStatus.SYNCED, { pendingCount: 0 });
@@ -364,7 +358,6 @@ class SyncService {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
       await syncQueue.recordAttempt(entry.id, errorMessage);
 
       // Log non-retryable errors at higher severity
@@ -405,7 +398,6 @@ class SyncService {
     // 1. Load from IndexedDB
     const photos = await pendingPhotos.getUnsynced();
     const photo = photos.find((p) => p.id === photoId);
-
     if (!photo) {
       // Already synced or deleted — nothing to do
       return;
@@ -428,7 +420,6 @@ class SyncService {
 
     // 3. Upload to R2 (direct PUT to signed URL — bypasses secureFetch SSRF as it's R2)
     const binaryData = base64ToArrayBuffer(photo.base64Data);
-
     const uploadResponse = await fetch(signedUrl.upload_url, {
       method: 'PUT',
       headers: {
@@ -468,19 +459,18 @@ class SyncService {
 
   /**
    * Upload a pending audio recording to R2 via signed URL.
-   * This triggers the Deepgram transcription pipeline server-side.
+   * This triggers the Speechmatics transcription pipeline server-side.
    *
    * Flow:
    *   1. Load audio from IndexedDB
    *   2. Request signed upload URL from API
    *   3. PUT audio blob to R2
    *   4. Mark audio as uploaded with R2 key
-   *   5. Notify API → triggers Deepgram queue
+   *   5. Notify API → triggers Speechmatics → Claude analysis queue
    */
   private async processAudioUpload(audioId: string): Promise<void> {
     const recordings = await pendingAudio.getUnsynced();
     const audio = recordings.find((a) => a.id === audioId);
-
     if (!audio) return;
 
     // 1. Request signed URL
@@ -491,6 +481,7 @@ class SyncService {
         getToken: this.getAuthToken!,
         body: {
           inspection_item_id: audio.inspection_item_id,
+          asset_id: audio.asset_id,
           mime_type: audio.mime_type,
           duration_seconds: audio.duration_seconds,
           asset_code: audio.asset_code,
@@ -518,7 +509,7 @@ class SyncService {
     // 3. Mark as uploaded
     await pendingAudio.markUploaded(audio.id, signedUrl.r2_key);
 
-    // 4. Notify API → triggers Deepgram transcription → Claude analysis pipeline
+    // 4. Notify API → triggers Speechmatics transcription → Claude analysis pipeline
     await secureFetch<void>(
       `/api/v1/uploads/audio/${signedUrl.r2_key}/confirm`,
       {
@@ -526,6 +517,7 @@ class SyncService {
         getToken: this.getAuthToken!,
         body: {
           inspection_item_id: audio.inspection_item_id,
+          asset_id: audio.asset_id,
           asset_code: audio.asset_code,
           asset_type: audio.asset_type,
           duration_seconds: audio.duration_seconds,
@@ -541,7 +533,6 @@ class SyncService {
    */
   private async processInspectionSync(inspectionId: string): Promise<void> {
     const local = await inspections.get(inspectionId);
-
     if (!local) return;
     if (!local.isDirty) return;
 
@@ -567,7 +558,6 @@ class SyncService {
           },
         );
       }
-
       await inspections.markSynced(inspectionId);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Sync failed';
@@ -581,7 +571,6 @@ class SyncService {
    */
   private async processInspectionItemSync(itemId: string): Promise<void> {
     const local = await inspectionItems.get(itemId);
-
     if (!local) return;
     if (!local.isDirty) return;
 
@@ -633,7 +622,6 @@ class SyncService {
   private async runMaintenance(): Promise<void> {
     try {
       const result = await runStorageMaintenance();
-
       if (result.failedOps.length > 0) {
         captureError(
           new Error(`Dead-lettered ${result.failedOps.length} sync operations`),
@@ -658,14 +646,11 @@ class SyncService {
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   // Strip data URI prefix if present
   const cleaned = base64.includes(',') ? base64.split(',')[1] ?? base64 : base64;
-
   const binaryString = atob(cleaned);
   const bytes = new Uint8Array(binaryString.length);
-
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-
   return bytes.buffer as ArrayBuffer;
 }
 

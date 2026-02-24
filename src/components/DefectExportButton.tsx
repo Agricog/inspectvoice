@@ -76,11 +76,12 @@ export function DefectExportButton({
       const queryStr = params.toString();
       const url = `/api/v1/defects/export${queryStr ? `?${queryStr}` : ''}`;
 
-      const response = await secureFetch(url);
+      const raw = await secureFetch(url);
+      const response = raw as Response;
 
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        const msg = (body as Record<string, string> | null)?.error ?? `Export failed (${response.status})`;
+        const body = await response.json().catch(() => null) as Record<string, string> | null;
+        const msg = body?.error ?? `Export failed (${response.status})`;
         throw new Error(msg);
       }
 

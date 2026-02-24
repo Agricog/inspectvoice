@@ -7,7 +7,6 @@
  *
  * Build Standard: Autaimate v3
  */
-
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import { Layout } from '@components/Layout';
@@ -24,11 +23,12 @@ import { InspectionList } from '@pages/InspectionList';
 import { DefectTracker } from '@pages/DefectTracker';
 import { ManagerDashboard } from '@pages/ManagerDashboard';
 import { SettingsPage } from '@pages/SettingsPage';
+import IncidentList from '@pages/IncidentList';
+import IncidentForm from '@pages/IncidentForm';
 
 // =============================================
 // 404
 // =============================================
-
 function NotFound(): JSX.Element {
   return (
     <div className="text-center py-16">
@@ -41,7 +41,6 @@ function NotFound(): JSX.Element {
 // =============================================
 // APP
 // =============================================
-
 export function App(): JSX.Element {
   return (
     <HelmetProvider>
@@ -71,6 +70,11 @@ export function App(): JSX.Element {
 
             {/* Defects */}
             <Route path="/defects" element={<DefectTracker />} />
+
+            {/* Incidents */}
+            <Route path="/incidents" element={<IncidentList />} />
+            <Route path="/incidents/new" element={<IncidentForm />} />
+            <Route path="/incidents/:id" element={<IncidentForm />} />
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />

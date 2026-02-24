@@ -34,6 +34,7 @@ import { getMe, updateMe } from './routes/users';
 import { getOrgSettings, updateOrgSettings } from './routes/org';
 import { getDashboardStats } from './routes/dashboard';
 import { triggerPdfGeneration, downloadPdf } from './routes/pdf';
+import { createMakeSafeAction, listMakeSafeActions, recentMakeSafeActions } from './routes/makeSafe';
 
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
@@ -90,6 +91,11 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET', '/api/v1/defects/export', exportDefects],
   ['GET', '/api/v1/defects/:id', getDefect],
   ['PUT', '/api/v1/defects/:id', updateDefect],
+
+  // ── Make Safe ──
+  ['POST', '/api/v1/defects/:defectId/make-safe', createMakeSafeAction],
+  ['GET', '/api/v1/defects/:defectId/make-safe', listMakeSafeActions],
+  ['GET', '/api/v1/make-safe/recent', recentMakeSafeActions],
 
   // ── PDF ──
   ['POST', '/api/v1/inspections/:id/pdf', triggerPdfGeneration],

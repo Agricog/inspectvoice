@@ -29,8 +29,6 @@ import {
   Save,
   Loader2,
   AlertTriangle,
-  MapPin,
-  Calendar,
   User,
   Shield,
   FileText,
@@ -365,11 +363,10 @@ export default function IncidentForm(): JSX.Element {
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => null);
+        const err = await response.json().catch(() => null) as Record<string, unknown> | null;
+        const errMsg = (err?.['error'] as Record<string, string> | undefined)?.['message'];
         throw new Error(
-          (err as Record<string, unknown>)?.['error']
-            ? String((err as Record<string, Record<string, string>>)['error']['message'])
-            : `Failed to ${isEdit ? 'update' : 'create'} incident`,
+          errMsg ?? `Failed to ${isEdit ? 'update' : 'create'} incident`,
         );
       }
 

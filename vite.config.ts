@@ -8,7 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
         name: 'InspectVoice',
         short_name: 'InspectVoice',
@@ -19,6 +19,7 @@ export default defineConfig({
         orientation: 'portrait-primary',
         scope: '/',
         start_url: '/',
+        categories: ['business', 'productivity', 'utilities'],
         icons: [
           {
             src: '/icons/icon-192x192.png',
@@ -40,21 +41,92 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+
+        // SPA fallback — serves index.html for all navigation requests when offline
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [
+          // Don't intercept API calls or auth redirects
+          /^\/api\//,
+          /^\/sign-in/,
+          /^\/sign-up/,
+        ],
+
         runtimeCaching: [
+          // ─── Google Fonts stylesheets ───
           {
-            urlPattern: /^https:\/\/api\.inspectvoice\.com\/.*/i,
-            handler: 'NetworkFirst',
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: 'StaleWhileRevalidate',
             options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 5,
+              cacheName: 'google-fonts-stylesheets',
               expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24,
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+              },
+            },
+          },
+
+          // ─── Google Fonts files (woff2) ───
+          {
+            urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-webfonts',
+              expiration: {
+                maxEntries: 20,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
               },
               cacheableResponse: {
                 statuses: [0, 200],
               },
             },
+          },
+
+          // ─── API: GET requests (read data — cache as fallback) ───
+          // Matches both workers.dev and future custom domain
+          {
+            urlPattern: ({ url, request }) => {
+              const isApi =
+                url.hostname.includes('inspectvoice-api') ||
+                url.hostname === 'api.inspectvoice.co.uk';
+              return isApi && request.method === 'GET';
+            },
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'api-cache',
+              networkTimeoutSeconds: 5,
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24, // 24 hours
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+
+          // ─── API: mutations (POST/PUT/DELETE — never cache) ───
+          {
+            urlPattern: ({ url, request }) => {
+              const isApi =
+                url.hostname.includes('inspectvoice-api') ||
+                url.hostname === 'api.inspectvoice.co.uk';
+              return isApi && request.method !== 'GET';
+            },
+            handler: 'NetworkOnly',
+          },
+
+          // ─── Clerk auth — always network, never cache tokens ───
+          {
+            urlPattern: /^https:\/\/.*clerk\..*/i,
+            handler: 'NetworkOnly',
+          },
+
+          // ─── R2 signed URL uploads — network only ───
+          {
+            urlPattern: ({ url }) =>
+              url.hostname.includes('r2.cloudflarestorage.com') ||
+              url.hostname.includes('r2.dev'),
+            handler: 'NetworkOnly',
           },
         ],
       },

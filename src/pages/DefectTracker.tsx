@@ -46,6 +46,7 @@ import {
   CircleDot,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
+import { DefectExportButton } from '@components/DefectExportButton';
 import type { Defect } from '@/types/entities';
 import {
   DefectStatus,

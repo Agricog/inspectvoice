@@ -25,7 +25,6 @@ import {
   Plus,
   Search,
   Filter,
-  ChevronRight,
   Loader2,
   RefreshCw,
   FileText,

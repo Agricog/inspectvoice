@@ -411,6 +411,7 @@ export default function InspectionCapture(): JSX.Element {
     try {
       const audioRecord = await pendingAudio.add({
         inspection_item_id: '', // Set when inspection item is created
+        asset_id: currentAsset.id, 
         audioBlob: result.audioBlob,
         duration_seconds: result.durationSeconds,
         mime_type: result.mimeType,

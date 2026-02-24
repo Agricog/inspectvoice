@@ -9,10 +9,11 @@
  *   4. Risk overview (overall rating + counts by severity)
  *   5. BS EN inspection schedule (checklist of all inspection points)
  *   6. Asset inspection findings (per item: condition, defects, AI summary)
- *   7. Defect register (all defects with actions, timeframes, costs)
- *   8. Recommendations & compliance notes
- *   9. Inspector declaration and signature
- *   10. Compliance footer (applicable standards, report version)
+ *   7. Defect register (all defects with actions, timeframes, costs, photo refs)
+ *   8. Photo evidence log (cross-referenced list of all photos)
+ *   9. Recommendations & compliance notes
+ *   10. Inspector declaration and signature
+ *   11. Compliance footer (applicable standards, report version)
  *
  * Note: pdf-lib is installed in workers/package.json. It runs in Cloudflare
  * Workers (no Node.js fs dependency).
@@ -113,6 +114,7 @@ export interface PdfReportData {
     readonly insurancePolicyNumber: string | null;
   };
   readonly items: readonly PdfInspectionItem[];
+  readonly photoIndex: readonly PdfPhotoIndexEntry[];
 }
 
 export interface PdfInspectionItem {
@@ -129,6 +131,7 @@ export interface PdfInspectionItem {
   readonly complianceNotes: readonly string[];
   readonly photoCount: number;
   readonly defects: readonly PdfDefect[];
+  readonly photos: readonly PdfPhoto[];
 }
 
 export interface PdfDefect {
@@ -141,6 +144,22 @@ export interface PdfDefect {
   readonly estimatedCostGbp: string | null;
 }
 
+export interface PdfPhoto {
+  readonly photoNumber: number;
+  readonly photoType: string;
+  readonly caption: string | null;
+  readonly associatedDefectDescriptions: string[];
+}
+
+export interface PdfPhotoIndexEntry {
+  readonly number: number;
+  readonly assetCode: string;
+  readonly photoType: string;
+  readonly caption: string | null;
+  readonly associatedDefects: string[];
+  readonly pdfLabel: string;
+}
+
 // =============================================
 // PDF GENERATION
 // =============================================
@@ -148,7 +167,7 @@ export interface PdfDefect {
 /**
  * Generate a complete inspection report PDF.
  *
- * @param data — all report data (org, site, inspection, items, defects)
+ * @param data — all report data (org, site, inspection, items, defects, photos)
  * @param requestId — for logging
  * @returns PDF bytes as Uint8Array
  */
@@ -161,6 +180,7 @@ export async function generateInspectionPdf(
     inspectionId: data.inspection.id,
     itemCount: data.items.length,
     totalDefects: data.inspection.totalDefects,
+    totalPhotos: data.photoIndex.length,
   });
 
   const doc = await PDFDocument.create();
@@ -206,13 +226,16 @@ export async function generateInspectionPdf(
   // ── Section 7: Defect Register ──
   drawDefectRegister(ctx, data);
 
-  // ── Section 8: Recommendations & Compliance ──
+  // ── Section 8: Photo Evidence Log ──
+  drawPhotoEvidenceLog(ctx, data);
+
+  // ── Section 9: Recommendations & Compliance ──
   drawRecommendations(ctx, data);
 
-  // ── Section 9: Declaration & Signature ──
+  // ── Section 10: Declaration & Signature ──
   drawSignature(ctx, data);
 
-  // ── Section 10: Applicable Standards ──
+  // ── Section 11: Applicable Standards ──
   drawApplicableStandards(ctx, data);
 
   // ── Footer on all pages ──
@@ -344,7 +367,6 @@ function drawField(ctx: DrawContext, label: string, value: string | null | undef
 
 /**
  * Draw a table row with cells at specified column positions.
- * Used for the inspection schedule, risk overview, and defect register tables.
  */
 function drawTableRow(
   ctx: DrawContext,
@@ -512,7 +534,7 @@ function drawRiskOverview(ctx: DrawContext, data: PdfReportData): void {
 
   ctx.cursorY -= 8;
 
-  // Risk count table with proper formatting
+  // Risk count table
   const colSeverity = MARGIN_LEFT + 10;
   const colCount = MARGIN_LEFT + 180;
   const colAction = MARGIN_LEFT + 230;
@@ -542,14 +564,11 @@ function drawRiskOverview(ctx: DrawContext, data: PdfReportData): void {
   ctx.cursorY -= 4;
   drawField(ctx, 'Total Defects', String(data.inspection.totalDefects), 10);
   drawField(ctx, 'Total Assets Inspected', String(data.items.length), 10);
+  drawField(ctx, 'Total Photos', String(data.photoIndex.length), 10);
 }
 
 /**
  * BS EN Inspection Schedule — THE differentiator.
- *
- * Shows a table of all inspection points for each asset type,
- * with status indicators showing what was checked vs not mentioned.
- * This is what councils and RoSPA assessors compare against.
  */
 function drawInspectionSchedule(ctx: DrawContext, data: PdfReportData): void {
   drawHeading(ctx, '4. BS EN Inspection Schedule');
@@ -561,7 +580,7 @@ function drawInspectionSchedule(ctx: DrawContext, data: PdfReportData): void {
   ctx.cursorY -= 4;
 
   // Key
-  drawText(ctx, 'Key:  ✓ Inspected — defect(s) found    ● Inspected — satisfactory    ○ Not assessed for this inspection type', {
+  drawText(ctx, 'Key:  \u2713 Inspected — defect(s) found    \u25CF Inspected — satisfactory    \u25CB Not assessed for this inspection type', {
     size: FONT_SIZE_SMALL, colour: COLOUR_GREY, font: ctx.fontItalic,
   });
 
@@ -601,13 +620,12 @@ function drawInspectionSchedule(ctx: DrawContext, data: PdfReportData): void {
 
       const isApplicable = point.appliesTo.includes(inspectionType);
 
-      // Determine if the inspector found defects related to this inspection point
       const hasDefect = item.defects.some((d) =>
         d.description.toLowerCase().includes(point.label.toLowerCase().split('/')[0] ?? '') ||
         d.defectCategory.toLowerCase().includes(point.label.toLowerCase().split('/')[0] ?? ''),
       );
 
-      const status = !isApplicable ? '○' : hasDefect ? '✓' : '●';
+      const status = !isApplicable ? '\u25CB' : hasDefect ? '\u2713' : '\u25CF';
       const statusColour = !isApplicable ? COLOUR_GREY : hasDefect ? COLOUR_AMBER : COLOUR_GREEN;
 
       ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
@@ -641,7 +659,6 @@ function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem, inspection
   const conditionLabel = item.overallCondition
     ? formatEnum(item.overallCondition)
     : 'Not assessed';
-  const conditionColour = getConditionColour(item.overallCondition);
 
   drawText(ctx, `${item.assetCode} — ${config.name}`, {
     font: ctx.fontBold, size: FONT_SIZE_SUBHEADING, colour: COLOUR_DARK_GREY,
@@ -654,8 +671,10 @@ function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem, inspection
     drawField(ctx, 'Action Required', item.actionTimeframe ? formatEnum(item.actionTimeframe) : 'Yes', 10);
   }
 
+  // Photo references with numbered cross-refs
   if (item.photoCount > 0) {
-    drawField(ctx, 'Photos', `${item.photoCount} photo${item.photoCount !== 1 ? 's' : ''} captured`, 10);
+    const photoNums = item.photos.map((p) => `P${p.photoNumber}`).join(', ');
+    drawField(ctx, 'Photos', `${item.photoCount} photo${item.photoCount !== 1 ? 's' : ''} (${photoNums})`, 10);
   }
 
   if (item.inspectorNotes) {
@@ -681,7 +700,15 @@ function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem, inspection
       ensureSpace(ctx, 45);
       const sevColour = getRiskColour(defect.severity);
 
-      drawText(ctx, `[${formatEnum(defect.severity)}] ${defect.description}`, {
+      // Find photo refs for this defect
+      const defectPhotos = item.photos.filter((p) =>
+        p.associatedDefectDescriptions.some((d) => d === defect.description) || p.photoType === 'defect',
+      );
+      const photoRef = defectPhotos.length > 0
+        ? ` [${defectPhotos.map((p) => `P${p.photoNumber}`).join(', ')}]`
+        : '';
+
+      drawText(ctx, `[${formatEnum(defect.severity)}] ${defect.description}${photoRef}`, {
         indent: 15, font: ctx.fontBold, size: FONT_SIZE_SMALL, colour: sevColour,
       });
       drawText(ctx, `Action: ${defect.actionRequired} (${formatEnum(defect.actionTimeframe)})`, {
@@ -703,33 +730,35 @@ function drawAssetFindings(ctx: DrawContext, item: PdfInspectionItem, inspection
 
 function drawDefectRegister(ctx: DrawContext, data: PdfReportData): void {
   const allDefects = data.items.flatMap((item) =>
-    item.defects.map((d) => ({ ...d, assetCode: item.assetCode })),
+    item.defects.map((d) => ({ ...d, assetCode: item.assetCode, itemPhotos: item.photos })),
   );
 
   if (allDefects.length === 0) return;
 
   drawHeading(ctx, '6. Defect Register');
 
-  drawText(ctx, 'All defects identified during this inspection, listed by severity. This register should be used to track remedial actions to completion.', {
+  drawText(ctx, 'All defects identified during this inspection, listed by severity. Photo references (P1, P2, etc.) cross-reference the Photo Evidence Log. This register should be used to track remedial actions to completion.', {
     size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
   });
 
   ctx.cursorY -= 6;
 
-  // Table header
+  // Table header — with Photo Ref column
   const colNo = MARGIN_LEFT;
-  const colAsset = MARGIN_LEFT + 22;
-  const colSev = MARGIN_LEFT + 82;
-  const colDesc = MARGIN_LEFT + 142;
-  const colAction = MARGIN_LEFT + 312;
+  const colAsset = MARGIN_LEFT + 20;
+  const colSev = MARGIN_LEFT + 72;
+  const colDesc = MARGIN_LEFT + 128;
+  const colAction = MARGIN_LEFT + 278;
+  const colPhoto = MARGIN_LEFT + 388;
   const colCost = MARGIN_LEFT + 442;
 
   drawTableRow(ctx, [
-    { text: '#', x: colNo, width: 22, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Asset', x: colAsset, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Severity', x: colSev, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Description', x: colDesc, width: 170, font: ctx.fontBold, colour: COLOUR_WHITE },
-    { text: 'Action / Timeframe', x: colAction, width: 130, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: '#', x: colNo, width: 20, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Asset', x: colAsset, width: 52, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Severity', x: colSev, width: 56, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Description', x: colDesc, width: 150, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Action / Timeframe', x: colAction, width: 110, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Photo Ref', x: colPhoto, width: 54, font: ctx.fontBold, colour: COLOUR_WHITE },
     { text: 'Est. Cost', x: colCost, width: 53, font: ctx.fontBold, colour: COLOUR_WHITE },
   ], { bgColour: COLOUR_TABLE_HEADER });
 
@@ -743,15 +772,73 @@ function drawDefectRegister(ctx: DrawContext, data: PdfReportData): void {
     ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
     const sevColour = getRiskColour(defect.severity);
 
+    // Build photo ref for this defect
+    const defectPhotos = defect.itemPhotos.filter((p) =>
+      p.associatedDefectDescriptions.some((d) => d === defect.description) || p.photoType === 'defect',
+    );
+    const photoRef = defectPhotos.length > 0
+      ? defectPhotos.map((p) => `P${p.photoNumber}`).join(', ')
+      : '\u2014';
+
     drawTableRow(ctx, [
-      { text: String(i + 1), x: colNo, width: 22 },
-      { text: defect.assetCode, x: colAsset, width: 60, font: ctx.fontBold },
-      { text: formatEnum(defect.severity), x: colSev, width: 60, colour: sevColour, font: ctx.fontBold },
-      { text: defect.description, x: colDesc, width: 170 },
-      { text: `${formatEnum(defect.actionTimeframe)}`, x: colAction, width: 130 },
-      { text: defect.estimatedCostGbp ?? '—', x: colCost, width: 53, colour: COLOUR_GREY },
+      { text: String(i + 1), x: colNo, width: 20 },
+      { text: defect.assetCode, x: colAsset, width: 52, font: ctx.fontBold },
+      { text: formatEnum(defect.severity), x: colSev, width: 56, colour: sevColour, font: ctx.fontBold },
+      { text: defect.description, x: colDesc, width: 150 },
+      { text: `${formatEnum(defect.actionTimeframe)}`, x: colAction, width: 110 },
+      { text: photoRef, x: colPhoto, width: 54, colour: COLOUR_BLUE },
+      { text: defect.estimatedCostGbp ?? '\u2014', x: colCost, width: 53, colour: COLOUR_GREY },
     ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
   });
+}
+
+/**
+ * Photo Evidence Log — cross-referenced table of all photos taken.
+ * Each photo is numbered P1, P2, etc. and linked back to defects.
+ */
+function drawPhotoEvidenceLog(ctx: DrawContext, data: PdfReportData): void {
+  if (!data.photoIndex || data.photoIndex.length === 0) return;
+
+  drawHeading(ctx, '7. Photo Evidence Log');
+
+  drawText(ctx, `${data.photoIndex.length} photograph${data.photoIndex.length !== 1 ? 's' : ''} captured during this inspection. Each photo is cross-referenced with the relevant asset and defect(s) in the defect register above.`, {
+    size: FONT_SIZE_SMALL, colour: COLOUR_GREY,
+  });
+
+  ctx.cursorY -= 6;
+
+  // Table header
+  const colNum = MARGIN_LEFT;
+  const colAsset = MARGIN_LEFT + 30;
+  const colType = MARGIN_LEFT + 90;
+  const colDesc = MARGIN_LEFT + 150;
+
+  drawTableRow(ctx, [
+    { text: 'Photo', x: colNum, width: 30, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Asset', x: colAsset, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Type', x: colType, width: 60, font: ctx.fontBold, colour: COLOUR_WHITE },
+    { text: 'Description / Associated Defect', x: colDesc, width: 345, font: ctx.fontBold, colour: COLOUR_WHITE },
+  ], { bgColour: COLOUR_TABLE_HEADER });
+
+  for (let i = 0; i < data.photoIndex.length; i++) {
+    const entry = data.photoIndex[i];
+    if (!entry) continue;
+
+    ensureSpace(ctx, LINE_HEIGHT_TABLE + 2);
+
+    const description = entry.associatedDefects.length > 0
+      ? entry.associatedDefects[0] ?? ''
+      : entry.caption ?? formatEnum(entry.photoType);
+
+    drawTableRow(ctx, [
+      { text: `P${entry.number}`, x: colNum, width: 30, font: ctx.fontBold, colour: COLOUR_BLUE },
+      { text: entry.assetCode, x: colAsset, width: 60, font: ctx.fontBold },
+      { text: formatEnum(entry.photoType), x: colType, width: 60, colour: COLOUR_GREY },
+      { text: description, x: colDesc, width: 345 },
+    ], { bgColour: i % 2 === 1 ? COLOUR_TABLE_STRIPE : null });
+  }
+
+  ctx.cursorY -= 6;
 }
 
 /**
@@ -767,13 +854,13 @@ function drawRecommendations(ctx: DrawContext, data: PdfReportData): void {
 
   if (allRecs.length === 0 && allNotes.length === 0) return;
 
-  drawHeading(ctx, '7. Recommendations & Compliance Notes');
+  drawHeading(ctx, '8. Recommendations & Compliance Notes');
 
   if (allRecs.length > 0) {
     drawText(ctx, 'Recommendations:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
     for (const rec of allRecs) {
       ensureSpace(ctx, LINE_HEIGHT_BODY);
-      drawText(ctx, `• [${rec.assetCode}] ${rec.text}`, { indent: 10, size: FONT_SIZE_SMALL });
+      drawText(ctx, `\u2022 [${rec.assetCode}] ${rec.text}`, { indent: 10, size: FONT_SIZE_SMALL });
     }
     ctx.cursorY -= 6;
   }
@@ -782,14 +869,13 @@ function drawRecommendations(ctx: DrawContext, data: PdfReportData): void {
     drawText(ctx, 'Compliance Notes:', { font: ctx.fontBold, size: FONT_SIZE_BODY });
     for (const note of allNotes) {
       ensureSpace(ctx, LINE_HEIGHT_BODY);
-      drawText(ctx, `• [${note.assetCode}] ${note.text}`, { indent: 10, size: FONT_SIZE_SMALL });
+      drawText(ctx, `\u2022 [${note.assetCode}] ${note.text}`, { indent: 10, size: FONT_SIZE_SMALL });
     }
   }
 }
 
 function drawSignature(ctx: DrawContext, data: PdfReportData): void {
-  // Dynamic section number
-  const sectionNum = hasRecommendations(data) ? '8' : '7';
+  const sectionNum = hasRecommendations(data) ? '9' : '8';
   drawHeading(ctx, `${sectionNum}. Inspector Declaration`);
 
   drawText(ctx, 'I confirm that this inspection has been carried out in accordance with BS EN 1176-7:2020 and represents an accurate record of findings at the time of inspection. Equipment not listed in this report was not inspected.', {
@@ -830,7 +916,7 @@ function drawSignature(ctx: DrawContext, data: PdfReportData): void {
  * List all BS EN standards referenced in this report.
  */
 function drawApplicableStandards(ctx: DrawContext, data: PdfReportData): void {
-  const sectionNum = hasRecommendations(data) ? '9' : '8';
+  const sectionNum = hasRecommendations(data) ? '10' : '9';
   drawHeading(ctx, `${sectionNum}. Applicable Standards`);
 
   // Collect unique standards from all inspected asset types
@@ -841,7 +927,6 @@ function drawApplicableStandards(ctx: DrawContext, data: PdfReportData): void {
 
   for (const item of data.items) {
     const config = getWorkerAssetConfig(item.assetType);
-    // Parse standards from complianceStandard string
     const parts = config.complianceStandard.split(',').map((s) => s.trim());
     for (const part of parts) {
       if (part.startsWith('BS EN')) {
@@ -852,7 +937,7 @@ function drawApplicableStandards(ctx: DrawContext, data: PdfReportData): void {
 
   const sortedStandards = [...standards].sort();
   for (const std of sortedStandards) {
-    drawText(ctx, `• ${std}`, { size: FONT_SIZE_SMALL, indent: 5 });
+    drawText(ctx, `\u2022 ${std}`, { size: FONT_SIZE_SMALL, indent: 5 });
   }
 }
 
@@ -962,7 +1047,7 @@ function getInspectionTypeLabel(type: string): string {
   }[type] ?? type;
 }
 
-/** Format snake_case enum values for display: "very_high" → "Very High" */
+/** Format snake_case enum values for display: "very_high" -> "Very High" */
 function formatEnum(value: string): string {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }

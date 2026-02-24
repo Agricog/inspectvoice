@@ -30,7 +30,7 @@ export interface Env {
 
   // ── AI Services ──
   readonly ANTHROPIC_API_KEY: string;
-  readonly DEEPGRAM_API_KEY: string;
+  readonly SPEECHMATICS_API_KEY: string;
 
   // ── Database (Neon PostgreSQL) ──
   readonly DATABASE_URL: string;
@@ -77,6 +77,7 @@ export type QueueMessageType =
 export interface AudioProcessingPayload {
   readonly r2Key: string;
   readonly inspectionItemId: string;
+  readonly assetId: string;
   readonly assetCode: string;
   readonly assetType: string;
   readonly mimeType: string;
@@ -100,25 +101,18 @@ export interface PdfGenerationPayload {
 export interface RequestContext {
   /** Unique request identifier for tracing */
   readonly requestId: string;
-
   /** Authenticated user ID (from Clerk JWT `sub` claim) */
   readonly userId: string;
-
   /** Organisation/tenant ID (from Clerk JWT `org_id` claim) */
   readonly orgId: string;
-
   /** User's role within the organisation */
   readonly userRole: string;
-
   /** HTTP method */
   readonly method: string;
-
   /** Request path */
   readonly path: string;
-
   /** Request start time for latency measurement */
   readonly startedAt: number;
-
   /** Cloudflare environment bindings */
   readonly env: Env;
 }

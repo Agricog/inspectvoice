@@ -42,7 +42,6 @@ import {
   AlertCircle,
   XCircle,
   PenTool,
-  Send,
   Edit,
   ShieldCheck,
 } from 'lucide-react';

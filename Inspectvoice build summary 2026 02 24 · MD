@@ -1,0 +1,259 @@
+# InspectVoice Build Summary — 24 February 2026
+
+## Overview
+
+Full-day build session covering PWA implementation, 6 production features for council tender readiness, and a complete procurement documentation pack. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
+
+---
+
+## Session 1: Status Check & PWA Implementation
+
+### Batch 20 Status Verification
+- Confirmed Batches 1–17 (frontend) and Batch 18 (full Cloudflare Workers backend, 34 files) complete
+- Reviewed package.json, tsconfig.json, and InspectionList.tsx to assess current state
+- No code changes — verification only
+
+### PWA Service Worker & Offline Support
+- **vite-plugin-pwa configuration** — Workbox-based service worker with runtime caching strategies
+- **Web app manifest** — standalone display, InspectVoice branding, icon set
+- **Icon generation** — full PWA icon suite for iOS/Android install
+- **Update prompt UI** — toast notification when new version available
+- **Offline-first caching** — API responses cached, stale-while-revalidate for assets
+
+---
+
+## Session 2: Feature Roadmap (6 Features for Council Tender)
+
+### Feature 1: CSV/Excel Defect Export ✅
+
+**Purpose:** Councils need to interrogate defect data across all sites in Excel — this is a standard tender requirement.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Worker endpoint | `workers/src/routes/defectExport.ts` | Server-side Excel generation with SheetJS, multi-sheet workbook (Defects, Summary by Site, Summary by Risk), risk colour-coding, auto-filters |
+| Client service | `src/services/defectExport.ts` | Client-side fallback using SheetJS for offline export capability |
+| UI component | `src/components/DefectExportButton.tsx` | Download button with date range filter, site filter, format selector (XLSX/CSV) |
+
+**Key details:**
+- Citywide summary with defect counts by site and risk level
+- Colour-coded risk ratings (Very High = red, High = orange, Medium = yellow, Low = green)
+- BS EN references included per defect
+- Photo reference column cross-linked to evidence log
+- Auto-filters and frozen header rows for easy council interrogation
+
+---
+
+### Feature 2: Make Safe / Close Asset ✅
+
+**Purpose:** When a dangerous defect is found, inspectors need a formal workflow to isolate equipment immediately with evidence trail.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Migration | `migrations/002_make_safe.sql` | `asset_safety_actions` table with RLS, status enum (make_safe/closed/reopened), evidence fields |
+| Worker endpoint | `workers/src/routes/safetyActions.ts` | POST/GET/PATCH endpoints with validation, org isolation, audit logging |
+| UI modal | `src/components/MakeSafeModal.tsx` | Full-screen modal with action type selection, photo capture, description, confirmation |
+| DefectTracker update | `src/components/DefectTracker.tsx` | Integration point — "Make Safe" button appears on Very High/High risk defects |
+
+**Key details:**
+- Two actions: Make Safe (temporary isolation) and Close Asset (formal removal from service)
+- Mandatory photo evidence of isolation measures taken
+- Timestamped audit trail (who, when, what action, GPS)
+- Reopening requires separate authorised action with reason
+- Offline-capable — actions queued and synced
+
+---
+
+### Feature 3: Photo Coverage Validation + Cross-Referencing ✅
+
+**Purpose:** Evidence-grade photo documentation with sequential numbering and defect cross-references in PDF reports.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Photo coverage service | `src/services/photoCoverage.ts` | 5 validation rules (3 blocking, 2 warning), photo index generation, cross-reference maps |
+| Worker PDF generator | `workers/src/services/pdf.ts` | Updated with 7-column defect register, Photo Evidence Log (Section 7), blue photo refs |
+| Client PDF generator | `src/services/pdfGenerator.ts` | Updated with Photo Evidence Log (Section 6), compact P1–P5 range formatting |
+
+**Validation rules:**
+1. ≥1 photo per asset (blocking)
+2. ≥1 photo per high-risk defect (blocking)
+3. ≥1 overview photo per inspection (blocking)
+4. Photo recommended for medium risk defects (warning)
+5. ≥2 photos for assets with defects (warning)
+
+**Key details:**
+- Sequential photo numbering: P1, P2, P3… across entire inspection
+- Cross-reference maps linking defects ↔ photos bidirectionally
+- Photo association via caption substring matching with fallback logic
+- Both PDF generators updated with evidence log sections
+- Validation blocks sign-off if minimum coverage not met
+
+---
+
+### Feature 4: AI Completeness Checks Before Sign-Off ✅
+
+**Purpose:** Review gate that intercepts sign-off with deterministic quality checks — catches missing data before the report is finalised.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Worker endpoint | `workers/src/routes/completenessCheck.ts` | POST endpoint with 10 checks, quality scoring (A–F grades), `canSignOff` boolean |
+| Modal component | `src/components/CompletenessCheckModal.tsx` | Full-screen modal with online/offline modes, grouped issues, severity indicators |
+| Review page update | `src/pages/InspectionReview.tsx` | Sign-off flow updated, button changed to "Review & Sign Off" |
+| Router wiring | `workers/src/index.ts` | Added completenessCheck route |
+
+**10 checks:**
+1. Condition ratings on all assets
+2. Defect completeness (description, risk, remedial action)
+3. BS EN references on defects
+4. Voice notes or written observations
+5. Photo coverage (delegates to Feature 3 service)
+6. Closure consistency (signed items match completion state)
+7. Inspector summary present
+8. Condition vs risk conflicts (e.g., "Good" condition with "Very High" defect)
+9. Defect count vs condition alignment
+10. BS EN inspection point coverage
+
+**Key details:**
+- Quality score: 100 base, −15 per blocking issue, −5 per advisory
+- Grades: A (90+), B (80+), C (70+), D (60+), F (<60)
+- Blocking issues prevent sign-off; advisory allows proceed with acknowledgment
+- Works offline with local validation fallback (subset of checks)
+- No AI API calls — entirely deterministic for reliability and speed
+
+---
+
+### Feature 5: Baseline Photo Comparison ✅
+
+**Purpose:** Side-by-side comparison of baseline/reference photo against current inspection photo for deterioration tracking over time.
+
+**Files delivered:**
+| File | Path | Description |
+|------|------|-------------|
+| Migration | `migrations/003_baseline_photos.sql` | 6 baseline columns on assets table, `asset_baseline_history` audit table, RLS policies |
+| Comparison component | `src/components/BaselineComparison.tsx` | Touch-friendly slider with 3 states, snap buttons, condition badges, deterioration detection |
+| Capture page update | `src/pages/InspectionCapture.tsx` | Baseline data loading, first photo tracking, comparison display, "Set as Baseline" handler |
+
+**Key details:**
+- Baseline columns: `baseline_photo_url`, `baseline_photo_r2_key`, `baseline_photo_taken_at`, `baseline_photo_taken_by`, `baseline_photo_inspection_id`, `baseline_condition`
+- Three UI states: no baseline / baseline only (first inspection) / full comparison
+- CSS clip-path slider with pointer capture for smooth mobile touch
+- Condition change detection: red "Deteriorated" or green "Improved" badges
+- Baseline history table for full audit trail of when baselines were set/replaced
+- Inspector can designate first photo of each asset as new baseline
+
+---
+
+### Feature 6: Council Procurement Pack ✅
+
+**Purpose:** Complete documentation package that removes the 3–6 month procurement delay councils face when suppliers lack GDPR/security documentation.
+
+#### 6.1 Data Protection & Compliance Documents
+
+| Document | Filename | Contents |
+|----------|----------|----------|
+| **DPIA** | `InspectVoice-DPIA-v1.0.docx` | 8 sections: processing description, 8 data categories with lawful basis, data flow with all sub-processors, 10-risk assessment matrix (L×S scoring), data subject rights support, retention policy (7 data types), security controls summary, DPO sign-off block with review schedule |
+| **DPA** | `InspectVoice-DPA-v1.0.docx` | 12 clauses with UK GDPR Article references covering processor obligations, security measures, breach notification (24hr), sub-processors, international transfers (UK IDTA/SCCs), data subject rights, audit rights, termination/data return. Schedule 1 (processing description), Schedule 2 (7 approved sub-processors with locations and transfer mechanisms). Signature blocks for both parties |
+| **Security Controls** | `InspectVoice-Security-Controls-v1.0.docx` | Cyber Essentials 5-control mapping (all Met, formal certification Q3 2026), encryption statement (TLS 1.3 transit, AES-256 at rest), RBAC detail with 4 roles, 10-field audit log specification, incident response phases with timelines, system architecture with hosting regions, offline capabilities matrix |
+
+#### 6.2 Technical & Commercial Documents
+
+| Document | Filename | Contents |
+|----------|----------|----------|
+| **Technical Spec + SLA** | `InspectVoice-Technical-Spec-SLA-v1.0.docx` | 11-component architecture table with hosting regions, data flow summary, 15-feature offline/online matrix, browser compatibility (Chrome/Safari/Firefox), device requirements, export formats (PDF/XLSX/CSV/JSON), API endpoints (Enterprise), SLA tiers (99.5% Team / 99.9% Enterprise), support response times (P1–P4), backup/DR (RPO <24hr), compliance standards roadmap (CE, CE+, ISO 27001, WCAG 2.1 AA) |
+| **Commercial Terms** | `InspectVoice-Commercial-Terms-v1.0.docx` | Pricing (Team £149/mo, Enterprise £349/mo), 21-feature comparison table with tick/cross, contract terms (12-month minimum, CPI+2% cap), exit/data portability (8 export types, 30-day delivery), 60-day pilot program (free, 3 inspectors, 10 sites, 6 success metrics), report customisation and white-label options |
+
+#### 6.3 Training & Migration Documents
+
+| Document | Filename | Contents |
+|----------|----------|----------|
+| **Training & Migration Guide** | `InspectVoice-Training-Migration-Guide-v1.0.docx` | 10-day migration timeline (data handover → go-live), inspector onboarding checklist (1hr, 4 phases with checkboxes), competency sign-off form with RPII/DBS fields, manager dashboard training (30min), support channels and 4-level escalation process, DBS/inspector compliance folder process |
+
+#### 6.4 Import Templates (Excel)
+
+| Template | Filename | Contents |
+|----------|----------|----------|
+| **Asset Import** | `InspectVoice-Asset-Import-Template.xlsx` | 3 sheets: Instructions, Asset Register (13 columns, dropdown validation for asset types and condition, 4 example rows, required field highlighting), Asset Types reference (21 types with codes and descriptions) |
+| **Site Import** | `InspectVoice-Site-Import-Template.xlsx` | 2 sheets: Instructions, Site Register (15 columns, site type dropdown, 3 example rows, required/optional field marking, GPS coordinate fields) |
+
+#### 6.5 Sample Outputs (the reviewer convincer)
+
+| Sample | Filename | Contents |
+|--------|----------|----------|
+| **Defect Export** | `InspectVoice-SAMPLE-Defect-Export.xlsx` | 5 sheets: About (explains the format), Defect Register (12 realistic defects across 4 sites with BS EN refs, risk colour-coding, auto-filters, photo refs), Summary by Site (formula totals), Risk Overview (risk/timeframe/status breakdowns), Asset Conditions (12 assets with condition colour-coding) |
+
+---
+
+## Complete File Inventory
+
+### Code Files (Features 1–5)
+
+```
+src/
+├── services/
+│   ├── defectExport.ts          # Feature 1: Client-side Excel export
+│   ├── photoCoverage.ts         # Feature 3: Photo validation + cross-refs
+│   └── pdfGenerator.ts          # Feature 3: Updated client PDF with evidence log
+├── components/
+│   ├── DefectExportButton.tsx    # Feature 1: Export UI
+│   ├── MakeSafeModal.tsx         # Feature 2: Safety action modal
+│   ├── DefectTracker.tsx         # Feature 2: Integration point
+│   ├── CompletenessCheckModal.tsx # Feature 4: Review gate modal
+│   └── BaselineComparison.tsx    # Feature 5: Before/after slider
+└── pages/
+    ├── InspectionReview.tsx      # Feature 4: Updated sign-off flow
+    └── InspectionCapture.tsx     # Feature 5: Baseline integration
+
+workers/src/
+├── routes/
+│   ├── defectExport.ts          # Feature 1: Server-side Excel generation
+│   ├── safetyActions.ts         # Feature 2: Make Safe/Close endpoints
+│   └── completenessCheck.ts     # Feature 4: Quality check endpoint
+├── services/
+│   └── pdf.ts                   # Feature 3: Updated worker PDF
+└── index.ts                     # Feature 4: Router wiring
+
+migrations/
+├── 002_make_safe.sql            # Feature 2: Safety actions table
+└── 003_baseline_photos.sql      # Feature 5: Baseline photo columns + history
+```
+
+### Procurement Pack Documents (Feature 6)
+
+```
+procurement-pack/
+├── InspectVoice-DPIA-v1.0.docx
+├── InspectVoice-DPA-v1.0.docx
+├── InspectVoice-Security-Controls-v1.0.docx
+├── InspectVoice-Technical-Spec-SLA-v1.0.docx
+├── InspectVoice-Commercial-Terms-v1.0.docx
+├── InspectVoice-Training-Migration-Guide-v1.0.docx
+├── InspectVoice-Asset-Import-Template.xlsx
+├── InspectVoice-Site-Import-Template.xlsx
+└── InspectVoice-SAMPLE-Defect-Export.xlsx
+```
+
+---
+
+## Build Standards Applied
+
+- **TypeScript strict** — zero `any`, all interfaces explicitly typed
+- **Server-side validation** — never trust client data, Zod schemas on all endpoints
+- **Multi-tenancy isolation** — `org_id` on every table, RLS policies, server-side enforcement
+- **Offline-first** — IndexedDB for local state, queue-and-sync pattern, graceful degradation
+- **Audit logging** — all state changes logged with requestId, userId, orgId, timestamp
+- **BS EN 1176-7 compliance** — inspection structure, risk methodology, report format aligned to standard
+- **UK GDPR aligned** — DPIA completed, DPA template provided, retention policies defined, data subject rights supported
+
+---
+
+## What's Next
+
+1. **Deploy migrations** — Run 002_make_safe.sql and 003_baseline_photos.sql against Neon
+2. **Wire Features 1–5** — Integrate code files into the existing InspectVoice codebase (Batch 20+)
+3. **Customise procurement pack** — Fill in placeholder fields, verify pricing, get DPA reviewed by solicitor
+4. **Cyber Essentials certification** — Apply Q3 2026, controls already mapped and met
+5. **Sample PDF report** — Generate a redacted sample inspection PDF for inclusion in procurement pack
+6. **Pilot outreach** — Procurement pack enables approaching councils with a 60-day free pilot offer

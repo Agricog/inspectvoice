@@ -105,11 +105,6 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-function formatCurrency(amount: number | null): string {
-  if (amount === null) return '';
-  return `£${amount.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 function label(value: string, labels: Record<string, string>): string {
   return labels[value] ?? value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -414,7 +409,7 @@ export function generateExcelWorkbook(data: DefectExportData): void {
   );
 
   for (let i = 0; i < sitesWithDefects.length; i++) {
-    const site = sitesWithDefects[i];
+    const site = sitesWithDefects[i]!;
     const siteDefects = defectsBySite.get(site.site_id) ?? [];
     const sheetName = siteSheetName(site.site_name, i);
     const siteWs = buildSiteSheet(site, siteDefects);

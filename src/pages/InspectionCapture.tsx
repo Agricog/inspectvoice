@@ -1,6 +1,6 @@
 /**
  * InspectVoice — Inspection Capture Workflow
- * Batch 14
+ * Batch 14 + Feature 5 (Baseline photo comparison)
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
@@ -8,16 +8,18 @@
  *   1. See asset info + checklist for this inspection type
  *   2. Voice capture → live transcript + audio blob stored
  *   3. Photo capture → compressed JPEG stored
- *   4. Manual text entry (fallback / additional notes)
- *   5. Condition rating per asset
- *   6. Save inspection item to IndexedDB
- *   7. Navigate to next asset
- *   8. When all assets done → navigate to Review
+ *   4. Baseline comparison (if baseline exists for this asset)
+ *   5. Manual text entry (fallback / additional notes)
+ *   6. Condition rating per asset
+ *   7. Save inspection item to IndexedDB
+ *   8. Navigate to next asset
+ *   9. When all assets done → navigate to Review
  *
  * Features:
  *   - Asset-by-asset stepper with progress bar
  *   - Voice recording with VU meter + live transcript
  *   - Photo capture via camera or file input
+ *   - Baseline vs current photo comparison slider
  *   - Checklist driven by assetTypes.ts config per inspection cadence
  *   - Per-asset condition rating (Good/Fair/Poor/Dangerous)
  *   - Inspector notes (manual text)
@@ -77,6 +79,8 @@ import {
 import type { Asset, Inspection, InspectionItem } from '@/types';
 import { getAssetTypeConfig, getInspectionPointsForType } from '@config/assetTypes';
 import type { InspectionPoint } from '@config/assetTypes';
+import BaselineComparison from '@components/BaselineComparison';
+import type { BaselinePhoto, CurrentPhoto } from '@components/BaselineComparison';
 
 // =============================================
 // TYPES
@@ -230,6 +234,11 @@ export default function InspectionCapture(): JSX.Element {
   const [photoProcessing, setPhotoProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ---- Baseline comparison ----
+  const [settingBaseline, setSettingBaseline] = useState(false);
+  /** The first captured photo's full base64 for comparison display */
+  const [firstPhotoBase64, setFirstPhotoBase64] = useState<string | null>(null);
+
   // ---- Saving ----
   const [saving, setSaving] = useState(false);
 
@@ -244,6 +253,25 @@ export default function InspectionCapture(): JSX.Element {
         inspectionType as 'routine_visual' | 'operational' | 'annual_main',
       )
     : [];
+
+  // ---- Baseline data for current asset ----
+  // These fields come from migration 003 — cast needed until Asset type is updated
+  const assetRecord = currentAsset as Record<string, unknown>;
+  const baselinePhoto: BaselinePhoto | null = assetRecord['baseline_photo_url']
+    ? {
+        src: assetRecord['baseline_photo_url'] as string,
+        takenAt: (assetRecord['baseline_photo_taken_at'] as string) ?? new Date().toISOString(),
+        takenBy: (assetRecord['baseline_photo_taken_by'] as string) ?? 'Unknown',
+        condition: (assetRecord['baseline_condition'] as ConditionRating) ?? null,
+      }
+    : null;
+
+  const currentPhoto: CurrentPhoto | null = firstPhotoBase64
+    ? {
+        src: `data:image/jpeg;base64,${firstPhotoBase64}`,
+        capturedAt: new Date().toISOString(),
+      }
+    : null;
 
   // ---- Check browser capabilities ----
   useEffect(() => {
@@ -343,6 +371,7 @@ export default function InspectionCapture(): JSX.Element {
     }
 
     setPhotoThumbnails([]);
+    setFirstPhotoBase64(null);
     setVuLevel(0);
     setRecordDuration(0);
     setVoiceState(VoiceCaptureState.IDLE);
@@ -475,12 +504,17 @@ export default function InspectionCapture(): JSX.Element {
         ...prev,
         { id: photoRecord.id, base64: result.thumbnailBase64 || result.base64Data.substring(0, 500) },
       ]);
+
+      // Store first photo's full base64 for baseline comparison display
+      if (captureState.photoIds.length === 0) {
+        setFirstPhotoBase64(result.base64Data);
+      }
     } catch (error) {
       captureError(error, { module: 'InspectionCapture', operation: 'capturePhoto' });
     } finally {
       setPhotoProcessing(false);
     }
-  }, [currentAsset]);
+  }, [currentAsset, captureState.photoIds.length]);
 
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -501,11 +535,67 @@ export default function InspectionCapture(): JSX.Element {
     }));
     setPhotoThumbnails((prev) => prev.filter((p) => p.id !== photoId));
 
+    // If removing the first photo, clear the comparison
+    if (photoThumbnails.length <= 1) {
+      setFirstPhotoBase64(null);
+    }
+
     // Delete from IndexedDB
     void pendingPhotos.delete(photoId).catch((error) => {
       captureError(error, { module: 'InspectionCapture', operation: 'deletePhoto' });
     });
-  }, []);
+  }, [photoThumbnails.length]);
+
+  // =============================================
+  // SET AS BASELINE HANDLER
+  // =============================================
+
+  const handleSetBaseline = useCallback(async () => {
+    if (!currentAsset || !firstPhotoBase64 || !inspectionId) return;
+
+    setSettingBaseline(true);
+    try {
+      const now = new Date().toISOString();
+
+      // Update the local assets state — actual R2 upload + DB persist happens on sync
+      // The sync service will detect the baseline fields and upload to R2/DB
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.id === currentAsset.id
+            ? Object.assign({}, a, {
+                baseline_photo_url: `data:image/jpeg;base64,${firstPhotoBase64}`,
+                baseline_photo_taken_at: now,
+                baseline_photo_taken_by: 'Inspector',
+                baseline_condition: captureState.condition,
+                baseline_photo_inspection_id: inspectionId,
+              })
+            : a,
+        ),
+      );
+
+      // Also persist baseline flag to IndexedDB pending queue for sync
+      try {
+        await pendingPhotos.add({
+          inspection_item_id: '',
+          asset_id: currentAsset.id,
+          base64Data: firstPhotoBase64,
+          mime_type: 'image/jpeg',
+          file_size_bytes: Math.ceil(firstPhotoBase64.length * 0.75),
+          captured_at: now,
+          latitude: null,
+          longitude: null,
+          is_reference_photo: true,
+          caption: `Baseline photo for ${currentAsset.asset_code}`,
+        });
+      } catch (photoError) {
+        captureError(photoError, { module: 'InspectionCapture', operation: 'saveBaselinePhoto' });
+      }
+    } catch (error) {
+      captureError(error, { module: 'InspectionCapture', operation: 'setBaseline' });
+    } finally {
+      setSettingBaseline(false);
+    }
+  }, [currentAsset, firstPhotoBase64, inspectionId, captureState.condition]);
 
   // =============================================
   // CHECKLIST HANDLER
@@ -965,6 +1055,20 @@ export default function InspectionCapture(): JSX.Element {
           </div>
         )}
       </div>
+
+      {/* ── Baseline Comparison ── */}
+      {(baselinePhoto || firstPhotoBase64) && (
+        <div className="mb-4">
+          <BaselineComparison
+            baseline={baselinePhoto}
+            current={currentPhoto}
+            currentCondition={captureState.condition}
+            assetCode={currentAsset.asset_code}
+            onSetBaseline={handleSetBaseline}
+            settingBaseline={settingBaseline}
+          />
+        </div>
+      )}
 
       {/* ── Manual Notes ── */}
       <div className="iv-panel p-4 mb-4">

@@ -230,9 +230,20 @@ export default {
       );
       return addCorsHeaders(notFoundResponse, request, env);
 
-    } catch (error) {
+   } catch (error) {
       // ── Global Error Boundary ──
       const requestId = crypto.randomUUID();
+
+      // Production error logging — surfaces in Cloudflare Observability
+      console.error(JSON.stringify({
+        level: 'error',
+        requestId,
+        method,
+        path,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }));
+
       const errorResponse = formatErrorResponse(error, requestId);
       return addCorsHeaders(errorResponse, request, env);
     }

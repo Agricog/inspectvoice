@@ -64,6 +64,16 @@ import {
 } from './routes/notifications';
 import { handleSummaryEmailCron } from './cron/summaryEmail';
 
+// ── Normalisation ──
+import {
+  normaliseFieldEndpoint,
+  normaliseBatchEndpoint,
+  acceptNormalisationEndpoint,
+  rejectNormalisationEndpoint,
+  listNormalisationHistory,
+  getNormalisationUsage,
+} from './routes/normalise';
+
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
 import { handleClerkWebhook } from './routes/webhooks/clerk';
@@ -155,6 +165,14 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['PUT',    '/api/v1/notifications/recipients/:id', updateNotificationRecipient],
   ['DELETE', '/api/v1/notifications/recipients/:id', deactivateNotificationRecipient],
   ['GET',    '/api/v1/notifications/log', listNotificationLog],
+
+  // ── Normalisation ──
+  ['POST',   '/api/v1/normalise/field', normaliseFieldEndpoint],
+  ['POST',   '/api/v1/normalise/batch', normaliseBatchEndpoint],
+  ['POST',   '/api/v1/normalise/:id/accept', acceptNormalisationEndpoint],
+  ['POST',   '/api/v1/normalise/:id/reject', rejectNormalisationEndpoint],
+  ['GET',    '/api/v1/normalise/history', listNormalisationHistory],
+  ['GET',    '/api/v1/normalise/usage', getNormalisationUsage],
 
   // ── Sealed Exports (Feature 10) ──
   ['POST', '/api/v1/sealed-exports/defects', createSealedDefectExport],

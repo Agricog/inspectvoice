@@ -27,8 +27,6 @@ import {
   Check,
   X,
   AlertTriangle,
-  ChevronDown,
-  ChevronUp,
   RotateCcw,
 } from 'lucide-react';
 import { secureFetch } from '@hooks/useFetch';

@@ -33,6 +33,9 @@ export interface Env {
   readonly MANIFEST_SIGNING_KEY_ID: string;
   readonly MANIFEST_SIGNING_KEYS_LEGACY: string; // JSON: '{"k1":"hex_key"}'
 
+  // ── Notifications ──
+  readonly RESEND_API_KEY: string;
+
   // ── Plaintext Variables ──
   readonly ALLOWED_ORIGIN: string;
   readonly MAX_PAGE_SIZE: string;

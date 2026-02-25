@@ -12,7 +12,7 @@
  * Build Standard: Autaimate v3
  */
 
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import {
   SignIn,

@@ -39,6 +39,8 @@ import { ManagerDashboard } from '@pages/ManagerDashboard';
 import { SettingsPage } from '@pages/SettingsPage';
 import IncidentList from '@pages/IncidentList';
 import IncidentForm from '@pages/IncidentForm';
+import VerifyPage from '@pages/VerifyPage';
+import SealedExportsPage from '@pages/SealedExportsPage';
 
 // =============================================
 // ORG GATE — requires active organisation
@@ -123,7 +125,7 @@ export function App(): JSX.Element {
         <PWAUpdatePrompt />
 
         <Routes>
-          {/* ── Public auth routes ── */}
+          {/* ── Public routes (no auth required) ── */}
           <Route
             path="/sign-in/*"
             element={
@@ -140,6 +142,9 @@ export function App(): JSX.Element {
               </div>
             }
           />
+
+          {/* Public verification — council officers, solicitors, insurers */}
+          <Route path="/verify/:bundleId" element={<VerifyPage />} />
 
           {/* ── Protected routes ── */}
           <Route
@@ -174,6 +179,9 @@ export function App(): JSX.Element {
             <Route path="/incidents" element={<IncidentList />} />
             <Route path="/incidents/new" element={<IncidentForm />} />
             <Route path="/incidents/:id" element={<IncidentForm />} />
+
+            {/* Sealed Exports */}
+            <Route path="/sealed-exports" element={<SealedExportsPage />} />
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />

@@ -53,19 +53,6 @@ interface ReviewItem {
 }
 
 // =============================================
-// HELPERS
-// =============================================
-
-/** Build a new ReviewItem with an updated decision, preserving result and rejectReason. */
-function withDecision(current: ReviewItem, decision: ItemDecision, rejectReason?: string): ReviewItem {
-  return {
-    result: current.result,
-    decision,
-    rejectReason: rejectReason ?? current.rejectReason,
-  };
-}
-
-// =============================================
 // COMPONENT
 // =============================================
 
@@ -87,64 +74,55 @@ export function NormalisationReviewPanel({
   const processingCount = useMemo(() => items.filter((i) => i.decision === 'processing').length, [items]);
   const allResolved = pendingCount === 0 && processingCount === 0;
 
+  /** Safely update a single item by index. */
+  const updateItem = useCallback((index: number, decision: ItemDecision, rejectReason?: string) => {
+    setItems((prev) => {
+      const next = [...prev];
+      const current = next[index];
+      if (!current) return prev;
+      next[index] = {
+        result: current.result,
+        decision,
+        rejectReason: rejectReason ?? current.rejectReason,
+      };
+      return next;
+    });
+  }, []);
+
   // ── Accept single item ─────────────────────
   const handleAcceptItem = useCallback(async (index: number) => {
     const item = items[index];
     if (!item || item.decision !== 'pending') return;
 
-    setItems((prev) => {
-      const next = [...prev];
-      next[index] = withDecision(next[index], 'processing');
-      return next;
-    });
+    updateItem(index, 'processing');
 
     try {
       await secureFetch(`/api/v1/normalise/${item.result.logId}/accept`, { method: 'POST' });
-      setItems((prev) => {
-        const next = [...prev];
-        next[index] = withDecision(next[index], 'accepted');
-        return next;
-      });
+      updateItem(index, 'accepted');
     } catch {
-      setItems((prev) => {
-        const next = [...prev];
-        next[index] = withDecision(next[index], 'pending');
-        return next;
-      });
+      updateItem(index, 'pending');
       setError('Failed to accept — try again');
     }
-  }, [items]);
+  }, [items, updateItem]);
 
   // ── Reject single item ─────────────────────
   const handleRejectItem = useCallback(async (index: number, reason: string) => {
     const item = items[index];
     if (!item || item.decision !== 'pending') return;
 
-    setItems((prev) => {
-      const next = [...prev];
-      next[index] = withDecision(next[index], 'processing');
-      return next;
-    });
+    updateItem(index, 'processing');
 
     try {
       await secureFetch(`/api/v1/normalise/${item.result.logId}/reject`, {
         method: 'POST',
         body: { reason: reason || 'No reason provided' },
       });
-      setItems((prev) => {
-        const next = [...prev];
-        next[index] = withDecision(next[index], 'rejected', reason);
-        return next;
-      });
+      updateItem(index, 'rejected', reason);
     } catch {
-      setItems((prev) => {
-        const next = [...prev];
-        next[index] = withDecision(next[index], 'pending');
-        return next;
-      });
+      updateItem(index, 'pending');
       setError('Failed to reject — try again');
     }
-  }, [items]);
+  }, [items, updateItem]);
 
   // ── Accept all pending ─────────────────────
   const handleAcceptAll = useCallback(async () => {

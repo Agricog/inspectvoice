@@ -1,6 +1,6 @@
 /**
  * InspectVoice — Inspection Review & Summary
- * Batch 15 + Feature 4 (AI completeness check gate)
+ * Batch 15 + Feature 4 (AI completeness check gate) + AI Normalisation
  *
  * Route: /sites/:siteId/inspections/:inspectionId/review
  *
@@ -9,14 +9,18 @@
  *   2. Per-asset results — condition, transcript, photos, notes
  *   3. Inspector summary notes (free text)
  *   4. Closure recommendation (if dangerous conditions found)
- *   5. AI completeness check (review gate before sign-off)
- *   6. Digital sign-off → marks inspection as COMPLETED
- *   7. Navigates to site page (PDF generation happens async via sync)
+ *   5. AI normalisation — per-field or batch at sign-off
+ *   6. AI completeness check (review gate before sign-off)
+ *   7. Digital sign-off → marks inspection as COMPLETED
+ *   8. Navigates to site page (PDF generation happens async via sync)
  *
  * Features:
  *   - Loads all inspection items from IndexedDB
  *   - Calculates risk/defect tallies
  *   - Per-asset expandable cards with full detail
+ *   - Per-field "Normalise" button on transcripts, notes, defects
+ *   - Batch normalise all text fields before sign-off
+ *   - Normalisation review panel with diff view + accept/reject
  *   - Inspector summary textarea
  *   - Closure recommendation toggle (visible if dangerous/very high risk found)
  *   - AI completeness check modal before sign-off
@@ -44,6 +48,7 @@ import {
   PenTool,
   Edit,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 
 import { inspections, inspectionItems } from '@services/offlineStore';
@@ -59,6 +64,9 @@ import {
 import type { Inspection, InspectionItem } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
 import CompletenessCheckModal from '@components/CompletenessCheckModal';
+import { NormaliseButton } from '@components/NormaliseButton';
+import NormalisationReviewPanel from '@components/NormalisationReviewPanel';
+import type { NormalisationSuggestion, BatchNormaliseRequest } from '@/types/normalisation';
 
 // =============================================
 // HELPERS
@@ -151,17 +159,19 @@ function RiskSummaryCard({
 }
 
 // =============================================
-// ASSET RESULT CARD (expandable)
+// ASSET RESULT CARD (expandable, with normalisation)
 // =============================================
 
 function AssetResultCard({
   item,
   siteId,
   inspectionId,
+  onFieldNormalised,
 }: {
   item: InspectionItem;
   siteId: string;
   inspectionId: string;
+  onFieldNormalised: (itemId: string, fieldName: string, normalisedText: string) => void;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const config = getAssetTypeConfig(item.asset_type);
@@ -170,6 +180,13 @@ function AssetResultCard({
   const hasTranscript = Boolean(item.voice_transcript);
   const hasNotes = Boolean(item.inspector_notes);
   const defectCount = item.defects.length;
+
+  const handleNormalised = useCallback(
+    (fieldName: string, normalisedText: string) => {
+      onFieldNormalised(item.id, fieldName, normalisedText);
+    },
+    [item.id, onFieldNormalised],
+  );
 
   return (
     <div className="iv-panel overflow-hidden">
@@ -240,10 +257,19 @@ function AssetResultCard({
           {/* Transcript */}
           {hasTranscript && (
             <div>
-              <p className="text-xs iv-muted mb-1 flex items-center gap-1">
-                <Mic className="w-3 h-3" />
-                Voice Transcript
-              </p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs iv-muted flex items-center gap-1">
+                  <Mic className="w-3 h-3" />
+                  Voice Transcript
+                </p>
+                <NormaliseButton
+                  fieldType="voice_transcript"
+                  fieldValue={item.voice_transcript ?? ''}
+                  entityId={item.id}
+                  entityType="inspection_item"
+                  onNormalised={(text) => handleNormalised('voice_transcript', text)}
+                />
+              </div>
               <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
                 {item.voice_transcript}
               </p>
@@ -253,10 +279,19 @@ function AssetResultCard({
           {/* Inspector notes */}
           {hasNotes && (
             <div>
-              <p className="text-xs iv-muted mb-1 flex items-center gap-1">
-                <FileText className="w-3 h-3" />
-                Inspector Notes
-              </p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs iv-muted flex items-center gap-1">
+                  <FileText className="w-3 h-3" />
+                  Inspector Notes
+                </p>
+                <NormaliseButton
+                  fieldType="inspector_notes"
+                  fieldValue={item.inspector_notes ?? ''}
+                  entityId={item.id}
+                  entityType="inspection_item"
+                  onNormalised={(text) => handleNormalised('inspector_notes', text)}
+                />
+              </div>
               <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
                 {item.inspector_notes}
               </p>
@@ -270,12 +305,26 @@ function AssetResultCard({
                 Defects ({defectCount})
               </p>
               <div className="space-y-1">
-                {item.defects.map((defect, idx) => (
-                  <div key={idx} className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg flex items-start gap-2">
-                    <AlertCircle className="w-3.5 h-3.5 text-[#F97316] flex-shrink-0 mt-0.5" />
-                    <span>{typeof defect === 'string' ? defect : JSON.stringify(defect)}</span>
-                  </div>
-                ))}
+                {item.defects.map((defect, idx) => {
+                  const defectText = typeof defect === 'string' ? defect : JSON.stringify(defect);
+                  return (
+                    <div key={idx} className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <AlertCircle className="w-3.5 h-3.5 text-[#F97316] flex-shrink-0 mt-0.5" />
+                          <span>{defectText}</span>
+                        </div>
+                        <NormaliseButton
+                          fieldType="defect_description"
+                          fieldValue={defectText}
+                          entityId={item.id}
+                          entityType="inspection_item"
+                          onNormalised={(text) => handleNormalised(`defect_${idx}`, text)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -323,6 +372,11 @@ export default function InspectionReview(): JSX.Element {
 
   // ---- Completeness check modal ----
   const [showCompletenessCheck, setShowCompletenessCheck] = useState(false);
+
+  // ---- Normalisation ----
+  const [batchNormalising, setBatchNormalising] = useState(false);
+  const [batchSuggestions, setBatchSuggestions] = useState<NormalisationSuggestion[]>([]);
+  const [showNormalisationReview, setShowNormalisationReview] = useState(false);
 
   // ---- Load data ----
   useEffect(() => {
@@ -391,6 +445,160 @@ export default function InspectionReview(): JSX.Element {
 
   const totalDefects = items.reduce((sum, i) => sum + i.defects.length, 0);
   const hasDangerous = conditionCounts.dangerous > 0 || riskCounts.veryHigh > 0;
+
+  // ---- Per-field normalisation callback ----
+  const handleFieldNormalised = useCallback(
+    (itemId: string, fieldName: string, normalisedText: string) => {
+      setItems((prev) =>
+        prev.map((item) => {
+          if (item.id !== itemId) return item;
+
+          if (fieldName === 'voice_transcript') {
+            return { ...item, voice_transcript: normalisedText };
+          }
+          if (fieldName === 'inspector_notes') {
+            return { ...item, inspector_notes: normalisedText };
+          }
+          // Defect fields are named defect_0, defect_1, etc.
+          if (fieldName.startsWith('defect_')) {
+            const defectIndex = parseInt(fieldName.split('_')[1], 10);
+            if (!isNaN(defectIndex) && defectIndex < item.defects.length) {
+              const updatedDefects = [...item.defects];
+              updatedDefects[defectIndex] = normalisedText;
+              return { ...item, defects: updatedDefects };
+            }
+          }
+          return item;
+        }),
+      );
+    },
+    [],
+  );
+
+  // ---- Batch normalise all text fields ----
+  const handleBatchNormalise = useCallback(async () => {
+    if (!inspectionId) return;
+
+    setBatchNormalising(true);
+    setBatchSuggestions([]);
+
+    try {
+      // Build batch request from all text fields across all items
+      const fields: BatchNormaliseRequest['fields'] = [];
+
+      // Inspector summary
+      if (summary.trim()) {
+        fields.push({
+          entity_id: inspectionId,
+          entity_type: 'inspection',
+          field_name: 'inspector_summary',
+          original_text: summary,
+        });
+      }
+
+      // Closure reason
+      if (closureRecommended && closureReason.trim()) {
+        fields.push({
+          entity_id: inspectionId,
+          entity_type: 'inspection',
+          field_name: 'closure_reason',
+          original_text: closureReason,
+        });
+      }
+
+      // Per-item fields
+      for (const item of items) {
+        if (item.voice_transcript) {
+          fields.push({
+            entity_id: item.id,
+            entity_type: 'inspection_item',
+            field_name: 'voice_transcript',
+            original_text: item.voice_transcript,
+          });
+        }
+        if (item.inspector_notes) {
+          fields.push({
+            entity_id: item.id,
+            entity_type: 'inspection_item',
+            field_name: 'inspector_notes',
+            original_text: item.inspector_notes,
+          });
+        }
+        for (let i = 0; i < item.defects.length; i++) {
+          const defectText = typeof item.defects[i] === 'string'
+            ? item.defects[i]
+            : JSON.stringify(item.defects[i]);
+          if (defectText) {
+            fields.push({
+              entity_id: item.id,
+              entity_type: 'inspection_item',
+              field_name: `defect_${i}`,
+              original_text: defectText as string,
+            });
+          }
+        }
+      }
+
+      if (fields.length === 0) {
+        setBatchNormalising(false);
+        return;
+      }
+
+      const { secureFetch } = await import('@hooks/useFetch');
+      const response = await secureFetch<{ data: { suggestions: NormalisationSuggestion[] } }>(
+        '/api/v1/normalise/batch',
+        {
+          method: 'POST',
+          body: { inspection_id: inspectionId, fields },
+        },
+      );
+
+      const suggestions = response.data?.suggestions ?? [];
+      setBatchSuggestions(suggestions);
+
+      if (suggestions.length > 0) {
+        setShowNormalisationReview(true);
+      }
+    } catch (error) {
+      captureError(error, { module: 'InspectionReview', operation: 'batchNormalise' });
+    } finally {
+      setBatchNormalising(false);
+    }
+  }, [inspectionId, summary, closureRecommended, closureReason, items]);
+
+  // ---- Accept normalisation suggestion ----
+  const handleAcceptSuggestion = useCallback(
+    (suggestion: NormalisationSuggestion) => {
+      // Apply to inspection-level fields
+      if (suggestion.entity_type === 'inspection') {
+        if (suggestion.field_name === 'inspector_summary') {
+          setSummary(suggestion.normalised_text);
+        } else if (suggestion.field_name === 'closure_reason') {
+          setClosureReason(suggestion.normalised_text);
+        }
+        return;
+      }
+
+      // Apply to inspection_item fields
+      handleFieldNormalised(suggestion.entity_id, suggestion.field_name, suggestion.normalised_text);
+    },
+    [handleFieldNormalised],
+  );
+
+  // ---- Accept all suggestions ----
+  const handleAcceptAll = useCallback(() => {
+    for (const suggestion of batchSuggestions) {
+      handleAcceptSuggestion(suggestion);
+    }
+    setShowNormalisationReview(false);
+    setBatchSuggestions([]);
+  }, [batchSuggestions, handleAcceptSuggestion]);
+
+  // ---- Reject all — just close the panel ----
+  const handleRejectAll = useCallback(() => {
+    setShowNormalisationReview(false);
+    setBatchSuggestions([]);
+  }, []);
 
   // ---- Completeness check → opens modal instead of directly signing ----
   const canSubmit = signedByName.trim().length >= 2 && !completed;
@@ -650,6 +858,7 @@ export default function InspectionReview(): JSX.Element {
                 item={item}
                 siteId={siteId}
                 inspectionId={inspectionId}
+                onFieldNormalised={handleFieldNormalised}
               />
             ))}
         </div>
@@ -657,10 +866,21 @@ export default function InspectionReview(): JSX.Element {
 
       {/* ── Inspector Summary ── */}
       <div className="iv-panel p-5 mb-4">
-        <h2 className="text-base font-semibold iv-text mb-3 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-[#22C55E]" />
-          Inspector Summary
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold iv-text flex items-center gap-2">
+            <FileText className="w-4 h-4 text-[#22C55E]" />
+            Inspector Summary
+          </h2>
+          {summary.trim() && (
+            <NormaliseButton
+              fieldType="inspector_summary"
+              fieldValue={summary}
+              entityId={inspectionId}
+              entityType="inspection"
+              onNormalised={(text) => setSummary(text)}
+            />
+          )}
+        </div>
         <textarea
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
@@ -707,6 +927,36 @@ export default function InspectionReview(): JSX.Element {
           )}
         </div>
       )}
+
+      {/* ── Batch Normalise ── */}
+      <div className="iv-panel p-5 mb-4">
+        <h2 className="text-base font-semibold iv-text mb-2 flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-iv-accent" />
+          AI Style Normalisation
+        </h2>
+        <p className="text-sm iv-muted mb-4">
+          Normalise all text fields to your organisation&apos;s house style before sign-off.
+          You&apos;ll review every suggestion before anything is applied.
+        </p>
+        <button
+          type="button"
+          onClick={() => void handleBatchNormalise()}
+          disabled={batchNormalising || items.length === 0}
+          className="iv-btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {batchNormalising ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Normalising…
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4" />
+              Normalise All Fields
+            </>
+          )}
+        </button>
+      </div>
 
       {/* ── Sign Off ── */}
       <div className="iv-panel p-5 mb-6">
@@ -778,6 +1028,16 @@ export default function InspectionReview(): JSX.Element {
           closureReason={closureReason}
         />
       )}
+
+      {/* ── Normalisation Review Panel ── */}
+      <NormalisationReviewPanel
+        isOpen={showNormalisationReview}
+        onClose={() => setShowNormalisationReview(false)}
+        suggestions={batchSuggestions}
+        onAccept={handleAcceptSuggestion}
+        onAcceptAll={handleAcceptAll}
+        onRejectAll={handleRejectAll}
+      />
     </div>
   );
 }

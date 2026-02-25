@@ -86,7 +86,7 @@ const STATUS_STYLES: Record<string, StatusStyleDef> = {
   pending: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', icon: Clock },
 };
 
-const DEFAULT_STATUS_STYLE: StatusStyleDef = STATUS_STYLES['pending'];
+const DEFAULT_STATUS_STYLE: StatusStyleDef = { bg: 'bg-yellow-500/15', text: 'text-yellow-400', icon: Clock };
 
 /** Safely retrieve a status style with guaranteed non-undefined result. */
 function getStatusStyle(status: string): StatusStyleDef {

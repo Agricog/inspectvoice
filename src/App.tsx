@@ -41,6 +41,7 @@ import IncidentList from '@pages/IncidentList';
 import IncidentForm from '@pages/IncidentForm';
 import VerifyPage from '@pages/VerifyPage';
 import SealedExportsPage from '@pages/SealedExportsPage';
+import NormalisationHistoryPage from '@pages/NormalisationHistoryPage';
 
 // =============================================
 // ORG GATE — requires active organisation
@@ -182,6 +183,9 @@ export function App(): JSX.Element {
 
             {/* Sealed Exports */}
             <Route path="/sealed-exports" element={<SealedExportsPage />} />
+
+            {/* Normalisation */}
+            <Route path="/normalisation-history" element={<NormalisationHistoryPage />} />
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />

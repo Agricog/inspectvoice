@@ -24,7 +24,6 @@ import { useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   Sparkles,
-  Search,
   Filter,
   ChevronLeft,
   ChevronRight,
@@ -75,11 +74,24 @@ type FieldFilter = '' | NormalisableField;
 
 const PAGE_SIZE = 20;
 
-const STATUS_STYLES: Record<string, { bg: string; text: string; icon: typeof Check }> = {
+interface StatusStyleDef {
+  bg: string;
+  text: string;
+  icon: typeof Check;
+}
+
+const STATUS_STYLES: Record<string, StatusStyleDef> = {
   accepted: { bg: 'bg-emerald-500/15', text: 'text-emerald-400', icon: Check },
   rejected: { bg: 'bg-red-500/15', text: 'text-red-400', icon: XCircle },
   pending: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', icon: Clock },
 };
+
+const DEFAULT_STATUS_STYLE: StatusStyleDef = STATUS_STYLES['pending'];
+
+/** Safely retrieve a status style with guaranteed non-undefined result. */
+function getStatusStyle(status: string): StatusStyleDef {
+  return STATUS_STYLES[status] ?? DEFAULT_STATUS_STYLE;
+}
 
 // =============================================
 // HELPERS
@@ -167,7 +179,7 @@ function UsageStats({ usage }: { usage: NormalisationUsageResponse | null }): JS
 
 function LogEntryCard({ entry }: { entry: NormalisationLogEntry }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const statusStyle = STATUS_STYLES[entry.status] ?? STATUS_STYLES['pending'];
+  const statusStyle = getStatusStyle(entry.status);
   const Icon = statusStyle.icon;
 
   return (
@@ -414,8 +426,8 @@ export function NormalisationHistoryPage(): JSX.Element {
                   </thead>
                   <tbody>
                     {entries.map((entry) => {
-                      const statusStyle = STATUS_STYLES[entry.status] ?? STATUS_STYLES['pending'];
-                      const Icon = statusStyle.icon;
+                      const style = getStatusStyle(entry.status);
+                      const Icon = style.icon;
                       return (
                         <tr key={entry.id} className="border-b last:border-b-0 border-iv-border hover:bg-iv-surface-2/50 transition-colors">
                           <td className="py-2.5 px-4">
@@ -425,7 +437,7 @@ export function NormalisationHistoryPage(): JSX.Element {
                             <p className="text-xs text-iv-muted line-clamp-1">{entry.diff_summary ?? '—'}</p>
                           </td>
                           <td className="py-2.5 px-4">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${statusStyle.bg} ${statusStyle.text}`}>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${style.bg} ${style.text}`}>
                               <Icon className="w-3 h-3" />
                               {entry.status.charAt(0).toUpperCase() + entry.status.slice(1)}
                             </span>

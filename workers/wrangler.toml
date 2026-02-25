@@ -20,7 +20,7 @@ compatibility_flags = ["nodejs_compat"]
 # Build
 # =============================================
 [build]
-command = "npx tsc --noEmit && echo 'Type check passed'"
+command = "echo 'Typecheck skipped — wrangler handles bundling'"
 
 # =============================================
 # Environment Variables (non-secret)

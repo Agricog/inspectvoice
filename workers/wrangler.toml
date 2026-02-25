@@ -5,23 +5,19 @@
 # Dev:        npx wrangler dev
 # Logs:       npx wrangler tail
 # =============================================
-
 name = "inspectvoice-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
-
 # =============================================
 # Account settings
 # =============================================
 # account_id is read from CLOUDFLARE_ACCOUNT_ID env or wrangler login
-
 # =============================================
 # Build
 # =============================================
 [build]
 command = "echo 'Typecheck skipped — wrangler handles bundling'"
-
 # =============================================
 # Environment Variables (non-secret)
 # =============================================
@@ -30,13 +26,14 @@ READ_ONLY_MODE = "false"
 WEBHOOKS_PAUSED = "false"
 MAX_PAGE_SIZE = "100"
 ALLOWED_ORIGIN = "https://inspectvoice-production.up.railway.app"
-
 # =============================================
 # Secrets (set via: npx wrangler secret put <NAME>)
 # =============================================
 # CLERK_SECRET_KEY
 # CLERK_JWKS_URL
 # CLERK_WEBHOOK_SECRET
+# CLERK_ISSUER
+# CLERK_AUTHORIZED_PARTIES
 # STRIPE_SECRET_KEY
 # STRIPE_WEBHOOK_SECRET
 # ANTHROPIC_API_KEY
@@ -44,25 +41,24 @@ ALLOWED_ORIGIN = "https://inspectvoice-production.up.railway.app"
 # DATABASE_URL
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN
-
+# MANIFEST_SIGNING_KEY
+# MANIFEST_SIGNING_KEY_ID
+# RESEND_API_KEY
 # =============================================
 # R2 Bucket
 # =============================================
 [[r2_buckets]]
 binding = "INSPECTVOICE_BUCKET"
 bucket_name = "inspectvoice-storage"
-
 # =============================================
 # Queues — Producers
 # =============================================
 [[queues.producers]]
 queue = "inspectvoice-audio-processing"
 binding = "AUDIO_PROCESSING_QUEUE"
-
 [[queues.producers]]
 queue = "inspectvoice-pdf-generation"
 binding = "PDF_GENERATION_QUEUE"
-
 # =============================================
 # Queues — Consumers
 # =============================================
@@ -71,49 +67,53 @@ queue = "inspectvoice-audio-processing"
 max_batch_size = 1
 max_retries = 3
 dead_letter_queue = "inspectvoice-audio-dlq"
-
 [[queues.consumers]]
 queue = "inspectvoice-pdf-generation"
 max_batch_size = 1
 max_retries = 3
 dead_letter_queue = "inspectvoice-pdf-dlq"
-
+# =============================================
+# Cron Triggers — Summary Email Dispatch
+# =============================================
+# Single daily trigger at 08:00 UTC.
+# Handler checks DB for which frequencies are due:
+#   - daily:   every day
+#   - weekly:  Mondays only
+#   - monthly: 1st of month only
+[triggers]
+crons = ["0 8 * * *"]
 # =============================================
 # Observability
 # =============================================
 [observability]
 enabled = true
-
 # =============================================
 # Staging Environment
 # =============================================
 [env.staging]
 name = "inspectvoice-api-staging"
-
 [env.staging.vars]
 READ_ONLY_MODE = "false"
 WEBHOOKS_PAUSED = "false"
 MAX_PAGE_SIZE = "100"
 ALLOWED_ORIGIN = "https://staging.inspectvoice.co.uk"
-
 [[env.staging.r2_buckets]]
 binding = "INSPECTVOICE_BUCKET"
 bucket_name = "inspectvoice-storage-staging"
-
 [[env.staging.queues.producers]]
 queue = "inspectvoice-audio-processing-staging"
 binding = "AUDIO_PROCESSING_QUEUE"
-
 [[env.staging.queues.producers]]
 queue = "inspectvoice-pdf-generation-staging"
 binding = "PDF_GENERATION_QUEUE"
-
 [[env.staging.queues.consumers]]
 queue = "inspectvoice-audio-processing-staging"
 max_batch_size = 1
 max_retries = 3
-
 [[env.staging.queues.consumers]]
 queue = "inspectvoice-pdf-generation-staging"
 max_batch_size = 1
 max_retries = 3
+[env.staging.triggers]
+crons = ["0 8 * * *"]
+

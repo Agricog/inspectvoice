@@ -37,7 +37,7 @@ import { Logger } from '../shared/logger';
  * This gives us a best-effort cache that reduces JWKS fetch frequency.
  */
 interface JwksCache {
-  keys: JsonWebKey[];
+  keys: JwkWithKid[];
   fetchedAt: number;
 }
 
@@ -123,9 +123,7 @@ export async function guard(request: Request, env: Env): Promise<RequestContext>
 
   // ── 6. Log request start (debug level — not noisy in production) ──
   const logger = Logger.fromContext(ctx);
-  logger.debug('Request authenticated', {
-    userRole,
-  });
+  logger.debug('Request authenticated', { userRole });
 
   return ctx;
 }
@@ -142,7 +140,7 @@ export async function guard(request: Request, env: Env): Promise<RequestContext>
  * 2. Fetch/cache the JWKS from Clerk
  * 3. Find the matching key
  * 4. Verify the RS256 signature using Web Crypto API
- * 5. Validate claims (exp, nbf, iss)
+ * 5. Validate claims (exp, nbf, iss, azp)
  *
  * @returns Verified JWT payload
  * @throws UnauthorizedError on any verification failure
@@ -185,15 +183,15 @@ async function verifyClerkJwt(token: string, env: Env): Promise<ClerkJwtPayload>
 
   // ── Decode and validate payload ──
   const payload = decodeJwtPart<ClerkJwtPayload>(payloadB64);
-  validateJwtClaims(payload);
+  validateJwtClaims(payload, env);
 
   return payload;
 }
 
 /**
- * Validate JWT claims: expiry, not-before, issuer.
+ * Validate JWT claims: expiry, not-before, issuer, authorized parties.
  */
-function validateJwtClaims(payload: ClerkJwtPayload): void {
+function validateJwtClaims(payload: ClerkJwtPayload, env: Env): void {
   const now = Math.floor(Date.now() / 1000);
 
   // Check expiry (with clock skew tolerance)
@@ -206,9 +204,30 @@ function validateJwtClaims(payload: ClerkJwtPayload): void {
     throw new UnauthorizedError('JWT is not yet valid');
   }
 
-  // Verify issuer matches a Clerk domain
-  if (payload.iss && !payload.iss.includes('clerk')) {
-    throw new UnauthorizedError('JWT issuer is not recognised');
+  // Strict issuer match (you set this to your Clerk instance issuer)
+  const expectedIssuer = env.CLERK_ISSUER;
+  if (!expectedIssuer) {
+    throw new UnauthorizedError('CLERK_ISSUER not configured');
+  }
+  if (!payload.iss || payload.iss !== expectedIssuer) {
+    throw new UnauthorizedError('JWT issuer mismatch');
+  }
+
+  // Validate azp (authorized parties) against allowed origins
+  // Clerk guidance: validate azp equals a known origin permitted to generate tokens.
+  const allowedParties = parseCsv(env.CLERK_AUTHORIZED_PARTIES);
+  if (allowedParties.length === 0) {
+    throw new UnauthorizedError('CLERK_AUTHORIZED_PARTIES not configured');
+  }
+
+  // Avoid TS coupling: read azp defensively (in case types omit it)
+  const azp = (payload as unknown as { azp?: string }).azp;
+
+  if (!azp) {
+    throw new UnauthorizedError('JWT missing azp claim');
+  }
+  if (!allowedParties.includes(azp)) {
+    throw new UnauthorizedError('JWT authorized party (azp) not allowed');
   }
 }
 
@@ -246,7 +265,7 @@ async function getSigningKey(kid: string, env: Env): Promise<CryptoKey> {
 async function fetchJwks(env: Env): Promise<JwkWithKid[]> {
   // Return cached keys if still fresh
   if (jwksCache && (Date.now() - jwksCache.fetchedAt) < JWKS_CACHE_TTL_MS) {
-    return jwksCache.keys as JwkWithKid[];
+    return jwksCache.keys;
   }
 
   const jwksUrl = env.CLERK_JWKS_URL;
@@ -274,7 +293,7 @@ async function fetchJwks(env: Env): Promise<JwkWithKid[]> {
     fetchedAt: Date.now(),
   };
 
-  return data.keys as JwkWithKid[];
+  return data.keys;
 }
 
 /**
@@ -306,11 +325,11 @@ async function importRsaKey(jwk: JwkWithKid): Promise<CryptoKey> {
  */
 export function requireRole(ctx: RequestContext, minimumRole: 'inspector' | 'manager' | 'admin'): void {
   const hierarchy: Record<string, number> = {
-    'inspector': 1,
+    inspector: 1,
     'org:inspector': 1,
-    'manager': 2,
+    manager: 2,
     'org:manager': 2,
-    'admin': 3,
+    admin: 3,
     'org:admin': 3,
   };
 
@@ -353,6 +372,14 @@ export function createWebhookContext(request: Request, env: Env): {
 /** Check if an HTTP method is a write operation */
 function isWriteMethod(method: string): boolean {
   return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+}
+
+/** Parse a comma-separated env var into trimmed values */
+function parseCsv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Decode a base64url-encoded JWT part to JSON */
@@ -400,3 +427,4 @@ interface JwkWithKid extends JsonWebKey {
 interface JwksResponse {
   readonly keys: JwkWithKid[];
 }
+

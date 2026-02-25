@@ -3,7 +3,7 @@
  * Secure fetch wrapper with:
  * - SSRF protection (origin-locked to VITE_API_BASE_URL)
  * - CSRF token injection on state-changing requests
- * - Auth token injection via Clerk
+ * - Auto auth token injection via Clerk (through authToken bridge)
  * - Typed error handling with exponential backoff retries
  * - Request throttling (prevents rapid duplicate calls)
  * - AbortController cancellation on unmount
@@ -16,6 +16,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { captureError } from '@utils/errorTracking';
 import { getCSRFHeaders, requiresCSRF } from '@utils/csrf';
+import { getAuthToken } from '@utils/authToken';
 
 // =============================================
 // TYPES
@@ -35,7 +36,7 @@ export interface FetchOptions {
   body?: unknown;
   /** Additional headers */
   headers?: Record<string, string>;
-  /** Auth token getter (from Clerk) */
+  /** Auth token getter — overrides auto-injection if provided */
   getToken?: () => Promise<string | null>;
   /** Skip initial fetch (manual trigger only) */
   skip?: boolean;
@@ -143,12 +144,10 @@ export async function secureFetch<T>(
     Object.assign(requestHeaders, csrfHeaders);
   }
 
-  // Inject auth token if available
-  if (getToken) {
-    const token = await getToken();
-    if (token) {
-      requestHeaders['Authorization'] = `Bearer ${token}`;
-    }
+  // Inject auth token: use explicit getToken if provided, otherwise auto-inject from Clerk bridge
+  const token = getToken ? await getToken() : await getAuthToken();
+  if (token) {
+    requestHeaders['Authorization'] = `Bearer ${token}`;
   }
 
   let lastError: FetchError | null = null;
@@ -239,6 +238,7 @@ export function useFetch<T>(
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<FetchError | null>(null);
   const [loading, setLoading] = useState(!options.skip);
+
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
 
@@ -284,6 +284,7 @@ export function useFetch<T>(
         const fetchError = err instanceof FetchError
           ? err
           : new FetchError(String(err), 0, 'Unknown', null);
+
         setError(fetchError);
 
         captureError(err, {

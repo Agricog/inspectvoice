@@ -14,7 +14,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { Shield, Download, Loader2, Check, Copy, ExternalLink } from 'lucide-react';
+import { Shield, Loader2, Check, Copy, ExternalLink } from 'lucide-react';
 import { getAuthToken } from '../utils/authToken';
 
 // =============================================
@@ -34,12 +34,6 @@ interface SealedExportButtonProps {
   readonly size?: 'sm' | 'md';
   /** Optional className override */
   readonly className?: string;
-}
-
-interface SealedResponse {
-  readonly bundle_id: string;
-  readonly manifest_sha256: string;
-  readonly r2_key: string;
 }
 
 // =============================================

@@ -63,7 +63,7 @@ type SaveStatus = 'idle' | 'saving' | 'success' | 'error';
 
 /** Extract normalisation settings from org, with defaults */
 function extractSettings(org: Organisation): NormSettings {
-  const raw = (org.settings as Record<string, unknown>)?.['normalisation'];
+  const raw = (org.settings as unknown as Record<string, unknown>)?.['normalisation'];
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_NORMALISATION_SETTINGS };
 
   const s = raw as Record<string, unknown>;
@@ -85,12 +85,6 @@ function extractSettings(org: Organisation): NormSettings {
       : 500_000,
     model_preference: s['model_preference'] === 'sonnet' ? 'sonnet' : 'haiku',
   };
-}
-
-function formatTokenBudget(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(0)}k`;
-  return String(tokens);
 }
 
 // =============================================
@@ -177,7 +171,7 @@ export function NormalisationSettings({ org, onSave }: NormalisationSettingsProp
 
     try {
       // Merge normalisation into existing settings
-      const existingSettings = (org.settings ?? {}) as Record<string, unknown>;
+      const existingSettings = (org.settings as unknown as Record<string, unknown>) ?? {};
       const updatedSettings = {
         ...existingSettings,
         normalisation: {
@@ -192,7 +186,7 @@ export function NormalisationSettings({ org, onSave }: NormalisationSettingsProp
         },
       };
 
-      await onSave({ settings: updatedSettings as Organisation['settings'] });
+      await onSave({ settings: updatedSettings as unknown as Organisation['settings'] });
       setSaveStatus('success');
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch {

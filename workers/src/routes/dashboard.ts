@@ -255,7 +255,7 @@ export async function getDashboardStats(
         EXTRACT(DAY FROM NOW() - d.created_at)::int AS days_open,
         CASE
           WHEN d.due_date IS NOT NULL AND d.due_date < CURRENT_DATE
-          THEN EXTRACT(DAY FROM CURRENT_DATE - d.due_date)::int
+          THEN (CURRENT_DATE - d.due_date)
           ELSE NULL
         END AS days_overdue,
         COALESCE(d.made_safe, false) AS made_safe,

@@ -1,14 +1,28 @@
 /**
  * InspectVoice — App Root
- * Route definitions with Layout shell and PWA update prompt.
+ * Route definitions with Layout shell, Clerk auth gates, and PWA update prompt.
  *
- * Note: BrowserRouter and HelmetProvider live here (not in main.tsx)
- * to avoid duplication.
+ * Auth flow:
+ *   - Unauthenticated users → redirected to /sign-in
+ *   - Authenticated users without org → Clerk org selector shown
+ *   - Authenticated users with active org → dashboard
+ *
+ * Note: ClerkProvider lives in main.tsx. BrowserRouter and HelmetProvider live here.
  *
  * Build Standard: Autaimate v3
  */
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
+import {
+  SignIn,
+  SignUp,
+  SignedIn,
+  SignedOut,
+  RedirectToSignIn,
+  OrganizationSwitcher,
+  useOrganization,
+} from '@clerk/clerk-react';
 import { Layout } from '@components/Layout';
 import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
 import { SiteList } from '@pages/SiteList';
@@ -27,8 +41,67 @@ import IncidentList from '@pages/IncidentList';
 import IncidentForm from '@pages/IncidentForm';
 
 // =============================================
+// ORG GATE — requires active organisation
+// =============================================
+
+/**
+ * If signed in but no active organisation, show the org selector.
+ * Your Worker guard requires org_id in the JWT — without it, all
+ * API calls return 401.
+ */
+function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
+  const { organization, isLoaded } = useOrganization();
+
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-iv-bg">
+        <div className="animate-pulse text-iv-muted text-sm">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!organization) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-6">
+        <div className="text-center">
+          <h1 className="text-xl font-semibold text-iv-text mb-2">Select Organisation</h1>
+          <p className="text-sm text-iv-muted">
+            Choose or create an organisation to continue.
+          </p>
+        </div>
+        <OrganizationSwitcher
+          hidePersonal
+          afterSelectOrganizationUrl="/"
+          afterCreateOrganizationUrl="/"
+        />
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
+// =============================================
+// AUTH GATE — wraps all protected content
+// =============================================
+
+function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
+  return (
+    <>
+      <SignedIn>
+        <OrgGate>{children}</OrgGate>
+      </SignedIn>
+      <SignedOut>
+        <RedirectToSignIn />
+      </SignedOut>
+    </>
+  );
+}
+
+// =============================================
 // 404
 // =============================================
+
 function NotFound(): JSX.Element {
   return (
     <div className="text-center py-16">
@@ -41,6 +114,7 @@ function NotFound(): JSX.Element {
 // =============================================
 // APP
 // =============================================
+
 export function App(): JSX.Element {
   return (
     <HelmetProvider>
@@ -49,7 +123,32 @@ export function App(): JSX.Element {
         <PWAUpdatePrompt />
 
         <Routes>
-          <Route element={<Layout />}>
+          {/* ── Public auth routes ── */}
+          <Route
+            path="/sign-in/*"
+            element={
+              <div className="flex items-center justify-center min-h-screen bg-iv-bg">
+                <SignIn routing="path" path="/sign-in" />
+              </div>
+            }
+          />
+          <Route
+            path="/sign-up/*"
+            element={
+              <div className="flex items-center justify-center min-h-screen bg-iv-bg">
+                <SignUp routing="path" path="/sign-up" />
+              </div>
+            }
+          />
+
+          {/* ── Protected routes ── */}
+          <Route
+            element={
+              <AuthGate>
+                <Layout />
+              </AuthGate>
+            }
+          >
             {/* Dashboard */}
             <Route path="/" element={<ManagerDashboard />} />
 

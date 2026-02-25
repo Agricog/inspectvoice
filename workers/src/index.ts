@@ -14,6 +14,9 @@
  *   - AUDIO_PROCESSING_QUEUE → audioProcessor
  *   - PDF_GENERATION_QUEUE → pdfGenerator
  *
+ * Cron lifecycle:
+ *   - Daily 08:00 UTC → summaryEmail (checks DB for due frequencies)
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
@@ -49,6 +52,17 @@ import {
   downloadSealedExport,
   listSealedExports,
 } from './routes/sealedExport';
+
+// ── Notifications ──
+import {
+  listNotificationRecipients,
+  getNotificationRecipient,
+  createNotificationRecipient,
+  updateNotificationRecipient,
+  deactivateNotificationRecipient,
+  listNotificationLog,
+} from './routes/notifications';
+import { handleSummaryEmailCron } from './cron/summaryEmail';
 
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
@@ -133,6 +147,14 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
 
   // ── Dashboard ──
   ['GET', '/api/v1/dashboard/stats', getDashboardStats],
+
+  // ── Notifications ──
+  ['GET',    '/api/v1/notifications/recipients', listNotificationRecipients],
+  ['GET',    '/api/v1/notifications/recipients/:id', getNotificationRecipient],
+  ['POST',   '/api/v1/notifications/recipients', createNotificationRecipient],
+  ['PUT',    '/api/v1/notifications/recipients/:id', updateNotificationRecipient],
+  ['DELETE', '/api/v1/notifications/recipients/:id', deactivateNotificationRecipient],
+  ['GET',    '/api/v1/notifications/log', listNotificationLog],
 
   // ── Sealed Exports (Feature 10) ──
   ['POST', '/api/v1/sealed-exports/defects', createSealedDefectExport],
@@ -274,6 +296,23 @@ export default {
           message.ack();
         }
     }
+  },
+
+  /**
+   * Cron trigger handler — summary email dispatch.
+   * Runs daily at 08:00 UTC, checks DB for due frequencies.
+   *
+   * Schedule: 0 8 * * * (configured in wrangler.toml)
+   * - Daily recipients: every day
+   * - Weekly recipients: Mondays only
+   * - Monthly recipients: 1st of month only
+   */
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    ctx.waitUntil(handleSummaryEmailCron(env));
   },
 };
 

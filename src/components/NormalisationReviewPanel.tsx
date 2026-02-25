@@ -28,7 +28,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { secureFetch } from '@hooks/useFetch';
-import type { NormaliseResult, NormalisableField } from '@/types/normalisation';
+import type { NormaliseResult } from '@/types/normalisation';
 import { NORMALISABLE_FIELD_LABELS } from '@/types/normalisation';
 
 // =============================================
@@ -53,6 +53,19 @@ interface ReviewItem {
 }
 
 // =============================================
+// HELPERS
+// =============================================
+
+/** Build a new ReviewItem with an updated decision, preserving result and rejectReason. */
+function withDecision(current: ReviewItem, decision: ItemDecision, rejectReason?: string): ReviewItem {
+  return {
+    result: current.result,
+    decision,
+    rejectReason: rejectReason ?? current.rejectReason,
+  };
+}
+
+// =============================================
 // COMPONENT
 // =============================================
 
@@ -62,7 +75,7 @@ export function NormalisationReviewPanel({
   onCancel,
 }: NormalisationReviewPanelProps): JSX.Element {
   const [items, setItems] = useState<ReviewItem[]>(() =>
-    results.map((r) => ({ result: r, decision: 'pending', rejectReason: '' })),
+    results.map((r) => ({ result: r, decision: 'pending' as const, rejectReason: '' })),
   );
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [error, setError] = useState('');
@@ -81,7 +94,7 @@ export function NormalisationReviewPanel({
 
     setItems((prev) => {
       const next = [...prev];
-      next[index] = { ...next[index], decision: 'processing' };
+      next[index] = withDecision(next[index], 'processing');
       return next;
     });
 
@@ -89,13 +102,13 @@ export function NormalisationReviewPanel({
       await secureFetch(`/api/v1/normalise/${item.result.logId}/accept`, { method: 'POST' });
       setItems((prev) => {
         const next = [...prev];
-        next[index] = { ...next[index], decision: 'accepted' };
+        next[index] = withDecision(next[index], 'accepted');
         return next;
       });
     } catch {
       setItems((prev) => {
         const next = [...prev];
-        next[index] = { ...next[index], decision: 'pending' };
+        next[index] = withDecision(next[index], 'pending');
         return next;
       });
       setError('Failed to accept — try again');
@@ -109,7 +122,7 @@ export function NormalisationReviewPanel({
 
     setItems((prev) => {
       const next = [...prev];
-      next[index] = { ...next[index], decision: 'processing' };
+      next[index] = withDecision(next[index], 'processing');
       return next;
     });
 
@@ -120,13 +133,13 @@ export function NormalisationReviewPanel({
       });
       setItems((prev) => {
         const next = [...prev];
-        next[index] = { ...next[index], decision: 'rejected', rejectReason: reason };
+        next[index] = withDecision(next[index], 'rejected', reason);
         return next;
       });
     } catch {
       setItems((prev) => {
         const next = [...prev];
-        next[index] = { ...next[index], decision: 'pending' };
+        next[index] = withDecision(next[index], 'pending');
         return next;
       });
       setError('Failed to reject — try again');

@@ -10,6 +10,7 @@
  * - Inspector credentials: RPII number, RoSPA number, other qualifications
  * - Organisation settings: name, branding (admin/manager only)
  * - Inspection preferences: default type, approval workflow, auto-export
+ * - AI normalisation settings: style preset, custom guide, examples (admin/manager only)
  * - Save per-section with loading/success/error feedback
  * - Role-based visibility (org settings only for manager/admin)
  * - Responsive layout
@@ -45,6 +46,7 @@ import {
   UserRole,
   INSPECTION_TYPE_LABELS,
 } from '@/types/enums';
+import { NormalisationSettings } from '@components/NormalisationSettings';
 
 // =============================================
 // TYPES
@@ -746,6 +748,7 @@ export function SettingsPage(): JSX.Element {
               <>
                 <OrganisationSection org={org} onSave={handleSaveOrg} />
                 <InspectionPreferences org={org} onSave={handleSaveOrg} />
+                <NormalisationSettings org={org} onSave={handleSaveOrg} />
               </>
             )}
 

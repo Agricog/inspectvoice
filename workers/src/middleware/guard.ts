@@ -8,13 +8,16 @@
  * 1. requestId — unique per request, attached to all logs and responses
  * 2. Clerk JWT verification — RS256 signature check via JWKS
  * 3. userId derivation — from JWT `sub` claim (NEVER from request body)
- * 4. orgId derivation — from JWT `org_id` claim (NEVER from request body)
- * 5. Role derivation — from JWT `org_role` claim
+ * 4. orgId derivation — from JWT `org_id` or `o.id` claim (NEVER from request body)
+ * 5. Role derivation — from JWT `org_role` or `o.rol` claim
  * 6. READ_ONLY_MODE enforcement — blocks writes when enabled
  * 7. RequestContext creation — injected into every route handler
  *
  * Multi-tenancy isolation starts here: orgId comes ONLY from the verified JWT.
  * No endpoint may accept a tenant ID from the client without verification.
+ *
+ * Supports both Clerk v1 (org_id, org_role at top level) and
+ * Clerk v2 (o.id, o.rol nested object) JWT formats.
  *
  * Build Standard: Autaimate v3 §5.1 — strictly enforced, no shortcuts
  */
@@ -97,12 +100,14 @@ export async function guard(request: Request, env: Env): Promise<RequestContext>
   }
 
   // org_id is required — user must have an active organisation
-  const orgId = payload.org_id;
+  // Supports both Clerk v1 (org_id at top level) and v2 (o.id nested)
+  const orgId = payload.org_id ?? payload.o?.id;
   if (!orgId) {
     throw new ForbiddenError('No active organisation. Please select or create an organisation.');
   }
 
-  const userRole = payload.org_role ?? 'inspector';
+  // Role: Clerk v1 uses org_role, v2 uses o.rol
+  const userRole = payload.org_role ?? payload.o?.rol ?? 'inspector';
 
   // ── 5. Build context ──
   const ctx: RequestContext = {
@@ -153,11 +158,9 @@ async function verifyClerkJwt(token: string, env: Env): Promise<ClerkJwtPayload>
 
   // ── Decode header to get kid ──
   const header = decodeJwtPart<JwtHeader>(headerB64);
-
   if (header.alg !== 'RS256') {
     throw new UnauthorizedError('Unsupported JWT algorithm');
   }
-
   if (!header.kid) {
     throw new UnauthorizedError('JWT missing kid header');
   }
@@ -219,8 +222,8 @@ function validateJwtClaims(payload: ClerkJwtPayload): void {
  */
 async function getSigningKey(kid: string, env: Env): Promise<CryptoKey> {
   const keys = await fetchJwks(env);
-
   const matchingKey = keys.find((k) => k.kid === kid);
+
   if (!matchingKey) {
     // Key not found — cache might be stale. Force refresh once.
     jwksCache = null;
@@ -374,11 +377,9 @@ function base64UrlToArrayBuffer(base64url: string): ArrayBuffer {
   const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
-
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-
   return bytes.buffer as ArrayBuffer;
 }
 

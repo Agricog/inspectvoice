@@ -315,8 +315,8 @@ function AssetResultCard({
                         fieldName="defect_description"
                         originalText={defect.description}
                         inspectionItemId={item.id}
-                        onAccept={(result: NormaliseResult) =>
-                          handleDefectNormalised(idx, result.normalisedText)
+                        onAccept={(normalisedText: string) =>
+                          handleDefectNormalised(idx, normalisedText)
                         }
                       />
                     </div>
@@ -856,7 +856,7 @@ export default function InspectionReview(): JSX.Element {
               fieldName="inspector_summary"
               originalText={summary}
               inspectionId={inspectionId}
-              onAccept={(result: NormaliseResult) => setSummary(result.normalisedText)}
+              onAccept={(normalisedText: string) => setSummary(normalisedText)}
             />
           )}
         </div>

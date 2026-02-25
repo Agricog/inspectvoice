@@ -18,8 +18,8 @@
  *   - Loads all inspection items from IndexedDB
  *   - Calculates risk/defect tallies
  *   - Per-asset expandable cards with full detail
- *   - Per-field "Normalise" button on transcripts, notes, defects
- *   - Batch normalise all text fields before sign-off
+ *   - Per-field "Normalise" button on defect descriptions + inspector summary
+ *   - Batch normalise all normalisable fields before sign-off
  *   - Normalisation review panel with diff view + accept/reject
  *   - Inspector summary textarea
  *   - Closure recommendation toggle (visible if dangerous/very high risk found)
@@ -61,12 +61,29 @@ import {
   RiskRating,
   RISK_RATING_LABELS,
 } from '@/types';
-import type { Inspection, InspectionItem } from '@/types';
+import type { Inspection, InspectionItem, DefectDetail } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
 import CompletenessCheckModal from '@components/CompletenessCheckModal';
 import { NormaliseButton } from '@components/NormaliseButton';
 import NormalisationReviewPanel from '@components/NormalisationReviewPanel';
-import type { NormalisationSuggestion, BatchNormaliseRequest } from '@/types/normalisation';
+import type {
+  NormaliseResult,
+  NormalisableField,
+  NormaliseFieldRequest,
+} from '@/types/normalisation';
+
+// =============================================
+// BATCH MAPPING — tracks which result maps to which local state field
+// =============================================
+
+interface BatchFieldMapping {
+  /** Key for matching: 'inspector_summary' | 'item_{itemId}_defect_{idx}' */
+  stateKey: string;
+  itemId?: string;
+  defectIndex?: number;
+  fieldName: NormalisableField;
+  originalText: string;
+}
 
 // =============================================
 // HELPERS
@@ -181,9 +198,9 @@ function AssetResultCard({
   const hasNotes = Boolean(item.inspector_notes);
   const defectCount = item.defects.length;
 
-  const handleNormalised = useCallback(
-    (fieldName: string, normalisedText: string) => {
-      onFieldNormalised(item.id, fieldName, normalisedText);
+  const handleDefectNormalised = useCallback(
+    (defectIdx: number, normalisedText: string) => {
+      onFieldNormalised(item.id, `defect_${defectIdx}`, normalisedText);
     },
     [item.id, onFieldNormalised],
   );
@@ -254,77 +271,57 @@ function AssetResultCard({
             )}
           </div>
 
-          {/* Transcript */}
+          {/* Transcript (read-only — not a NormalisableField) */}
           {hasTranscript && (
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs iv-muted flex items-center gap-1">
-                  <Mic className="w-3 h-3" />
-                  Voice Transcript
-                </p>
-                <NormaliseButton
-                  fieldType="voice_transcript"
-                  fieldValue={item.voice_transcript ?? ''}
-                  entityId={item.id}
-                  entityType="inspection_item"
-                  onNormalised={(text) => handleNormalised('voice_transcript', text)}
-                />
-              </div>
+              <p className="text-xs iv-muted flex items-center gap-1 mb-1">
+                <Mic className="w-3 h-3" />
+                Voice Transcript
+              </p>
               <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
                 {item.voice_transcript}
               </p>
             </div>
           )}
 
-          {/* Inspector notes */}
+          {/* Inspector notes (read-only — not a NormalisableField) */}
           {hasNotes && (
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs iv-muted flex items-center gap-1">
-                  <FileText className="w-3 h-3" />
-                  Inspector Notes
-                </p>
-                <NormaliseButton
-                  fieldType="inspector_notes"
-                  fieldValue={item.inspector_notes ?? ''}
-                  entityId={item.id}
-                  entityType="inspection_item"
-                  onNormalised={(text) => handleNormalised('inspector_notes', text)}
-                />
-              </div>
+              <p className="text-xs iv-muted flex items-center gap-1 mb-1">
+                <FileText className="w-3 h-3" />
+                Inspector Notes
+              </p>
               <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
                 {item.inspector_notes}
               </p>
             </div>
           )}
 
-          {/* Defects */}
+          {/* Defects — normalise button on each description */}
           {defectCount > 0 && (
             <div>
               <p className="text-xs iv-muted mb-1">
                 Defects ({defectCount})
               </p>
               <div className="space-y-1">
-                {item.defects.map((defect, idx) => {
-                  const defectText = typeof defect === 'string' ? defect : JSON.stringify(defect);
-                  return (
-                    <div key={idx} className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2 min-w-0">
-                          <AlertCircle className="w-3.5 h-3.5 text-[#F97316] flex-shrink-0 mt-0.5" />
-                          <span>{defectText}</span>
-                        </div>
-                        <NormaliseButton
-                          fieldType="defect_description"
-                          fieldValue={defectText}
-                          entityId={item.id}
-                          entityType="inspection_item"
-                          onNormalised={(text) => handleNormalised(`defect_${idx}`, text)}
-                        />
+                {item.defects.map((defect: DefectDetail, idx: number) => (
+                  <div key={idx} className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <AlertCircle className="w-3.5 h-3.5 text-[#F97316] flex-shrink-0 mt-0.5" />
+                        <span>{defect.description}</span>
                       </div>
+                      <NormaliseButton
+                        fieldName="defect_description"
+                        originalText={defect.description}
+                        inspectionItemId={item.id}
+                        onAccept={(result: NormaliseResult) =>
+                          handleDefectNormalised(idx, result.normalisedText)
+                        }
+                      />
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -375,7 +372,8 @@ export default function InspectionReview(): JSX.Element {
 
   // ---- Normalisation ----
   const [batchNormalising, setBatchNormalising] = useState(false);
-  const [batchSuggestions, setBatchSuggestions] = useState<NormalisationSuggestion[]>([]);
+  const [batchResults, setBatchResults] = useState<NormaliseResult[]>([]);
+  const [batchMappings, setBatchMappings] = useState<BatchFieldMapping[]>([]);
   const [showNormalisationReview, setShowNormalisationReview] = useState(false);
 
   // ---- Load data ----
@@ -453,20 +451,22 @@ export default function InspectionReview(): JSX.Element {
         prev.map((item) => {
           if (item.id !== itemId) return item;
 
-          if (fieldName === 'voice_transcript') {
-            return { ...item, voice_transcript: normalisedText };
-          }
-          if (fieldName === 'inspector_notes') {
-            return { ...item, inspector_notes: normalisedText };
-          }
           // Defect fields are named defect_0, defect_1, etc.
           if (fieldName.startsWith('defect_')) {
-            const defectIndex = parseInt(fieldName.split('_')[1], 10);
-            if (!isNaN(defectIndex) && defectIndex < item.defects.length) {
-              const updatedDefects = [...item.defects];
-              updatedDefects[defectIndex] = normalisedText;
-              return { ...item, defects: updatedDefects };
-            }
+            const indexStr = fieldName.split('_')[1];
+            if (indexStr === undefined) return item;
+            const defectIndex = parseInt(indexStr, 10);
+            if (isNaN(defectIndex) || defectIndex >= item.defects.length) return item;
+
+            const existingDefect = item.defects[defectIndex];
+            if (!existingDefect) return item;
+
+            const updatedDefects: DefectDetail[] = [...item.defects];
+            updatedDefects[defectIndex] = {
+              ...existingDefect,
+              description: normalisedText,
+            };
+            return { ...item, defects: updatedDefects };
           }
           return item;
         }),
@@ -475,67 +475,50 @@ export default function InspectionReview(): JSX.Element {
     [],
   );
 
-  // ---- Batch normalise all text fields ----
+  // ---- Batch normalise all normalisable text fields ----
   const handleBatchNormalise = useCallback(async () => {
     if (!inspectionId) return;
 
     setBatchNormalising(true);
-    setBatchSuggestions([]);
+    setBatchResults([]);
+    setBatchMappings([]);
 
     try {
-      // Build batch request from all text fields across all items
-      const fields: BatchNormaliseRequest['fields'] = [];
+      const fields: NormaliseFieldRequest[] = [];
+      const mappings: BatchFieldMapping[] = [];
 
-      // Inspector summary
+      // Inspector summary → NormalisableField 'inspector_summary'
       if (summary.trim()) {
         fields.push({
-          entity_id: inspectionId,
-          entity_type: 'inspection',
           field_name: 'inspector_summary',
           original_text: summary,
+          inspection_id: inspectionId,
+        });
+        mappings.push({
+          stateKey: 'inspector_summary',
+          fieldName: 'inspector_summary',
+          originalText: summary,
         });
       }
 
-      // Closure reason
-      if (closureRecommended && closureReason.trim()) {
-        fields.push({
-          entity_id: inspectionId,
-          entity_type: 'inspection',
-          field_name: 'closure_reason',
-          original_text: closureReason,
-        });
-      }
-
-      // Per-item fields
+      // Per-item defect descriptions → NormalisableField 'defect_description'
       for (const item of items) {
-        if (item.voice_transcript) {
-          fields.push({
-            entity_id: item.id,
-            entity_type: 'inspection_item',
-            field_name: 'voice_transcript',
-            original_text: item.voice_transcript,
-          });
-        }
-        if (item.inspector_notes) {
-          fields.push({
-            entity_id: item.id,
-            entity_type: 'inspection_item',
-            field_name: 'inspector_notes',
-            original_text: item.inspector_notes,
-          });
-        }
         for (let i = 0; i < item.defects.length; i++) {
-          const defectText = typeof item.defects[i] === 'string'
-            ? item.defects[i]
-            : JSON.stringify(item.defects[i]);
-          if (defectText) {
-            fields.push({
-              entity_id: item.id,
-              entity_type: 'inspection_item',
-              field_name: `defect_${i}`,
-              original_text: defectText as string,
-            });
-          }
+          const defect = item.defects[i];
+          if (!defect) continue;
+
+          fields.push({
+            field_name: 'defect_description',
+            original_text: defect.description,
+            inspection_item_id: item.id,
+          });
+          mappings.push({
+            stateKey: `item_${item.id}_defect_${i}`,
+            itemId: item.id,
+            defectIndex: i,
+            fieldName: 'defect_description',
+            originalText: defect.description,
+          });
         }
       }
 
@@ -545,7 +528,7 @@ export default function InspectionReview(): JSX.Element {
       }
 
       const { secureFetch } = await import('@hooks/useFetch');
-      const response = await secureFetch<{ data: { suggestions: NormalisationSuggestion[] } }>(
+      const response = await secureFetch<{ data: { results: NormaliseResult[] } }>(
         '/api/v1/normalise/batch',
         {
           method: 'POST',
@@ -553,10 +536,11 @@ export default function InspectionReview(): JSX.Element {
         },
       );
 
-      const suggestions = response.data?.suggestions ?? [];
-      setBatchSuggestions(suggestions);
+      const results = response.data?.results ?? [];
+      setBatchResults(results);
+      setBatchMappings(mappings);
 
-      if (suggestions.length > 0) {
+      if (results.length > 0) {
         setShowNormalisationReview(true);
       }
     } catch (error) {
@@ -564,40 +548,36 @@ export default function InspectionReview(): JSX.Element {
     } finally {
       setBatchNormalising(false);
     }
-  }, [inspectionId, summary, closureRecommended, closureReason, items]);
+  }, [inspectionId, summary, items]);
 
-  // ---- Accept normalisation suggestion ----
-  const handleAcceptSuggestion = useCallback(
-    (suggestion: NormalisationSuggestion) => {
-      // Apply to inspection-level fields
-      if (suggestion.entity_type === 'inspection') {
-        if (suggestion.field_name === 'inspector_summary') {
-          setSummary(suggestion.normalised_text);
-        } else if (suggestion.field_name === 'closure_reason') {
-          setClosureReason(suggestion.normalised_text);
-        }
-        return;
+  // ---- Apply all batch results to local state ----
+  const applyBatchResults = useCallback(() => {
+    for (let i = 0; i < batchResults.length; i++) {
+      const result = batchResults[i];
+      const mapping = batchMappings[i];
+      if (!result || !mapping || result.noChangesNeeded) continue;
+
+      if (mapping.stateKey === 'inspector_summary') {
+        setSummary(result.normalisedText);
+      } else if (mapping.itemId !== undefined && mapping.defectIndex !== undefined) {
+        handleFieldNormalised(mapping.itemId, `defect_${mapping.defectIndex}`, result.normalisedText);
       }
-
-      // Apply to inspection_item fields
-      handleFieldNormalised(suggestion.entity_id, suggestion.field_name, suggestion.normalised_text);
-    },
-    [handleFieldNormalised],
-  );
-
-  // ---- Accept all suggestions ----
-  const handleAcceptAll = useCallback(() => {
-    for (const suggestion of batchSuggestions) {
-      handleAcceptSuggestion(suggestion);
     }
-    setShowNormalisationReview(false);
-    setBatchSuggestions([]);
-  }, [batchSuggestions, handleAcceptSuggestion]);
+  }, [batchResults, batchMappings, handleFieldNormalised]);
 
-  // ---- Reject all — just close the panel ----
-  const handleRejectAll = useCallback(() => {
+  // ---- Normalisation review complete → apply accepted results ----
+  const handleNormalisationComplete = useCallback(() => {
+    applyBatchResults();
     setShowNormalisationReview(false);
-    setBatchSuggestions([]);
+    setBatchResults([]);
+    setBatchMappings([]);
+  }, [applyBatchResults]);
+
+  // ---- Normalisation review cancelled → discard all ----
+  const handleNormalisationCancel = useCallback(() => {
+    setShowNormalisationReview(false);
+    setBatchResults([]);
+    setBatchMappings([]);
   }, []);
 
   // ---- Completeness check → opens modal instead of directly signing ----
@@ -873,11 +853,10 @@ export default function InspectionReview(): JSX.Element {
           </h2>
           {summary.trim() && (
             <NormaliseButton
-              fieldType="inspector_summary"
-              fieldValue={summary}
-              entityId={inspectionId}
-              entityType="inspection"
-              onNormalised={(text) => setSummary(text)}
+              fieldName="inspector_summary"
+              originalText={summary}
+              inspectionId={inspectionId}
+              onAccept={(result: NormaliseResult) => setSummary(result.normalisedText)}
             />
           )}
         </div>
@@ -1030,14 +1009,13 @@ export default function InspectionReview(): JSX.Element {
       )}
 
       {/* ── Normalisation Review Panel ── */}
-      <NormalisationReviewPanel
-        isOpen={showNormalisationReview}
-        onClose={() => setShowNormalisationReview(false)}
-        suggestions={batchSuggestions}
-        onAccept={handleAcceptSuggestion}
-        onAcceptAll={handleAcceptAll}
-        onRejectAll={handleRejectAll}
-      />
+      {showNormalisationReview && batchResults.length > 0 && (
+        <NormalisationReviewPanel
+          results={batchResults}
+          onComplete={handleNormalisationComplete}
+          onCancel={handleNormalisationCancel}
+        />
+      )}
     </div>
   );
 }

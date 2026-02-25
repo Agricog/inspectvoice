@@ -29,7 +29,7 @@ command = "echo 'Typecheck skipped — wrangler handles bundling'"
 READ_ONLY_MODE = "false"
 WEBHOOKS_PAUSED = "false"
 MAX_PAGE_SIZE = "100"
-ALLOWED_ORIGIN = "https://inspectvoice.co.uk"
+ALLOWED_ORIGIN = "https://inspectvoice-production.up.railway.app"
 
 # =============================================
 # Secrets (set via: npx wrangler secret put <NAME>)

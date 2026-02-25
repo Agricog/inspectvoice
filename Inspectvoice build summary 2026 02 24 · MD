@@ -2,7 +2,7 @@
 
 ## Overview
 
-Two-day build covering PWA implementation, 10 production features for council tender readiness, a complete procurement documentation pack, full backend infrastructure deployed to Neon and Cloudflare, Clerk authentication integration, and GitHub CI/CD pipeline setup. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
+Two-day build covering PWA implementation, 12 production features for council tender readiness, a complete procurement documentation pack, full backend infrastructure deployed to Neon and Cloudflare, Clerk authentication integration, GitHub CI/CD pipeline setup, scheduled email infrastructure, and AI style normalisation. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
 
 ---
 
@@ -507,6 +507,150 @@ Version ID: 22798fb2-eccb-47f4-b6b9-854e99f0aa23
 
 ---
 
+## Day 2 (25 Feb): Session 4 — Dashboard 500 Fix + Feature 11 Prep
+
+### Dashboard 500 Resolution
+- Root cause: empty database tables causing null reference errors in dashboard aggregation queries
+- Fixed with COALESCE/null handling in parallel queries
+- Dashboard now renders correctly with empty state
+
+---
+
+## Day 2 (25 Feb): Session 5 — Feature 11: Weekly/Monthly Manager Summary Emails
+
+### Feature 11: Weekly/Monthly Manager Summary Emails ✅
+**Purpose:** Automated email digests for managers/admins summarising hotlist items, overdue defects, compliance trends, and inspection activity. Keeps decision-makers informed without logging in daily.
+
+**Architecture:**
+- **Scheduling** — Cloudflare Workers Cron Triggers (`wrangler.toml`): Monday 8am (weekly), 1st of month 8am (monthly)
+- **Email delivery** — Resend API (free tier 3k emails/month, TSX template support)
+- **Templates** — React Email (`@react-email/components`) for type-safe TSX email templates rendered server-side to HTML
+- **Timezone** — Preference stored per manager, cron fires UTC, delivery adjusted
+
+**Files delivered:**
+
+| File | Path | Description |
+|------|------|-------------|
+| Migration | `migrations/006_email_preferences.sql` | `email_preferences` table (frequency, timezone, enabled, unsubscribe_token) + `email_send_log` table (delivery tracking, dedup) with RLS |
+| Cron handler | `workers/src/routes/emailCron.ts` | Cron trigger handler — queries eligible managers, aggregates per-org stats, renders templates, sends via Resend |
+| Email templates | `workers/src/services/emailTemplates.tsx` | React Email TSX templates — weekly and monthly variants with hotlist items, overdue counts, compliance %, inspection activity |
+| Resend service | `workers/src/services/emailSender.ts` | Resend API wrapper with error handling, rate limiting, send logging |
+| Preference API | `workers/src/routes/emailPreferences.ts` | GET/PATCH endpoints for managers to configure frequency, timezone, enable/disable |
+| Unsubscribe route | `workers/src/routes/emailUnsubscribe.ts` | Token-based unsubscribe (no auth required, legal requirement) |
+| Frontend settings | `src/components/EmailPreferences.tsx` | Settings panel for email frequency, timezone picker, test send button |
+
+**Email content (weekly):**
+- Outstanding hotlist count + top 5 most critical items
+- Overdue defects count with age breakdown
+- Inspections completed this week vs scheduled
+- New incidents/complaints logged
+- Compliance score trend (% on-schedule)
+
+**Email content (monthly — includes everything in weekly plus):**
+- Month-over-month defect trend (opened vs resolved)
+- Asset condition distribution change
+- Inspector activity summary (inspections per inspector)
+- Sites with declining condition trends
+- Claims/incident status summary
+
+**Key details:**
+- "Nothing to report" threshold — skips sending if no meaningful activity in period
+- Deduplication via `email_send_log` prevents double-sends on cron retry
+- Unsubscribe token per manager (UUIDv4), one-click unsubscribe link in every email
+- Test send button in settings for managers to preview before enabling
+- Rate-limited: max 50 emails per cron invocation
+
+**Worker dependencies added:**
+- `resend` — email delivery API
+- `@react-email/components` — type-safe email template components
+
+---
+
+## Day 2 (25 Feb): Session 6 — Feature 12: AI Style Normalisation
+
+### Feature 12: AI Style Normalisation ✅
+**Purpose:** Org-level AI house style enforcement for inspection text. Ensures all defect descriptions, remedial actions, and inspector summaries conform to a consistent professional tone and terminology before reports are exported — critical differentiator for inspection companies serving multiple councils with different style expectations.
+
+**Architecture:**
+- **Per-field normalisation** — inline "Normalise" button on defect descriptions and inspector summary, calls single-field API, returns diff for accept/reject
+- **Batch normalisation** — "Normalise All Fields" button before sign-off, processes all normalisable text in one batch, review panel shows all suggestions
+- **Backend service** — Cloudflare Worker calling Claude API with org-specific style configuration (preset + custom guide + examples)
+- **Style presets** — Formal (third-person, council report language), Technical (engineering terminology), Plain English (jargon-free)
+- **Usage tracking** — Monthly token budget per org with usage dashboard
+
+**Files delivered:**
+
+| File | Path | Description |
+|------|------|-------------|
+| Migration | `migrations/007_normalisation.sql` | `normalisation_log` table (per-field audit trail with AI metadata) + `normalisation_usage` table (monthly token tracking) with RLS, indexes, field/status constraints |
+| Types | `src/types/normalisation.ts` | Full type definitions: NormalisableField (4 values), NormaliseResult, BatchNormaliseResult, NormalisationLogEntry, NormalisationUsageResponse, NormalisationSettings with defaults, style presets, model preferences |
+| Worker service | `workers/src/services/normalise.ts` | Core normalisation service — builds Claude prompt from org settings (preset + custom guide + examples), calls API, logs to normalisation_log, tracks usage in normalisation_usage |
+| Worker routes | `workers/src/routes/normalise.ts` | POST `/api/v1/normalise/field` (single) + POST `/api/v1/normalise/batch` (multiple) + GET `/api/v1/normalise/usage` + PATCH `/api/v1/normalise/log/:id` (accept/reject) |
+| NormaliseButton | `src/components/NormaliseButton.tsx` | Per-field inline button with loading state, calls single-field API, shows normalised text with accept/reject |
+| NormalisationReviewPanel | `src/components/NormalisationReviewPanel.tsx` | Batch review modal — scrollable list of all suggestions with per-field accept/reject, accept all, reject all. Diff summary per suggestion |
+| NormalisationSettings | `src/components/NormalisationSettings.tsx` | Admin settings panel — style preset selector, custom guide textarea, example before/after pairs, spelling/grammar toggle, review-before-export toggle, monthly token budget, model preference (Haiku/Sonnet) |
+| NormalisationHistoryPage | `src/pages/NormalisationHistoryPage.tsx` | Manager view of all normalisation activity — token usage stats, log table with filters (status, field, date), acceptance rate metrics |
+| InspectionReview update | `src/pages/InspectionReview.tsx` | Per-field NormaliseButton on defect descriptions and inspector summary, batch normalise section before sign-off, NormalisationReviewPanel integration |
+| App.tsx update | `src/App.tsx` | Route added for `/normalisation-history` |
+| SettingsPage update | `src/pages/SettingsPage.tsx` | NormalisationSettings component wired into admin settings |
+
+**NormalisableField values (enforced by DB constraint):**
+- `defect_description` — defect finding text
+- `remedial_action` — recommended remediation
+- `inspector_summary` — overall inspection summary
+- `condition_observation` — condition assessment notes
+
+**Normalisation flow (per-field):**
+1. Inspector clicks "Normalise" button next to a text field
+2. Frontend calls `POST /api/v1/normalise/field` with field_name + original_text
+3. Worker builds Claude prompt: system prompt with org style config → user message with original text
+4. Claude returns normalised version
+5. Worker logs to `normalisation_log` (status: pending), updates `normalisation_usage`
+6. Frontend shows original vs normalised with accept/reject buttons
+7. On accept: field updated in UI, log status → accepted
+8. On reject: no change, log status → rejected
+
+**Normalisation flow (batch at sign-off):**
+1. Inspector clicks "Normalise All Fields" in the batch normalise section
+2. Frontend collects all normalisable text (inspector summary + all defect descriptions)
+3. Calls `POST /api/v1/normalise/batch` with array of fields
+4. Worker processes each field, returns array of NormaliseResult
+5. NormalisationReviewPanel opens with all suggestions
+6. Inspector reviews: accept all / reject all / per-field accept/reject
+7. On complete: accepted fields applied to local state, panel closes
+
+**Org settings (stored in organisation.settings JSONB):**
+```typescript
+{
+  normalisation: {
+    enabled: boolean,
+    style_preset: 'formal' | 'technical' | 'plain_english',
+    custom_guide: string | null,
+    examples: Array<{ before: string; after: string }>,
+    correct_spelling_grammar: boolean,
+    require_review_before_export: boolean,
+    monthly_token_budget: number,  // default 500,000
+    model_preference: 'haiku' | 'sonnet'
+  }
+}
+```
+
+**TypeScript build fixes (Session 6):**
+During wiring, 20+ TypeScript strict mode errors were caught and fixed across 5 files:
+- `NormalisationReviewPanel.tsx` — array index access returning `T | undefined` in strict mode, fixed with explicit undefined guards and `updateItem()` helper
+- `NormalisationSettings.tsx` — OrgSettings cast issues (double cast via `unknown`), removed unused `formatTokenBudget`
+- `NormaliseButton.tsx` — removed unused `ChevronDown`/`ChevronUp` imports
+- `NormalisationHistoryPage.tsx` — removed unused `Search` import, fixed `statusStyle` possibly-undefined with `getStatusStyle()` helper and inline `DEFAULT_STATUS_STYLE`
+- `InspectionReview.tsx` — replaced non-existent type imports (`NormalisationSuggestion`, `BatchNormaliseRequest`) with actual types (`NormaliseResult`, `NormaliseFieldRequest`), fixed all NormaliseButton prop names (`fieldType`→`fieldName`, `fieldValue`→`originalText`, `entityId`→`inspectionId`/`inspectionItemId`, `onNormalised`→`onAccept`), fixed NormalisationReviewPanel props (`isOpen`/`onClose`→conditional render with `results`/`onComplete`/`onCancel`), fixed `DefectDetail` handling (objects not strings — update `.description` property not replace entire defect), added `BatchFieldMapping` interface for tracking which batch result maps to which local state field
+
+**Migration 007 deployed to Neon ✅:**
+- `normalisation_log` table with RLS, 6 indexes, field/status check constraints
+- `normalisation_usage` table with RLS, unique constraint on org_id + month_year
+
+**Final build status:** All TypeScript errors resolved, clean `npm run build` ✅
+
+---
+
 ## Complete File Inventory
 
 ### Code Files (Features 1–5)
@@ -523,7 +667,7 @@ src/
 │   ├── CompletenessCheckModal.tsx # Feature 4: Review gate modal
 │   └── BaselineComparison.tsx    # Feature 5: Before/after slider
 └── pages/
-    ├── InspectionReview.tsx      # Feature 4: Updated sign-off flow
+    ├── InspectionReview.tsx      # Feature 4 + 12: Sign-off flow + normalisation
     └── InspectionCapture.tsx     # Feature 5: Baseline integration
 
 workers/src/
@@ -548,7 +692,7 @@ src/
     ├── AssetDetail.tsx           # Feature 8: Complete rewrite with condition timeline + history
     ├── IncidentList.tsx          # Feature 9: Filterable incident register
     ├── IncidentForm.tsx          # Feature 9: Multi-section incident form
-    └── App.tsx                   # Feature 9: Updated router with incident routes
+    └── App.tsx                   # Feature 9 + 12: Updated router with incident + normalisation routes
 
 workers/src/
 ├── routes/
@@ -583,6 +727,50 @@ src/
 
 migrations/
 └── 005_sealed_exports.sql       # Feature 10: Immutable sealed exports table
+```
+
+### Code Files (Feature 11, Day 2 Session 5)
+```
+workers/src/
+├── routes/
+│   ├── emailCron.ts             # Feature 11: Cron trigger handler — aggregates + sends
+│   ├── emailPreferences.ts      # Feature 11: GET/PATCH preference endpoints
+│   └── emailUnsubscribe.ts      # Feature 11: Token-based unsubscribe (no auth)
+├── services/
+│   ├── emailTemplates.tsx       # Feature 11: React Email TSX templates (weekly + monthly)
+│   └── emailSender.ts           # Feature 11: Resend API wrapper with logging
+
+src/
+└── components/
+    └── EmailPreferences.tsx      # Feature 11: Settings panel for email config
+
+migrations/
+└── 006_email_preferences.sql    # Feature 11: email_preferences + email_send_log tables
+```
+
+### Code Files (Feature 12, Day 2 Sessions 5–6)
+```
+workers/src/
+├── services/
+│   └── normalise.ts             # Feature 12: Claude API normalisation service
+├── routes/
+│   └── normalise.ts             # Feature 12: field/batch/usage/accept-reject endpoints
+
+src/
+├── types/
+│   └── normalisation.ts         # Feature 12: Full type definitions (NormalisableField, NormaliseResult, settings, etc.)
+├── components/
+│   ├── NormaliseButton.tsx       # Feature 12: Per-field inline normalise + accept/reject
+│   ├── NormalisationReviewPanel.tsx  # Feature 12: Batch diff review modal
+│   └── NormalisationSettings.tsx     # Feature 12: Admin style config panel
+├── pages/
+│   ├── NormalisationHistoryPage.tsx  # Feature 12: Usage stats + log table
+│   ├── InspectionReview.tsx          # Feature 12: Updated with normalise buttons + batch
+│   └── SettingsPage.tsx              # Feature 12: NormalisationSettings wired in
+└── App.tsx                           # Feature 12: /normalisation-history route
+
+migrations/
+└── 007_normalisation.sql        # Feature 12: normalisation_log + normalisation_usage tables
 ```
 
 ### Code Files (Clerk Auth + CI/CD, Day 2 Sessions 2–3)
@@ -625,7 +813,7 @@ procurement-pack/
 
 ## Database Schema (Neon — all deployed ✅)
 
-Confirmed via Neon Tables view on 25 Feb. All 14 tables present:
+All 16 tables present:
 
 | Table | Source |
 |-------|--------|
@@ -633,10 +821,14 @@ Confirmed via Neon Tables view on 25 Feb. All 14 tables present:
 | `assets` | Batch 18 (+ 6 baseline columns from Migration 003) |
 | `audit_log` | Batch 18 |
 | `defects` | Batch 18 |
+| `email_preferences` | Migration 006 (Feature 11) |
+| `email_send_log` | Migration 006 (Feature 11) |
 | `incidents` | Migration 004 (Feature 9) |
 | `inspection_items` | Batch 18 |
 | `inspections` | Batch 18 |
 | `make_safe_actions` | Migration 002 (Feature 2) |
+| `normalisation_log` | Migration 007 (Feature 12) |
+| `normalisation_usage` | Migration 007 (Feature 12) |
 | `organisations` | Batch 18 |
 | `photos` | Batch 18 |
 | `sealed_exports` | Migration 005 (Feature 10) |
@@ -672,6 +864,10 @@ Route handlers → Neon PostgreSQL (via @neondatabase/serverless)
   ↓
 R2 bucket (photos, audio, sealed-exports/{org_id}/{bundle_id}.zip)
 Queues (audio processing, PDF generation)
+Cron Triggers (weekly/monthly summary emails)
+  ↓
+Resend API (email delivery)
+Claude API (AI normalisation)
 ```
 
 **CI/CD Pipeline:**
@@ -690,7 +886,9 @@ Queues (audio processing, PDF generation)
 | Migration 003 (baseline_photos) | ✅ Deployed to Neon |
 | Migration 004 (incidents) | ✅ Deployed to Neon |
 | Migration 005 (sealed_exports) | ✅ Deployed to Neon |
-| All 14 tables confirmed present | ✅ Verified via Neon Tables |
+| Migration 006 (email_preferences + email_send_log) | ✅ Deployed to Neon |
+| Migration 007 (normalisation_log + normalisation_usage) | ✅ Deployed to Neon |
+| All 16 tables confirmed present | ✅ Verified via Neon Tables |
 | **Worker (Cloudflare)** | |
 | dashboard.ts (rewrite + hotlist) | ✅ Deployed |
 | assetHistory.ts (new) | ✅ Deployed |
@@ -702,8 +900,12 @@ Queues (audio processing, PDF generation)
 | wrangler.toml (build + CORS fixes) | ✅ Deployed |
 | package.json (syntax + scripts) | ✅ Deployed |
 | Feature 10 Worker files (5 files) | ✅ Deployed |
+| Feature 11 Worker files (5 files) | ⏳ Built, pending commit |
+| Feature 12 Worker files (2 files) | ⏳ Built, pending commit |
 | Clerk secrets (4 secrets) | ✅ Configured |
 | MANIFEST_SIGNING_KEY + KEY_ID | ⏳ Not yet configured (needed for Feature 10 runtime) |
+| RESEND_API_KEY | ⏳ Not yet configured (needed for Feature 11 runtime) |
+| ANTHROPIC_API_KEY | ⏳ Not yet configured (needed for Feature 12 runtime) |
 | **Frontend (Railway)** | |
 | Clerk integration (5 files) | ✅ Deployed |
 | ManagerDashboard.tsx (rewrite) | ✅ Deployed |
@@ -711,6 +913,8 @@ Queues (audio processing, PDF generation)
 | IncidentList.tsx (new) | ✅ Deployed |
 | IncidentForm.tsx (new) | ✅ Deployed |
 | Feature 10 frontend files (3 files) | ✅ Deployed |
+| Feature 11 frontend files (1 file) | ✅ Deployed (green build) |
+| Feature 12 frontend files (8 files) | ✅ Deployed (green build) |
 | Features 1–5 code files | ⏳ Built, pending commit to repo |
 | **CI/CD** | |
 | GitHub auto-deploy (Worker) | ✅ Working |
@@ -718,29 +922,44 @@ Queues (audio processing, PDF generation)
 | **Auth** | |
 | Clerk sign-in renders | ✅ Working |
 | JWT contains org claims (v2) | ✅ Verified |
-| Guard accepts JWT | ✅ Verified (500 not 401/403) |
+| Guard accepts JWT | ✅ Verified |
+| Dashboard loads | ✅ Working (500 resolved) |
 | Procurement pack (9 documents) | ✅ Downloaded |
 
 ---
 
-## Current Blocker
+## Feature Summary (all 12 features)
 
-**Dashboard returns 500 "Database operation failed"** — Auth is fully working (the 500 proves the guard accepted the JWT and passed the request through). The dashboard route queries tables that exist but are empty. The 500 is likely the dashboard query failing on empty results (e.g., no sites/inspections yet) rather than a missing table issue.
+| # | Feature | Category | Status |
+|---|---------|----------|--------|
+| 1 | CSV/Excel Defect Export + Citywide Summary | Export/Data | ✅ Built |
+| 2 | Make Safe / Close Asset | Field Safety | ✅ Built |
+| 3 | Photo Coverage Validation + Cross-Referencing | Evidence | ✅ Built |
+| 4 | AI Completeness Checks Before Sign-Off | Quality | ✅ Built |
+| 5 | Baseline Photo Comparison | Deterioration | ✅ Built |
+| 6 | Council Procurement Pack (9 documents) | Commercial | ✅ Built |
+| 7 | Hotlist on Manager Dashboard | Operations | ✅ Built + Deployed |
+| 8 | Longitudinal Risk + Asset History | Analytics | ✅ Built + Deployed |
+| 9 | Incident/Complaint Linking + Claims Pack | Legal/Defence | ✅ Built + Deployed |
+| 10 | Tamper-Evident Export Bundles | Security/Procurement | ✅ Built + Deployed |
+| 11 | Weekly/Monthly Manager Summary Emails | Operations | ✅ Built, pending secrets |
+| 12 | AI Style Normalisation | Quality/Differentiation | ✅ Built, green build, pending secrets |
 
 ---
 
 ## What's Next
 
-1. **Debug the dashboard 500** — Check `workers/src/routes/dashboard.ts` for empty-state handling (likely needs COALESCE or null checks on the 5 parallel queries)
-2. **Configure MANIFEST_SIGNING_KEY** — Add to Cloudflare Worker secrets for Feature 10 runtime
-3. **Commit Features 1–5** — Wire remaining code files from Day 1 Session 2 into the codebase
-4. **Fix pre-existing TS errors** — 100+ TypeScript errors across the codebase (esbuild ignores them). Once fixed, restore `npx tsc --noEmit` to wrangler.toml build command
-5. **Seed test data** — Add a test site/inspection to verify full pipeline end-to-end
-6. **Steps 10.11–10.12** — Add sealed export options to InspectionReview.tsx and IncidentForm.tsx
-7. **Customise procurement pack** — Fill in placeholder fields, verify pricing, get DPA reviewed by solicitor
-8. **Cyber Essentials certification** — Apply Q3 2026, controls already mapped and met
+1. **Configure remaining Worker secrets** — MANIFEST_SIGNING_KEY + KEY_ID (Feature 10), RESEND_API_KEY (Feature 11), ANTHROPIC_API_KEY (Feature 12)
+2. **Commit Features 1–5** — Wire remaining code files from Day 1 Session 2 into the codebase
+3. **Commit Feature 11 + 12 Worker files** — Push to GitHub for auto-deploy
+4. **Feature 13: Today's Route Planning** — Last item on the "Further Ahead" list (map + due sites)
+5. **Steps 10.11–10.12** — Add sealed export options to InspectionReview.tsx and IncidentForm.tsx
+6. **Fix pre-existing TS errors** — 100+ TypeScript errors across Worker codebase (esbuild ignores them). Once fixed, restore `npx tsc --noEmit` to wrangler.toml build command
+7. **Seed test data** — Add a test site/inspection to verify full pipeline end-to-end
+8. **Customise procurement pack** — Fill in placeholder fields, verify pricing, get DPA reviewed by solicitor
 9. **Sample PDF report** — Generate a redacted sample inspection PDF for inclusion in procurement pack
-10. **Pilot outreach** — Procurement pack enables approaching councils with a 60-day free pilot offer
+10. **Cyber Essentials certification** — Apply Q3 2026, controls already mapped and met
+11. **Pilot outreach** — Procurement pack enables approaching councils with a 60-day free pilot offer
 
 ---
 
@@ -758,3 +977,6 @@ Queues (audio processing, PDF generation)
 10. **500 vs 401 vs 403 distinction** — 500 after auth changes proves guard is working, error is downstream
 11. **Sealed exports must be immutable** — no updated_at column or trigger; once created, never modified
 12. **Signing key versioning from day one** — `signing_key_id` in manifest + DB prevents rotation nightmares later
+13. **TypeScript strict array indexing** — `array[index]` returns `T | undefined`, must guard before use or helper functions
+14. **Double cast via unknown** — when TypeScript won't allow direct cast between incompatible types (e.g. `OrgSettings` to `Record<string, unknown>`), cast through `unknown` as intermediary
+15. **Prop interface alignment** — when wiring new components into existing pages, always verify actual prop names against component source, not assumed names from integration guides

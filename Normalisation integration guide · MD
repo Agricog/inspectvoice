@@ -1,0 +1,283 @@
+# AI Style Normalisation — Frontend Integration Guide
+
+## Files to ADD (drop in as-is)
+```
+src/types/normalisation.ts              → NEW
+src/components/NormaliseButton.tsx       → NEW
+src/components/NormalisationReviewPanel.tsx → NEW
+src/components/NormalisationSettings.tsx → NEW
+src/pages/NormalisationHistoryPage.tsx   → NEW
+```
+
+## Files to EDIT (merge instructions below)
+
+---
+
+### 1. App.tsx — Add route
+
+**Add import** (with the other page imports at top):
+```tsx
+import NormalisationHistoryPage from '@pages/NormalisationHistoryPage';
+```
+
+**Add route** (inside the protected `<Route element={<AuthGate><Layout /></AuthGate>}>` block, after the Settings route):
+```tsx
+{/* Normalisation History */}
+<Route path="/normalisation-history" element={<NormalisationHistoryPage />} />
+```
+
+---
+
+### 2. SettingsPage.tsx — Add normalisation section
+
+**Add import** (with other imports at top):
+```tsx
+import { NormalisationSettings } from '@components/NormalisationSettings';
+```
+
+**Add section** (after `<InspectionPreferences>` and before the non-admin message):
+
+Find this block:
+```tsx
+{isManagerOrAdmin && org && (
+  <>
+    <OrganisationSection org={org} onSave={handleSaveOrg} />
+    <InspectionPreferences org={org} onSave={handleSaveOrg} />
+  </>
+)}
+```
+
+Replace with:
+```tsx
+{isManagerOrAdmin && org && (
+  <>
+    <OrganisationSection org={org} onSave={handleSaveOrg} />
+    <InspectionPreferences org={org} onSave={handleSaveOrg} />
+    <NormalisationSettings org={org} onSave={handleSaveOrg} />
+  </>
+)}
+```
+
+That's it — one line added.
+
+---
+
+### 3. InspectionReview.tsx — Add batch normalise at sign-off
+
+This is the most involved edit. The normalisation review panel sits between the
+completeness check and the actual sign-off.
+
+**Add imports** (at top with other imports):
+```tsx
+import { NormalisationReviewPanel } from '@components/NormalisationReviewPanel';
+import { BatchNormaliseButton } from '@components/NormaliseButton';
+import { NormaliseButton } from '@components/NormaliseButton';
+import type { NormaliseResult } from '@/types/normalisation';
+```
+
+**Add state** (in the main component, with other state declarations):
+```tsx
+// ---- Normalisation ----
+const [normResults, setNormResults] = useState<NormaliseResult[]>([]);
+const [showNormReview, setShowNormReview] = useState(false);
+```
+
+**Add normalisation panel in the Inspector Summary section**.
+
+Find the inspector summary textarea section:
+```tsx
+{/* ── Inspector Summary ── */}
+<div className="iv-panel p-5 mb-4">
+  <h2 className="text-base font-semibold iv-text mb-3 flex items-center gap-2">
+    <FileText className="w-4 h-4 text-[#22C55E]" />
+    Inspector Summary
+  </h2>
+  <textarea
+    value={summary}
+    ...
+  />
+  <p className="text-xs iv-muted mt-1 text-right">{summary.length}/5000</p>
+</div>
+```
+
+Add the NormaliseButton after the character count:
+```tsx
+  <p className="text-xs iv-muted mt-1 text-right">{summary.length}/5000</p>
+
+  {/* Per-field normalise button */}
+  {summary.trim().length >= 10 && (
+    <div className="mt-2">
+      <NormaliseButton
+        fieldName="inspector_summary"
+        originalText={summary}
+        inspectionId={inspectionId}
+        onAccept={(text) => setSummary(text)}
+      />
+    </div>
+  )}
+</div>
+```
+
+**Modify the sign-off flow to include normalisation review**.
+
+The current flow is:
+  handleRequestSignOff → showCompletenessCheck → handleSignOff
+
+The new flow adds a normalisation step:
+  handleRequestSignOff → showCompletenessCheck → handleCompletenessPass
+    → batch normalise → showNormReview (if changes) → handleNormComplete → handleSignOff
+
+Add this handler (after the existing handleRequestSignOff):
+```tsx
+// ---- After completeness check passes, run batch normalisation ----
+const handleCompletenessPass = useCallback(async () => {
+  setShowCompletenessCheck(false);
+
+  // Collect all normalisable fields from this inspection
+  const fields = [];
+
+  // Inspector summary
+  if (summary.trim().length >= 10) {
+    fields.push({
+      fieldName: 'inspector_summary' as const,
+      originalText: summary,
+      inspectionId,
+    });
+  }
+
+  // Per-item defect descriptions and remedial actions
+  for (const item of items) {
+    for (const defect of item.defects) {
+      if (typeof defect === 'object' && defect.description?.length >= 10) {
+        fields.push({
+          fieldName: 'defect_description' as const,
+          originalText: defect.description,
+          inspectionId,
+          inspectionItemId: item.id,
+        });
+      }
+      if (typeof defect === 'object' && defect.remedial_action?.length >= 10) {
+        fields.push({
+          fieldName: 'remedial_action' as const,
+          originalText: defect.remedial_action,
+          inspectionId,
+          inspectionItemId: item.id,
+        });
+      }
+    }
+  }
+
+  if (fields.length === 0) {
+    // No text to normalise — go straight to sign-off
+    void handleSignOff();
+    return;
+  }
+
+  // Try batch normalise — if org doesn't have it enabled, skip silently
+  try {
+    const { secureFetch } = await import('@hooks/useFetch');
+    const response = await secureFetch<{
+      success: boolean;
+      data: { results: NormaliseResult[]; budgetRemaining: number };
+    }>('/api/v1/normalise/batch', {
+      method: 'POST',
+      body: { fields: fields.map((f) => ({
+        field_name: f.fieldName,
+        original_text: f.originalText,
+        inspection_id: f.inspectionId,
+        inspection_item_id: f.inspectionItemId,
+      }))},
+    });
+
+    const changed = response.data.results.filter((r) => !r.noChangesNeeded);
+    if (changed.length > 0) {
+      setNormResults(changed);
+      setShowNormReview(true);
+      return;
+    }
+  } catch {
+    // Normalisation not enabled or failed — proceed silently
+  }
+
+  // No changes or normalisation unavailable
+  void handleSignOff();
+}, [summary, items, inspectionId, handleSignOff]);
+
+// ---- After normalisation review completes ----
+const handleNormComplete = useCallback((accepted: NormaliseResult[]) => {
+  setShowNormReview(false);
+
+  // Apply accepted text back to local state
+  for (const result of accepted) {
+    if (result.fieldName === 'inspector_summary') {
+      setSummary(result.normalisedText);
+    }
+    // Defect text updates would need more sophisticated state management
+    // (updating items array) — for v1, the accepted text is recorded in the
+    // normalisation_log and applied when data syncs to server.
+  }
+
+  void handleSignOff();
+}, [handleSignOff]);
+```
+
+**Update the CompletenessCheckModal onProceed** to call the new handler:
+
+Change:
+```tsx
+<CompletenessCheckModal
+  ...
+  onProceed={() => void handleSignOff()}
+  ...
+/>
+```
+
+To:
+```tsx
+<CompletenessCheckModal
+  ...
+  onProceed={() => void handleCompletenessPass()}
+  ...
+/>
+```
+
+**Add the normalisation review panel** (after the CompletenessCheckModal, before the closing `</div>`):
+```tsx
+{/* ── Normalisation Review Panel ── */}
+{showNormReview && normResults.length > 0 && (
+  <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+    <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <NormalisationReviewPanel
+        results={normResults}
+        onComplete={handleNormComplete}
+        onCancel={() => { setShowNormReview(false); void handleSignOff(); }}
+      />
+    </div>
+  </div>
+)}
+```
+
+---
+
+## Summary of changes
+
+| File | Change |
+|------|--------|
+| `src/types/normalisation.ts` | **NEW** — all normalisation types |
+| `src/components/NormaliseButton.tsx` | **NEW** — per-field + batch buttons |
+| `src/components/NormalisationReviewPanel.tsx` | **NEW** — sign-off review panel |
+| `src/components/NormalisationSettings.tsx` | **NEW** — settings section |
+| `src/pages/NormalisationHistoryPage.tsx` | **NEW** — manager history page |
+| `src/App.tsx` | **EDIT** — add 1 import + 1 route |
+| `src/pages/SettingsPage.tsx` | **EDIT** — add 1 import + 1 component line |
+| `src/pages/InspectionReview.tsx` | **EDIT** — add imports, state, handlers, UI |
+
+## Run migration FIRST
+Run `migrations/007_normalisation.sql` in Neon SQL Editor before deploying frontend.
+
+## Testing order
+1. Settings → enable normalisation for your org
+2. Start a test inspection → dictate some informal notes
+3. In review, click "Normalise" on the summary field → verify diff appears
+4. Sign off → verify batch normalisation panel appears
+5. Check /normalisation-history → verify entries logged

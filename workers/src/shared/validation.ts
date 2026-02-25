@@ -10,7 +10,6 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import { BadRequestError } from './errors';
 
 // =============================================
@@ -55,7 +54,6 @@ export function validateString(
   if (trimmed.length < minLen) {
     throw new BadRequestError(`${fieldName} must be at least ${minLen} characters`);
   }
-
   if (trimmed.length > maxLen) {
     throw new BadRequestError(`${fieldName} must be at most ${maxLen} characters`);
   }
@@ -73,6 +71,19 @@ export function validateOptionalString(
   return validateString(value, fieldName, { minLength: 0, ...opts });
 }
 
+/**
+ * Validate a required, non-empty string.
+ * Alias for validateString — makes intent explicit at call sites
+ * where "this field must be present" matters (e.g. make-safe actions).
+ */
+export function validateRequiredString(
+  value: unknown,
+  fieldName: string,
+  opts: { minLength?: number; maxLength?: number } = {},
+): string {
+  return validateString(value, fieldName, { minLength: opts.minLength ?? 1, maxLength: opts.maxLength });
+}
+
 // =============================================
 // NUMBER VALIDATION
 // =============================================
@@ -88,15 +99,12 @@ export function validateNumber(
   if (typeof num !== 'number' || Number.isNaN(num)) {
     throw new BadRequestError(`${fieldName} must be a number`);
   }
-
   if (opts.integer && !Number.isInteger(num)) {
     throw new BadRequestError(`${fieldName} must be an integer`);
   }
-
   if (opts.min !== undefined && num < opts.min) {
     throw new BadRequestError(`${fieldName} must be at least ${opts.min}`);
   }
-
   if (opts.max !== undefined && num > opts.max) {
     throw new BadRequestError(`${fieldName} must be at most ${opts.max}`);
   }
@@ -149,13 +157,11 @@ export function validateEnum<T extends string>(
   if (typeof value !== 'string') {
     throw new BadRequestError(`${fieldName} must be a string`);
   }
-
   if (!allowedValues.includes(value as T)) {
     throw new BadRequestError(
       `${fieldName} must be one of: ${allowedValues.join(', ')}`,
     );
   }
-
   return value as T;
 }
 
@@ -181,7 +187,6 @@ export function validateISODate(value: unknown, fieldName: string): string {
   if (typeof value !== 'string') {
     throw new BadRequestError(`${fieldName} must be an ISO 8601 date string`);
   }
-
   if (!ISO_DATE_REGEX.test(value)) {
     throw new BadRequestError(`${fieldName} must be a valid ISO 8601 date`);
   }
@@ -213,13 +218,10 @@ export function validatePostcode(value: unknown, fieldName: string): string {
   if (typeof value !== 'string') {
     throw new BadRequestError(`${fieldName} must be a string`);
   }
-
   const cleaned = value.trim().toUpperCase();
-
   if (!UK_POSTCODE_REGEX.test(cleaned)) {
     throw new BadRequestError(`${fieldName} must be a valid UK postcode`);
   }
-
   return cleaned;
 }
 
@@ -235,17 +237,13 @@ const UK_PHONE_REGEX = /^(\+44|0)\d{9,10}$/;
 /** Validate a UK phone number */
 export function validateOptionalPhone(value: unknown, fieldName: string): string | null {
   if (value === null || value === undefined || value === '') return null;
-
   if (typeof value !== 'string') {
     throw new BadRequestError(`${fieldName} must be a string`);
   }
-
   const cleaned = value.replace(/[\s\-()]/g, '');
-
   if (!UK_PHONE_REGEX.test(cleaned)) {
     throw new BadRequestError(`${fieldName} must be a valid UK phone number`);
   }
-
   return cleaned;
 }
 
@@ -261,13 +259,10 @@ export function validateEmail(value: unknown, fieldName: string): string {
   if (typeof value !== 'string') {
     throw new BadRequestError(`${fieldName} must be a string`);
   }
-
   const trimmed = value.trim().toLowerCase();
-
   if (!EMAIL_REGEX.test(trimmed) || trimmed.length > 254) {
     throw new BadRequestError(`${fieldName} must be a valid email address`);
   }
-
   return trimmed;
 }
 
@@ -316,15 +311,12 @@ export function validateArray(
   if (!Array.isArray(value)) {
     throw new BadRequestError(`${fieldName} must be an array`);
   }
-
   if (opts.minLength !== undefined && value.length < opts.minLength) {
     throw new BadRequestError(`${fieldName} must have at least ${opts.minLength} items`);
   }
-
   if (opts.maxLength !== undefined && value.length > opts.maxLength) {
     throw new BadRequestError(`${fieldName} must have at most ${opts.maxLength} items`);
   }
-
   return value;
 }
 
@@ -339,13 +331,11 @@ export function validateArray(
  */
 export async function parseJsonBody(request: Request): Promise<Record<string, unknown>> {
   const contentType = request.headers.get('Content-Type');
-
   if (!contentType?.includes('application/json')) {
     throw new BadRequestError('Content-Type must be application/json');
   }
 
   let body: unknown;
-
   try {
     const text = await request.text();
 

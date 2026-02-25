@@ -21,6 +21,8 @@ export interface Env {
   readonly ANTHROPIC_API_KEY: string;
   readonly CLERK_JWKS_URL: string;
   readonly CLERK_SECRET_KEY: string;
+  readonly CLERK_ISSUER: string;
+  readonly CLERK_AUTHORIZED_PARTIES: string;
   readonly DATABASE_URL: string;
   readonly SPEECHMATICS_API_KEY: string;
   readonly UPSTASH_REDIS_TOKEN: string;

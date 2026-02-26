@@ -44,7 +44,6 @@
     "eslint": "^8.57.0",
     "@typescript-eslint/eslint-plugin": "^7.1.0",
     "@typescript-eslint/parser": "^7.1.0",
-    "@types/mapbox__point-geometry": "^0.4.4",
     "vite-plugin-pwa": "^0.19.2"
   }
 }

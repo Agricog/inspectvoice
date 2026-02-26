@@ -186,7 +186,7 @@ export function Layout(): JSX.Element {
       <footer className="border-t border-iv-border py-4 px-4 mt-auto">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <p className="text-xs text-iv-muted-2">
-            &copy; {new Date().getFullYear()} Autaimate Ltd. All rights reserved.
+            &copy; {new Date().getFullYear()} Built by <a href="https://autaimate.com" target="_blank" rel="noopener noreferrer" className="text-iv-accent hover:underline">Autaimate</a>. All rights reserved.
           </p>
           <p className="text-xs text-iv-muted-2">v0.1.0</p>
         </div>

@@ -1,0 +1,122 @@
+-- =============================================
+-- Migration 010: Manufacturer Recall Hooks (Feature 17)
+-- =============================================
+-- Two tables: manufacturer_recalls + recall_asset_matches
+-- Acknowledgement/action modelled as fields on recall_asset_matches
+-- with audit trail via existing audit_log table.
+--
+-- Run in Neon SQL Editor.
+-- =============================================
+
+BEGIN;
+
+-- ─────────────────────────────────────────────
+-- TABLE: manufacturer_recalls
+-- ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS manufacturer_recalls (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id          TEXT NOT NULL REFERENCES organisations(org_id) ON DELETE CASCADE,
+
+  -- Recall details
+  title           TEXT NOT NULL,
+  manufacturer    TEXT NOT NULL,
+  affected_models TEXT[] NOT NULL DEFAULT '{}',
+  severity        TEXT NOT NULL DEFAULT 'medium',
+  description     TEXT NOT NULL,
+  source_url      TEXT,
+  source_reference TEXT,
+  published_date  DATE,
+
+  -- Status lifecycle
+  status          TEXT NOT NULL DEFAULT 'active',
+  resolved_at     TIMESTAMPTZ,
+  resolved_by     TEXT,
+  resolution_notes TEXT,
+
+  -- Matching metadata (computed on create/update)
+  matched_asset_count INTEGER NOT NULL DEFAULT 0,
+
+  -- Audit
+  created_by      TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  -- Constraints
+  CONSTRAINT chk_recall_severity CHECK (severity IN ('critical', 'high', 'medium', 'advisory')),
+  CONSTRAINT chk_recall_status CHECK (status IN ('active', 'resolved', 'dismissed'))
+);
+
+-- Indexes
+CREATE INDEX idx_recalls_org_id ON manufacturer_recalls(org_id);
+CREATE INDEX idx_recalls_org_status ON manufacturer_recalls(org_id, status);
+CREATE INDEX idx_recalls_manufacturer ON manufacturer_recalls(org_id, LOWER(manufacturer));
+CREATE INDEX idx_recalls_created_at ON manufacturer_recalls(org_id, created_at DESC);
+
+-- RLS
+ALTER TABLE manufacturer_recalls ENABLE ROW LEVEL SECURITY;
+CREATE POLICY recalls_tenant_isolation ON manufacturer_recalls
+  USING (org_id = current_setting('app.current_org_id', true));
+
+-- updated_at trigger
+CREATE TRIGGER set_recalls_updated_at
+  BEFORE UPDATE ON manufacturer_recalls
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ─────────────────────────────────────────────
+-- TABLE: recall_asset_matches
+-- ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS recall_asset_matches (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id            TEXT NOT NULL REFERENCES organisations(org_id) ON DELETE CASCADE,
+  recall_id         UUID NOT NULL REFERENCES manufacturer_recalls(id) ON DELETE CASCADE,
+  asset_id          UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  site_id           UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+
+  -- Matching provenance (defensible in disputes)
+  match_reason      TEXT NOT NULL,
+  match_confidence  TEXT NOT NULL DEFAULT 'exact',
+
+  -- Acknowledgement/action (no separate table — simpler, more traceable)
+  status            TEXT NOT NULL DEFAULT 'unacknowledged',
+  acknowledged_by   TEXT,
+  acknowledged_at   TIMESTAMPTZ,
+  action_taken      TEXT,
+  action_taken_by   TEXT,
+  action_taken_at   TIMESTAMPTZ,
+  notes             TEXT,
+
+  -- Audit
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  -- Constraints
+  CONSTRAINT chk_match_confidence CHECK (match_confidence IN ('exact', 'partial', 'manual')),
+  CONSTRAINT chk_match_status CHECK (status IN (
+    'unacknowledged', 'acknowledged', 'inspected', 'withdrawn', 'replaced', 'not_affected'
+  )),
+  CONSTRAINT uq_recall_asset UNIQUE (recall_id, asset_id)
+);
+
+-- Indexes
+CREATE INDEX idx_recall_matches_org_id ON recall_asset_matches(org_id);
+CREATE INDEX idx_recall_matches_recall ON recall_asset_matches(recall_id);
+CREATE INDEX idx_recall_matches_asset ON recall_asset_matches(asset_id);
+CREATE INDEX idx_recall_matches_status ON recall_asset_matches(org_id, status);
+CREATE INDEX idx_recall_matches_unack ON recall_asset_matches(org_id, status)
+  WHERE status = 'unacknowledged';
+
+-- RLS
+ALTER TABLE recall_asset_matches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY recall_matches_tenant_isolation ON recall_asset_matches
+  USING (org_id = current_setting('app.current_org_id', true));
+
+-- updated_at trigger
+CREATE TRIGGER set_recall_matches_updated_at
+  BEFORE UPDATE ON recall_asset_matches
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+COMMIT;

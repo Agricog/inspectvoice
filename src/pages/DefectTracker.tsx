@@ -746,7 +746,7 @@ export function DefectTracker(): JSX.Element {
     if (filters.timeframe) params.set('timeframe', filters.timeframe);
     if (filters.overdue) params.set('overdue', filters.overdue);
 
-    return `/api/defects?${params.toString()}`;
+    return `/api/v1/defects?${params.toString()}`;
   }, [page, sortField, sortOrder, filters]);
 
   // ── Fetch data ─────────────────────────────

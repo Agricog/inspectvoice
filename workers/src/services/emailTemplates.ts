@@ -6,6 +6,8 @@
  * No external CSS, no JavaScript, tables for layout.
  * Tested pattern: Outlook, Gmail, Apple Mail safe.
  *
+ * UPDATED: Feature 17 — adds manufacturer recall alert section.
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
@@ -33,6 +35,9 @@ export interface SummaryEmailData {
   // Upcoming inspections due
   upcomingInspections: UpcomingInspection[];
 
+  // Active manufacturer recalls (Feature 17)
+  activeRecalls: RecallEmailItem[];
+
   // Config: what sections were requested
   showHotlist: boolean;
   showInspections: boolean;
@@ -58,6 +63,14 @@ export interface UpcomingInspection {
   daysUntilDue: number;
 }
 
+export interface RecallEmailItem {
+  title: string;
+  manufacturer: string;
+  severity: string;
+  matchedAssetCount: number;
+  unacknowledgedCount: number;
+}
+
 // =============================================
 // COLOUR PALETTE (inline-safe)
 // =============================================
@@ -76,6 +89,8 @@ const COLORS = {
   border: '#e5e7eb',        // Gray-200
   bgLight: '#f9fafb',       // Gray-50
   white: '#ffffff',
+  purple: '#7c3aed',        // Violet-600 — used for recall section
+  purpleBg: '#f5f3ff',      // Violet-50
 } as const;
 
 // =============================================
@@ -87,6 +102,11 @@ export function buildSummaryEmailHtml(data: SummaryEmailData): string {
 
   // Stats overview (always shown)
   sections.push(buildStatsSection(data));
+
+  // Manufacturer recalls (Feature 17 — always shown if any exist, high visibility)
+  if (data.activeRecalls.length > 0) {
+    sections.push(buildRecallSection(data.activeRecalls));
+  }
 
   // Hotlist
   if (data.showHotlist && data.hotlistItems.length > 0) {
@@ -109,6 +129,7 @@ export function buildSummaryEmailHtml(data: SummaryEmailData): string {
     && data.newDefectsRaised === 0
     && data.defectsResolved === 0
     && data.hotlistItems.length === 0
+    && data.activeRecalls.length === 0
   ) {
     sections.push(buildNoActivitySection());
   }
@@ -229,6 +250,85 @@ function buildStatsSection(data: SummaryEmailData): string {
   return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:${COLORS.bgLight};border-radius:8px;margin:16px 0;">
       <tr>${statCells}</tr>
+    </table>
+  `;
+}
+
+// =============================================
+// RECALL SECTION (Feature 17)
+// =============================================
+
+function buildRecallSection(recalls: RecallEmailItem[]): string {
+  const totalUnacknowledged = recalls.reduce((sum, r) => sum + r.unacknowledgedCount, 0);
+  const hasCritical = recalls.some((r) => r.severity === 'critical');
+
+  const borderColor = hasCritical ? COLORS.danger : COLORS.warning;
+  const bgColor = hasCritical ? COLORS.dangerBg : COLORS.warningBg;
+
+  const rows = recalls.map((recall) => {
+    const severityColor = recall.severity === 'critical'
+      ? COLORS.danger
+      : recall.severity === 'high'
+        ? COLORS.warning
+        : COLORS.textSecondary;
+    const severityLabel = recall.severity.toUpperCase();
+
+    const pendingTag = recall.unacknowledgedCount > 0
+      ? `<span style="color:${COLORS.danger};font-size:11px;font-weight:600;"> &mdash; ${recall.unacknowledgedCount} pending review</span>`
+      : '<span style="color:#16a34a;font-size:11px;"> &#10003; All acknowledged</span>';
+
+    return `
+      <tr>
+        <td style="padding:10px 12px;border-bottom:1px solid ${COLORS.border};vertical-align:top;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>
+              <td>
+                <span style="display:inline-block;padding:2px 8px;border-radius:3px;background-color:${severityColor};color:${COLORS.white};font-size:10px;font-weight:700;letter-spacing:0.5px;">
+                  ${severityLabel}
+                </span>
+                <span style="color:${COLORS.textSecondary};font-size:12px;margin-left:8px;">
+                  ${escapeHtml(recall.manufacturer)} &middot; ${recall.matchedAssetCount} asset${recall.matchedAssetCount !== 1 ? 's' : ''} affected
+                </span>
+                ${pendingTag}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding-top:4px;">
+                <p style="margin:0;color:${COLORS.textPrimary};font-size:13px;font-weight:600;line-height:1.4;">
+                  ${escapeHtml(truncate(recall.title, 100))}
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0;">
+      <tr>
+        <td style="padding:0 0 8px;">
+          <h2 style="margin:0;color:${borderColor};font-size:16px;font-weight:700;line-height:1.3;">
+            &#9888;&#65039; Manufacturer Recalls (${recalls.length})
+          </h2>
+          ${totalUnacknowledged > 0
+            ? `<p style="margin:4px 0 0;color:${COLORS.danger};font-size:13px;font-weight:600;">${totalUnacknowledged} asset${totalUnacknowledged !== 1 ? 's' : ''} require${totalUnacknowledged === 1 ? 's' : ''} acknowledgement</p>`
+            : ''}
+        </td>
+      </tr>
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ${borderColor};border-radius:6px;background-color:${bgColor};margin-bottom:16px;">
+      ${rows}
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="padding:0 0 8px;">
+          <a href="https://inspectvoice-production.up.railway.app/recalls" style="color:${COLORS.primary};font-size:13px;text-decoration:underline;">
+            Review all recalls in InspectVoice &rarr;
+          </a>
+        </td>
+      </tr>
     </table>
   `;
 }

@@ -1,0 +1,30 @@
+# InspectVoice — robots.txt
+# Public pages: /, /sign-in, /sign-up, /privacy, /terms
+# All other routes require authentication and should not be indexed.
+
+User-agent: *
+Allow: /
+Allow: /sign-in
+Allow: /sign-up
+Allow: /privacy
+Allow: /terms
+
+Disallow: /dashboard
+Disallow: /sites
+Disallow: /inspections
+Disallow: /defects
+Disallow: /incidents
+Disallow: /recalls
+Disallow: /defect-library
+Disallow: /inspector-performance
+Disallow: /my-performance
+Disallow: /route-planner
+Disallow: /sealed-exports
+Disallow: /normalisation-history
+Disallow: /settings
+Disallow: /portal
+Disallow: /verify
+Disallow: /performance-share
+Disallow: /api/
+
+Sitemap: https://inspectvoice.co.uk/sitemap.xml

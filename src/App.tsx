@@ -2,17 +2,12 @@
  * InspectVoice — App Root
  * Route definitions with Layout shell, Clerk auth gates, and PWA update prompt.
  *
- * Auth flow:
- *   - Unauthenticated users → redirected to /sign-in
- *   - Authenticated users without org → Clerk org selector shown
- *   - Authenticated users with active org → dashboard
- *
- * Note: ClerkProvider lives in main.tsx. BrowserRouter and HelmetProvider live here.
+ * UPDATED: Features 14 (Inspector Performance) + 15 (Defect Library) routes added.
  *
  * Build Standard: Autaimate v3
  */
 
-import { BrowserRouter, Routes, Route, } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import {
   SignIn,
@@ -44,15 +39,18 @@ import SealedExportsPage from '@pages/SealedExportsPage';
 import NormalisationHistoryPage from '@pages/NormalisationHistoryPage';
 import RoutePlanner from '@pages/RoutePlanner';
 
+// ── Feature 14: Inspector Performance ──
+import InspectorPerformancePage from '@pages/InspectorPerformancePage';
+import InspectorDetailPage from '@pages/InspectorDetailPage';
+import MyPerformancePage from '@pages/MyPerformancePage';
+
+// ── Feature 15: Defect Library ──
+import DefectLibraryPage from '@pages/DefectLibraryPage';
+
 // =============================================
 // ORG GATE — requires active organisation
 // =============================================
 
-/**
- * If signed in but no active organisation, show the org selector.
- * Your Worker guard requires org_id in the JWT — without it, all
- * API calls return 401.
- */
 function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
   const { organization, isLoaded } = useOrganization();
 
@@ -193,6 +191,14 @@ export function App(): JSX.Element {
 
             {/* Route Planner */}
             <Route path="/route-planner" element={<RoutePlanner />} />
+
+            {/* ── Feature 14: Inspector Performance ── */}
+            <Route path="/inspector-performance" element={<InspectorPerformancePage />} />
+            <Route path="/inspector-performance/:userId" element={<InspectorDetailPage />} />
+            <Route path="/my-performance" element={<MyPerformancePage />} />
+
+            {/* ── Feature 15: Defect Library ── */}
+            <Route path="/defect-library" element={<DefectLibraryPage />} />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

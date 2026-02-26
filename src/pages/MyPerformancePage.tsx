@@ -25,6 +25,8 @@ import {
 import { useAuth } from '@clerk/clerk-react';
 import InspectorDetailPage from './InspectorDetailPage';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
 // =============================================
 // FULL PAGE (route: /my-performance)
 // =============================================
@@ -60,7 +62,7 @@ export function MyPerformanceCard(): JSX.Element {
   const fetchStats = useCallback(async () => {
     try {
       const token = await getToken();
-      const res = await fetch('/api/v1/my-performance?period=month', {
+      const res = await fetch(`${API_BASE}/api/v1/my-performance?period=month`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;

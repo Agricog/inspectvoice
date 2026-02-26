@@ -35,7 +35,7 @@ import {
   BarChart3,
   ChevronDown,
 } from 'lucide-react';
-import { useAuth, useUser } from '@clerk/clerk-react';
+import { useAuth } from '@clerk/clerk-react';
 import type { PeriodPreset, MetricTrend, TrendDirection, InspectorMetricsPeriod } from '@/types/features14_15';
 import { PERIOD_PRESET_LABELS } from '@/types/features14_15';
 import { INSPECTION_TYPE_LABELS } from '@/types';
@@ -124,7 +124,7 @@ function bandBadge(band: 'top' | 'middle' | 'bottom'): JSX.Element {
 // SPARKLINE (inline SVG)
 // =============================================
 
-function Sparkline({ dataPoints, colour = '#22C55E' }: { dataPoints: Array<{ value: number | null }>; colour?: string }): JSX.Element {
+function Sparkline({ dataPoints, colour = '#22C55E' }: { dataPoints: readonly { value: number | null }[]; colour?: string }): JSX.Element {
   const values = dataPoints.map((dp) => dp.value).filter((v): v is number => v !== null);
   if (values.length < 2) return <div className="w-24 h-8" />;
 
@@ -214,7 +214,6 @@ interface Props {
 export default function InspectorDetailPage({ isSelf = false }: Props): JSX.Element {
   const { userId: paramUserId } = useParams<{ userId: string }>();
   const { getToken } = useAuth();
-  const { user } = useUser();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -225,7 +224,6 @@ export default function InspectorDetailPage({ isSelf = false }: Props): JSX.Elem
   const [showTypeBreakdown, setShowTypeBreakdown] = useState(false);
 
   const baseUrl = isSelf ? '/api/v1/my-performance' : `/api/v1/inspector-performance/${paramUserId}`;
-  const trendsUrl = isSelf ? '/api/v1/my-performance/trends' : `/api/v1/inspector-performance/${paramUserId}`;
   const pageTitle = isSelf ? 'My Performance' : detail?.inspector_name ?? 'Inspector Detail';
 
   const fetchAll = useCallback(async () => {

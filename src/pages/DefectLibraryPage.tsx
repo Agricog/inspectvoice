@@ -30,7 +30,6 @@ import {
   History,
   Trash2,
   X,
-  ChevronDown,
   Database,
   Building2,
   Shield,
@@ -42,9 +41,7 @@ import {
   RISK_RATING_LABELS,
   RiskRating,
   ACTION_TIMEFRAME_LABELS,
-  ActionTimeframe,
   COST_BAND_LABELS,
-  CostBand,
 } from '@/types';
 import type { DefectLibraryEntry, DefectLibraryEntryVersion } from '@/types/features14_15';
 
@@ -492,7 +489,9 @@ export default function DefectLibraryPage(): JSX.Element {
                           </>
                         )}
                         {entry.source === 'system' && (
-                          <Shield className="w-3.5 h-3.5 iv-muted opacity-40" title="System entry (read-only)" />
+                          <span title="System entry (read-only)">
+                            <Shield className="w-3.5 h-3.5 iv-muted opacity-40" />
+                          </span>
                         )}
                       </div>
                     </td>

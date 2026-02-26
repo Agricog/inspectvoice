@@ -642,7 +642,7 @@ export function InspectionList(): JSX.Element {
     if (filters.dateFrom) params.set('from', filters.dateFrom);
     if (filters.dateTo) params.set('to', filters.dateTo);
 
-    return `/api/inspections?${params.toString()}`;
+    return `/api/v1/inspections?${params.toString()}`;
   }, [page, sortField, sortOrder, filters]);
 
   // ── Fetch data ─────────────────────────────

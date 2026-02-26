@@ -2,6 +2,8 @@
  * InspectVoice — App Shell Layout
  * Persistent header with navigation, offline indicator, and content area.
  * Mobile-first responsive design.
+ *
+ * UPDATED: Feature 14 + 15 nav items added.
  */
 
 import { useState, useCallback } from 'react';
@@ -17,6 +19,8 @@ import {
   WifiOff,
   Wifi,
   Navigation,
+  BarChart3,
+  BookOpen,
 } from 'lucide-react';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
 
@@ -31,6 +35,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/inspections', label: 'Inspections', icon: <ClipboardCheck className="w-4 h-4" /> },
   { to: '/defects', label: 'Defects', icon: <AlertTriangle className="w-4 h-4" /> },
   { to: '/route-planner', label: 'Route', icon: <Navigation className="w-4 h-4" /> },
+  { to: '/inspector-performance', label: 'Performance', icon: <BarChart3 className="w-4 h-4" /> },
+  { to: '/defect-library', label: 'Library', icon: <BookOpen className="w-4 h-4" /> },
   { to: '/settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
 ];
 
@@ -99,7 +105,7 @@ export function Layout(): JSX.Element {
           {/* Right side — status + mobile menu */}
           <div className="flex items-center gap-3">
             {/* Online indicator (desktop) */}
-            <div className="hidden md:flex items-center gap-1.5" title={isOnline ? 'Online' : 'Offline'}>
+            <div className="hidden md:flex items-center gap-1.5">
               {isOnline ? (
                 <Wifi className="w-4 h-4 text-iv-accent" />
               ) : (

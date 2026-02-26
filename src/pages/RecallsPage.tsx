@@ -31,6 +31,7 @@ import {
   Factory,
   Link2,
   Eye,
+  Search,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
 import { getAuthToken } from '@utils/authToken';
@@ -49,6 +50,7 @@ import {
   RECALL_MATCH_STATUS_STYLES,
   RECALL_MATCH_CONFIDENCE_LABELS,
 } from '@/types/recalls';
+
 
 // =============================================
 // HELPERS
@@ -631,12 +633,24 @@ export default function RecallsPage(): JSX.Element {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('active');
+  const [severityFilter, setSeverityFilter] = useState<RecallSeverity | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { data, loading, error, refetch } = useFetch<ListResponse>(
     `/api/v1/recalls?status=${statusFilter}&limit=50`,
   );
 
-  const recalls = data?.data ?? [];
+  // Client-side filtering for severity + manufacturer search
+  const recalls = (data?.data ?? []).filter((recall) => {
+    if (severityFilter && recall.severity !== severityFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesMfr = recall.manufacturer.toLowerCase().includes(q);
+      const matchesTitle = recall.title.toLowerCase().includes(q);
+      if (!matchesMfr && !matchesTitle) return false;
+    }
+    return true;
+  });
 
   const handleCreate = useCallback(async (formData: RecallFormData) => {
     setSubmitting(true);
@@ -738,21 +752,68 @@ export default function RecallsPage(): JSX.Element {
         )}
 
         {/* Filters */}
-        <div className="flex items-center gap-2">
-          {(['active', 'resolved', 'dismissed'] as const).map((s) => (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          {/* Status filter */}
+          <div className="flex items-center gap-2">
+            {(['active', 'resolved', 'dismissed'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+                  statusFilter === s
+                    ? 'bg-iv-accent/15 text-iv-accent border-iv-accent/30'
+                    : 'bg-iv-surface border-iv-border text-iv-muted hover:text-iv-text'
+                }`}
+              >
+                {RECALL_STATUS_LABELS[s]}
+              </button>
+            ))}
+          </div>
+
+          {/* Severity filter */}
+          <div className="flex items-center gap-2">
             <button
-              key={s}
               type="button"
-              onClick={() => setStatusFilter(s)}
+              onClick={() => setSeverityFilter(null)}
               className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
-                statusFilter === s
+                severityFilter === null
                   ? 'bg-iv-accent/15 text-iv-accent border-iv-accent/30'
                   : 'bg-iv-surface border-iv-border text-iv-muted hover:text-iv-text'
               }`}
             >
-              {RECALL_STATUS_LABELS[s]}
+              All Severities
             </button>
-          ))}
+            {(['critical', 'high', 'medium', 'advisory'] as const).map((s) => {
+              const style = RECALL_SEVERITY_STYLES[s];
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSeverityFilter(s)}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+                    severityFilter === s
+                      ? `${style.bg} ${style.text} ${style.border}`
+                      : 'bg-iv-surface border-iv-border text-iv-muted hover:text-iv-text'
+                  }`}
+                >
+                  {RECALL_SEVERITY_LABELS[s]}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Manufacturer search */}
+          <div className="relative flex-1 min-w-0 sm:max-w-xs">
+            <input
+              type="text"
+              className="iv-input w-full pl-8 text-sm"
+              placeholder="Search manufacturer…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <Search className="w-4 h-4 text-iv-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
         </div>
 
         {/* Loading */}
@@ -775,12 +836,16 @@ export default function RecallsPage(): JSX.Element {
           <div className="iv-panel p-8 text-center">
             <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-3" />
             <p className="text-sm font-medium text-emerald-400">
-              No {statusFilter} recalls
+              {severityFilter || searchQuery.trim()
+                ? 'No recalls match your filters'
+                : `No ${statusFilter} recalls`}
             </p>
             <p className="text-xs text-iv-muted mt-1">
-              {statusFilter === 'active'
-                ? 'No active manufacturer recalls affecting your assets.'
-                : `No ${statusFilter} recalls found.`}
+              {severityFilter || searchQuery.trim()
+                ? 'Try adjusting your search or severity filter.'
+                : statusFilter === 'active'
+                  ? 'No active manufacturer recalls affecting your assets.'
+                  : `No ${statusFilter} recalls found.`}
             </p>
           </div>
         )}

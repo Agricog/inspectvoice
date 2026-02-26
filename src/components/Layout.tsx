@@ -16,6 +16,7 @@ import {
   X,
   WifiOff,
   Wifi,
+  Navigation,
 } from 'lucide-react';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
 
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/sites', label: 'Sites', icon: <MapPin className="w-4 h-4" /> },
   { to: '/inspections', label: 'Inspections', icon: <ClipboardCheck className="w-4 h-4" /> },
   { to: '/defects', label: 'Defects', icon: <AlertTriangle className="w-4 h-4" /> },
+  { to: '/route-planner', label: 'Route', icon: <Navigation className="w-4 h-4" /> },
   { to: '/settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
 ];
 

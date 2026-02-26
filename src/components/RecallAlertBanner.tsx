@@ -34,15 +34,6 @@ import {
 // HELPERS
 // =============================================
 
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '';
-  return new Date(dateStr).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
 function severityIcon(severity: RecallSeverity): JSX.Element {
   const style = RECALL_SEVERITY_STYLES[severity];
   if (severity === 'critical') {

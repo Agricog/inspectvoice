@@ -22,12 +22,10 @@ import { Link } from 'react-router-dom';
 import {
   Mic,
   Shield,
-  Clock,
   FileText,
   AlertTriangle,
   CheckCircle,
   ChevronDown,
-  ChevronRight,
   BarChart3,
   Bell,
   Camera,

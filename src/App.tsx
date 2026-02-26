@@ -38,6 +38,7 @@ import VerifyPage from '@pages/VerifyPage';
 import SealedExportsPage from '@pages/SealedExportsPage';
 import NormalisationHistoryPage from '@pages/NormalisationHistoryPage';
 import RoutePlanner from '@pages/RoutePlanner';
+import { PortalRouter } from './portal/PortalRouter';
 
 // ── Feature 14: Inspector Performance ──
 import InspectorPerformancePage from '@pages/InspectorPerformancePage';
@@ -197,6 +198,7 @@ export function App(): JSX.Element {
 
             {/* Route Planner */}
             <Route path="/route-planner" element={<RoutePlanner />} />
+            <Route path="/portal/*" element={<PortalRouter />} />
 
             {/* ── Feature 14: Inspector Performance ── */}
             <Route path="/inspector-performance" element={<InspectorPerformancePage />} />

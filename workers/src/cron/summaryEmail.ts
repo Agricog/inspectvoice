@@ -10,6 +10,8 @@
  *   5. Check notification_log for idempotency (skip already-sent)
  *   6. Send via Resend, log result
  *
+ * UPDATED: Feature 17 — adds active recall data to aggregation (6th parallel query).
+ *
  * Runs outside normal auth flow — uses neon() directly (same pattern as verify.ts).
  * All queries are scoped by org_id from the recipient record.
  *
@@ -24,6 +26,7 @@ import {
   type SummaryEmailData,
   type HotlistItem,
   type UpcomingInspection,
+  type RecallEmailItem,
 } from '../services/emailTemplates';
 
 // =============================================
@@ -214,6 +217,7 @@ export async function handleSummaryEmailCron(env: Env): Promise<void> {
             overdueDefects: filteredData.overdueDefects,
             sitesInspected: filteredData.sitesInspected,
             upcomingInspections: filteredData.upcomingInspections,
+            activeRecalls: filteredData.activeRecalls,
             showHotlist: recipient.notify_hotlist,
             showInspections: recipient.notify_inspections,
             showDefects: recipient.notify_defects,
@@ -254,6 +258,7 @@ export async function handleSummaryEmailCron(env: Env): Promise<void> {
                 defects_resolved: filteredData.defectsResolved,
                 overdue_defects: filteredData.overdueDefects,
                 hotlist_count: filteredData.hotlistItems.length,
+                active_recalls: filteredData.activeRecalls.length,
               }),
               result.success ? 'sent' : 'failed',
               result.error,
@@ -381,6 +386,7 @@ interface AggregatedData {
   overdueDefects: number;
   sitesInspected: number;
   upcomingInspections: UpcomingInspection[];
+  activeRecalls: RecallEmailItem[];
 }
 
 async function aggregateOrgData(
@@ -392,13 +398,14 @@ async function aggregateOrgData(
   const periodEnd = formatDate(period.end);
   const today = formatDate(new Date());
 
-  // Run 5 parallel queries
+  // Run 6 parallel queries (was 5 — recall query added for Feature 17)
   const [
     hotlistRows,
     inspectionStats,
     defectStats,
     overdueRows,
     upcomingRows,
+    recallRows,
   ] = await Promise.all([
     // 1. Hotlist: top 10 open VH/H defects
     sql(
@@ -493,6 +500,31 @@ async function aggregateOrgData(
        LIMIT 10`,
       [orgId, today],
     ),
+
+    // 6. Active manufacturer recalls with unacknowledged matches (Feature 17)
+    sql(
+      `SELECT
+         mr.title,
+         mr.manufacturer,
+         mr.severity,
+         mr.matched_asset_count,
+         COUNT(ram.id) FILTER (WHERE ram.status = 'unacknowledged') AS unacknowledged_count
+       FROM manufacturer_recalls mr
+       LEFT JOIN recall_asset_matches ram ON ram.recall_id = mr.id
+       WHERE mr.org_id = $1
+         AND mr.status = 'active'
+         AND mr.matched_asset_count > 0
+       GROUP BY mr.id
+       ORDER BY
+         CASE mr.severity
+           WHEN 'critical' THEN 1
+           WHEN 'high' THEN 2
+           WHEN 'medium' THEN 3
+           WHEN 'advisory' THEN 4
+         END
+       LIMIT 5`,
+      [orgId],
+    ),
   ]);
 
   // Map hotlist rows
@@ -519,6 +551,15 @@ async function aggregateOrgData(
     daysUntilDue: Number(row['days_until_due'] ?? 0),
   }));
 
+  // Map recall items (Feature 17)
+  const activeRecalls: RecallEmailItem[] = (recallRows as Record<string, unknown>[]).map((row) => ({
+    title: String(row['title'] ?? ''),
+    manufacturer: String(row['manufacturer'] ?? ''),
+    severity: String(row['severity'] ?? 'medium'),
+    matchedAssetCount: Number(row['matched_asset_count'] ?? 0),
+    unacknowledgedCount: Number(row['unacknowledged_count'] ?? 0),
+  }));
+
   const statsRow = (inspectionStats as Record<string, unknown>[])[0] ?? {};
   const defectRow = (defectStats as Record<string, unknown>[])[0] ?? {};
   const overdueRow = (overdueRows as Record<string, unknown>[])[0] ?? {};
@@ -531,6 +572,7 @@ async function aggregateOrgData(
     defectsResolved: Number(defectRow['resolved'] ?? 0),
     overdueDefects: Number(overdueRow['overdue_count'] ?? 0),
     upcomingInspections,
+    activeRecalls,
   };
 }
 
@@ -542,14 +584,13 @@ function filterBySite(data: AggregatedData, siteId: string): AggregatedData {
   // For site-scoped recipients, we can only filter hotlist and upcoming
   // by site name match. Full site-scoped aggregation would require
   // re-running queries — acceptable trade-off for v1.
-  // TODO: If site-scoped recipients become common, add site_id to aggregation queries.
+  // Recalls are org-wide so not filtered by site.
   return {
     ...data,
     hotlistItems: data.hotlistItems.filter((item) =>
-      // Site filtering is approximate in v1 — hotlist items include site_name
-      // but not site_id. For full accuracy, add site_id to hotlist query.
       item.siteName !== undefined
     ),
     upcomingInspections: data.upcomingInspections,
+    activeRecalls: data.activeRecalls,
   };
 }

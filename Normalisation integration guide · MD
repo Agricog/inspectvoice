@@ -281,3 +281,265 @@ Run `migrations/007_normalisation.sql` in Neon SQL Editor before deploying front
 3. In review, click "Normalise" on the summary field → verify diff appears
 4. Sign off → verify batch normalisation panel appears
 5. Check /normalisation-history → verify entries logged
+
+# Feature 17: Manufacturer Recall Hooks — Integration Guide
+
+## New Files to Commit (5 files)
+
+| # | File | Destination |
+|---|------|-------------|
+| 1 | `010_manufacturer_recalls.sql` | `migrations/010_manufacturer_recalls.sql` |
+| 2 | `recalls.ts` (backend) | `workers/src/routes/recalls.ts` |
+| 3 | `recalls.ts` (types) | `src/types/recalls.ts` |
+| 4 | `RecallAlertBanner.tsx` | `src/components/RecallAlertBanner.tsx` |
+| 5 | `RecallsPage.tsx` | `src/pages/RecallsPage.tsx` |
+
+---
+
+## Existing File Changes (6 files)
+
+### 1. `workers/src/index.ts`
+
+**Add import** (after the magic links import block, ~line 68):
+
+```typescript
+// ── Feature 17: Manufacturer Recalls ──
+import {
+  listRecalls,
+  getRecall,
+  createRecall,
+  updateRecall,
+  updateRecallMatch,
+  getActiveRecallAlerts,
+  getAssetRecalls,
+  rematchRecall,
+} from './routes/recalls';
+```
+
+**Add routes** to the `ROUTES` array (after the magic links routes, before the closing `];`):
+
+```typescript
+  // ── Feature 17: Manufacturer Recalls ──
+  ['GET',    '/api/v1/recalls/alerts', getActiveRecallAlerts],
+  ['GET',    '/api/v1/recalls/:id', getRecall],
+  ['POST',   '/api/v1/recalls/:id/rematch', rematchRecall],
+  ['POST',   '/api/v1/recalls', createRecall],
+  ['PUT',    '/api/v1/recalls/:id', updateRecall],
+  ['GET',    '/api/v1/recalls', listRecalls],
+  ['PUT',    '/api/v1/recalls/matches/:matchId', updateRecallMatch],
+  ['GET',    '/api/v1/assets/:assetId/recalls', getAssetRecalls],
+```
+
+**IMPORTANT route order:** `/api/v1/recalls/alerts` MUST come before `/api/v1/recalls/:id` to avoid the router treating "alerts" as an `:id` param.
+
+---
+
+### 2. `src/App.tsx`
+
+**Add import** (after the DefectLibraryPage import, ~line 43):
+
+```typescript
+// ── Feature 17: Manufacturer Recalls ──
+import RecallsPage from '@pages/RecallsPage';
+```
+
+**Add route** (inside the protected routes block, after the defect-library route):
+
+```tsx
+            {/* ── Feature 17: Manufacturer Recalls ── */}
+            <Route path="/recalls" element={<RecallsPage />} />
+```
+
+---
+
+### 3. `src/components/Layout.tsx`
+
+**Add import** (in the lucide-react import, add `Bell`):
+
+Change:
+```typescript
+import {
+  Shield,
+  MapPin,
+  ClipboardCheck,
+  AlertTriangle,
+  Settings,
+  Menu,
+  X,
+  WifiOff,
+  Wifi,
+  Navigation,
+  BarChart3,
+  BookOpen,
+} from 'lucide-react';
+```
+
+To:
+```typescript
+import {
+  Shield,
+  MapPin,
+  ClipboardCheck,
+  AlertTriangle,
+  Settings,
+  Menu,
+  X,
+  WifiOff,
+  Wifi,
+  Navigation,
+  BarChart3,
+  BookOpen,
+  Bell,
+} from 'lucide-react';
+```
+
+**Add nav item** (in NAV_ITEMS array, after the Library item, before Settings):
+
+```typescript
+  { to: '/recalls', label: 'Recalls', icon: <Bell className="w-4 h-4" /> },
+```
+
+So the full NAV_ITEMS becomes:
+```typescript
+const NAV_ITEMS: NavItem[] = [
+  { to: '/sites', label: 'Sites', icon: <MapPin className="w-4 h-4" /> },
+  { to: '/inspections', label: 'Inspections', icon: <ClipboardCheck className="w-4 h-4" /> },
+  { to: '/defects', label: 'Defects', icon: <AlertTriangle className="w-4 h-4" /> },
+  { to: '/route-planner', label: 'Route', icon: <Navigation className="w-4 h-4" /> },
+  { to: '/inspector-performance', label: 'Performance', icon: <BarChart3 className="w-4 h-4" /> },
+  { to: '/defect-library', label: 'Library', icon: <BookOpen className="w-4 h-4" /> },
+  { to: '/recalls', label: 'Recalls', icon: <Bell className="w-4 h-4" /> },
+  { to: '/settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
+];
+```
+
+---
+
+### 4. `src/pages/ManagerDashboard.tsx`
+
+**Add import** (after the PerformanceDashboardSection import, ~line 22):
+
+```typescript
+import { RecallAlertBanner } from '@components/RecallAlertBanner';
+```
+
+**Add banner** (in the dashboard content section, between the Hotlist and the two-column grid):
+
+Find this block:
+```tsx
+            {/* HOTLIST — full width, prominent position */}
+            <Hotlist defects={hotlist} />
+
+            {/* Two-column grid: risk + upcoming */}
+```
+
+Change to:
+```tsx
+            {/* HOTLIST — full width, prominent position */}
+            <Hotlist defects={hotlist} />
+
+            {/* RECALL ALERTS — Feature 17 */}
+            <RecallAlertBanner />
+
+            {/* Two-column grid: risk + upcoming */}
+```
+
+---
+
+### 5. `src/pages/AssetDetail.tsx`
+
+**Add import** (after the existing imports, ~line 28):
+
+```typescript
+import { RecallAssetWarning } from '@components/RecallAlertBanner';
+```
+
+**Add warning** (in the main render, after the "No inspection yet banner" and before the Feature 2 history section):
+
+Find this block:
+```tsx
+      {/* ── No inspection yet banner ── */}
+      {!asset.last_inspection_date && !conditionSummary?.last_inspected && (
+        ...
+      )}
+
+      {/* ══════════════════════════════════════════ */}
+      {/* FEATURE 2: Longitudinal History Section   */}
+```
+
+Add between them:
+```tsx
+      {/* ── RECALL WARNING — Feature 17 ── */}
+      <RecallAssetWarning assetId={asset.id} />
+```
+
+---
+
+### 6. `src/types/index.ts`
+
+**Add export** (after the existing exports):
+
+```typescript
+export * from './recalls';
+```
+
+Full file becomes:
+```typescript
+export * from './enums';
+export * from './entities';
+export * from './offline';
+export * from './recalls';
+```
+
+---
+
+## Database Deployment
+
+Run `migrations/010_manufacturer_recalls.sql` in Neon SQL Editor.
+
+Tables created:
+- `manufacturer_recalls` — recall notices with severity, status, model patterns
+- `recall_asset_matches` — matched assets with acknowledgement/action fields
+
+Indexes: 9 total
+RLS: 2 policies (tenant isolation)
+Triggers: 2 (updated_at)
+Constraints: 3 CHECK constraints + 1 UNIQUE (recall_id, asset_id)
+
+---
+
+## API Endpoints (Feature 17)
+
+| Method | Path | Description | RBAC |
+|--------|------|-------------|------|
+| GET | `/api/v1/recalls` | List recalls (filterable by status) | All members |
+| GET | `/api/v1/recalls/alerts` | Active recalls for dashboard banner | All members |
+| GET | `/api/v1/recalls/:id` | Recall detail with matched assets | All members |
+| POST | `/api/v1/recalls` | Create recall + run matching | Manager/Admin |
+| PUT | `/api/v1/recalls/:id` | Update/resolve/dismiss recall | Manager/Admin |
+| POST | `/api/v1/recalls/:id/rematch` | Re-run matching engine | Manager/Admin |
+| PUT | `/api/v1/recalls/matches/:matchId` | Acknowledge/action a match | All members |
+| GET | `/api/v1/assets/:assetId/recalls` | Recalls affecting specific asset | All members |
+
+---
+
+## Routing (added)
+
+```
+/recalls                    → Recall management (list, create, detail)
+/recalls?id=:recallId       → Recall detail view (inline)
+```
+
+---
+
+## Matching Engine Summary
+
+Deterministic, explainable matching:
+1. Filter by manufacturer (case-insensitive, trimmed) — exact or partial
+2. If affected_models specified, match each pattern against asset model:
+   - `ModelName` — exact match
+   - `ModelName*` — prefix wildcard
+   - `*suffix` — suffix wildcard
+   - Contains match as fallback
+3. Each match stores `match_reason` (full explanation) + `match_confidence` (exact/partial)
+4. Re-running preserves already-actioned matches, only re-creates unacknowledged ones

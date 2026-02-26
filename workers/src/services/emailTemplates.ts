@@ -211,7 +211,7 @@ function wrapInLayout(data: SummaryEmailData, body: string): string {
                 <a href="https://inspectvoice.co.uk/settings/notifications" style="color:${COLORS.primary};text-decoration:underline;">notification settings</a>.
               </p>
               <p style="margin:8px 0 0;color:${COLORS.textSecondary};font-size:11px;line-height:1.5;">
-                &copy; ${new Date().getFullYear()} InspectVoice &mdash; Autaimate Ltd. All rights reserved.
+                &copy; ${new Date().getFullYear()} InspectVoice &mdash; Built by <a href="https://autaimate.com" style="color:${COLORS.primary};text-decoration:underline;">Autaimate</a>
               </p>
             </td>
           </tr>

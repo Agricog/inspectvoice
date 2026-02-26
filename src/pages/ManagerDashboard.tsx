@@ -53,6 +53,7 @@ import {
   RISK_RATING_LABELS,
   ACTION_TIMEFRAME_LABELS,
 } from '@/types/enums';
+import { PerformanceDashboardSection } from '@components/PerformanceDashboardSection';
 
 // =============================================
 // TYPES
@@ -739,6 +740,9 @@ export function ManagerDashboard(): JSX.Element {
               <RiskOverview riskData={riskOverview} />
               <UpcomingInspections inspections={upcomingInspections} />
             </div>
+
+            {/* Inspector performance — Feature 14 */}
+            <PerformanceDashboardSection />
 
             {/* Recent inspections — full width */}
             <RecentInspections inspections={recentInspections} />

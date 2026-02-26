@@ -47,6 +47,9 @@ import MyPerformancePage from '@pages/MyPerformancePage';
 // ── Feature 15: Defect Library ──
 import DefectLibraryPage from '@pages/DefectLibraryPage';
 
+// ── Feature 14: Performance Share (public) ──
+import PerformanceSharePage from '@pages/PerformanceSharePage';
+
 // =============================================
 // ORG GATE — requires active organisation
 // =============================================
@@ -145,6 +148,9 @@ export function App(): JSX.Element {
 
           {/* Public verification — council officers, solicitors, insurers */}
           <Route path="/verify/:bundleId" element={<VerifyPage />} />
+
+          {/* Public performance share — token-scoped, no auth */}
+          <Route path="/performance-share/:token" element={<PerformanceSharePage />} />
 
           {/* ── Protected routes ── */}
           <Route

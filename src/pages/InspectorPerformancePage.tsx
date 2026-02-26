@@ -36,6 +36,8 @@ import { INSPECTION_TYPE_LABELS } from '@/types';
 import type { PeriodPreset } from '@/types/features14_15';
 import { PERIOD_PRESET_LABELS } from '@/types/features14_15';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
 // =============================================
 // TYPES
 // =============================================
@@ -130,7 +132,7 @@ export default function InspectorPerformancePage(): JSX.Element {
       const params = new URLSearchParams({ period });
       if (inspectionType) params.set('inspection_type', inspectionType);
 
-      const res = await fetch(`/api/v1/inspector-performance?${params}`, {
+      const res = await fetch(`${API_BASE}/api/v1/inspector-performance?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -173,7 +175,7 @@ export default function InspectorPerformancePage(): JSX.Element {
     setShareUrl(null);
     try {
       const token = await getToken();
-      const res = await fetch(`/api/v1/inspector-performance/${userId}/share`, {
+      const res = await fetch(`${API_BASE}/api/v1/inspector-performance/${userId}/share`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({

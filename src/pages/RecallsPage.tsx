@@ -15,7 +15,7 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -26,19 +26,11 @@ import {
   AlertTriangle,
   RefreshCw,
   ChevronRight,
-  ExternalLink,
   CheckCircle,
   XCircle,
-  ShieldAlert,
-  AlertOctagon,
-  Search,
   Factory,
-  Hash,
-  FileText,
-  Calendar,
   Link2,
   Eye,
-  X,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
 import { getAuthToken } from '@utils/authToken';
@@ -47,7 +39,6 @@ import type {
   RecallWithMatches,
   RecallAssetMatch,
   RecallSeverity,
-  RecallStatus,
   RecallMatchStatus,
 } from '@/types/recalls';
 import {
@@ -75,8 +66,7 @@ function formatDate(dateStr: string | null): string {
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const tokenGetter = getAuthToken();
-  const token = tokenGetter ? await tokenGetter() : null;
+  const token = await getAuthToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {

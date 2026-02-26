@@ -22,10 +22,12 @@ import { Link } from 'react-router-dom';
 import {
   Mic,
   Shield,
+  Clock,
   FileText,
   AlertTriangle,
   CheckCircle,
   ChevronDown,
+  ChevronRight,
   BarChart3,
   Bell,
   Camera,
@@ -142,7 +144,7 @@ const JSON_LD_GRAPH = {
       operatingSystem: 'Web, iOS, Android',
       description: PAGE_DESCRIPTION,
       url: SITE_URL,
-      author: { '@type': 'Organization', name: 'Autaimate Ltd' },
+      author: { '@type': 'Organization', name: 'Autaimate' },
       offers: {
         '@type': 'Offer',
         price: '0',
@@ -209,7 +211,7 @@ const JSON_LD_GRAPH = {
     // 5. Organization
     {
       '@type': 'Organization',
-      name: 'Autaimate Ltd',
+      name: 'Autaimate',
       url: 'https://autaimate.com',
       logo: `${SITE_URL}/autaimate-logo.png`,
       description:
@@ -235,8 +237,8 @@ const JSON_LD_GRAPH = {
     {
       '@type': 'Article',
       headline: 'The Complete Guide to UK Playground Inspection Compliance',
-      author: { '@type': 'Organization', name: 'Autaimate Ltd' },
-      publisher: { '@type': 'Organization', name: 'Autaimate Ltd' },
+      author: { '@type': 'Organization', name: 'Autaimate' },
+      publisher: { '@type': 'Organization', name: 'Autaimate' },
       datePublished: '2026-01-15',
       dateModified: '2026-02-26',
       description:
@@ -451,8 +453,8 @@ export default function LandingPage() {
         <meta name="twitter:image" content={OG_IMAGE} />
 
         {/* Point 10: Author & Brand */}
-        <meta name="author" content="Autaimate Ltd" />
-        <meta name="publisher" content="Autaimate Ltd" />
+        <meta name="author" content="Autaimate" />
+        <meta name="publisher" content="Autaimate" />
 
         {/* Point 11: JSON-LD Schemas (8 types in @graph) */}
         <script type="application/ld+json">{JSON.stringify(JSON_LD_GRAPH)}</script>
@@ -489,7 +491,7 @@ export default function LandingPage() {
               </a>
             </div>
             <Link
-              to="/login"
+              to="/sign-in"
               className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
             >
               Sign In
@@ -851,7 +853,7 @@ export default function LandingPage() {
                 Built by people who understand regulated industries
               </h2>
               <p className="text-emerald-100 max-w-2xl mx-auto text-base leading-relaxed mb-8">
-                InspectVoice is developed by Autaimate Ltd, a UK company with over 40 years of
+                InspectVoice is developed by Autaimate, a UK company with over 40 years of
                 construction and compliance industry experience. We build practical software for
                 the industries that larger companies ignore.
               </p>
@@ -899,26 +901,30 @@ export default function LandingPage() {
             CTA SECTION
             ============================================= */}
         <section id="contact" className="py-20 sm:py-24">
-          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
-              Ready to modernise your playground inspections?
-            </h2>
-            <p className="mt-4 text-lg text-slate-600 max-w-xl mx-auto">
-              Get in touch for a demo tailored to your authority. We'll show you how InspectVoice
-              works with your sites, your team, and your existing processes.
-            </p>
-
-            <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
-              <a
-                href="mailto:support@autaimate.com?subject=InspectVoice%20Demo%20Request"
-                className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-8 py-4 rounded-lg transition-colors text-base"
-              >
-                Request a Demo
-                <ArrowRight className="w-4 h-4" />
-              </a>
+          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center">
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                Ready to modernise your playground inspections?
+              </h2>
+              <p className="mt-4 text-lg text-slate-600 max-w-xl mx-auto">
+                Get in touch for a demo tailored to your authority. We'll show you how InspectVoice
+                works with your sites, your team, and your existing processes.
+              </p>
             </div>
 
-            <p className="mt-6 text-sm text-slate-400">
+            <div className="mt-10 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <iframe
+                src="https://app.smartsuite.com/form/sba974gi/tqV2bj6kTj?header=false"
+                width="100%"
+                height="600"
+                frameBorder="0"
+                title="Request a Demo — InspectVoice"
+                loading="lazy"
+                className="block"
+              />
+            </div>
+
+            <p className="mt-6 text-sm text-slate-400 text-center">
               No commitment required. Free trial available for qualifying authorities.
             </p>
           </div>
@@ -984,7 +990,7 @@ export default function LandingPage() {
                       rel="noopener noreferrer"
                       className="hover:text-emerald-400 transition-colors"
                     >
-                      Autaimate Ltd
+                      Autaimate
                     </a>
                   </li>
                   <li>
@@ -997,10 +1003,37 @@ export default function LandingPage() {
                   </li>
                 </ul>
               </div>
+              <div>
+                <h4 className="text-xs font-semibold text-white uppercase tracking-wider mb-3">
+                  Legal
+                </h4>
+                <ul className="space-y-2 text-xs">
+                  <li>
+                    <Link to="/privacy" className="hover:text-emerald-400 transition-colors">
+                      Privacy Policy
+                    </Link>
+                  </li>
+                  <li>
+                    <Link to="/terms" className="hover:text-emerald-400 transition-colors">
+                      Terms of Service
+                    </Link>
+                  </li>
+                </ul>
+              </div>
             </div>
 
             <div className="border-t border-slate-800 pt-6 text-xs text-center">
-              <p>&copy; {new Date().getFullYear()} InspectVoice — Autaimate Ltd. All rights reserved.</p>
+              <p>
+                &copy; {new Date().getFullYear()} InspectVoice — Built by{' '}
+                <a
+                  href="https://autaimate.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                >
+                  Autaimate
+                </a>
+              </p>
             </div>
           </div>
         </footer>

@@ -64,6 +64,9 @@ import {
 } from './routes/notifications';
 import { handleSummaryEmailCron } from './cron/summaryEmail';
 
+// ── Route Planner ──
+import { getRoutePlannerSites, optimiseRoute, getDirections } from './routes/routePlanner';
+
 // ── Normalisation ──
 import {
   normaliseFieldEndpoint,
@@ -165,6 +168,11 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['PUT',    '/api/v1/notifications/recipients/:id', updateNotificationRecipient],
   ['DELETE', '/api/v1/notifications/recipients/:id', deactivateNotificationRecipient],
   ['GET',    '/api/v1/notifications/log', listNotificationLog],
+
+  // ── Route Planner (Feature 13) ──
+  ['GET',  '/api/v1/route-planner/sites', getRoutePlannerSites],
+  ['POST', '/api/v1/route-planner/optimise', optimiseRoute],
+  ['POST', '/api/v1/route-planner/directions', getDirections],
 
   // ── Normalisation ──
   ['POST',   '/api/v1/normalise/field', normaliseFieldEndpoint],

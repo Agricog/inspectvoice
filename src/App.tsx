@@ -3,11 +3,12 @@
  * Route definitions with Layout shell, Clerk auth gates, and PWA update prompt.
  *
  * UPDATED: Features 14 (Inspector Performance) + 15 (Defect Library) routes added.
+ * UPDATED: Landing page at / for SEO, dashboard moved to /dashboard.
  *
  * Build Standard: Autaimate v3
  */
 
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import {
   SignIn,
@@ -51,6 +52,12 @@ import DefectLibraryPage from '@pages/DefectLibraryPage';
 // ── Feature 14: Performance Share (public) ──
 import PerformanceSharePage from '@pages/PerformanceSharePage';
 
+// ── Feature 17: Manufacturer Recalls ──
+import RecallsPage from '@pages/RecallsPage';
+
+// ── SEO Landing Page ──
+import LandingPage from '@pages/LandingPage';
+
 // =============================================
 // ORG GATE — requires active organisation
 // =============================================
@@ -77,8 +84,8 @@ function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
         </div>
         <OrganizationSwitcher
           hidePersonal
-          afterSelectOrganizationUrl="/"
-          afterCreateOrganizationUrl="/"
+          afterSelectOrganizationUrl="/dashboard"
+          afterCreateOrganizationUrl="/dashboard"
         />
       </div>
     );
@@ -130,6 +137,22 @@ export function App(): JSX.Element {
 
         <Routes>
           {/* ── Public routes (no auth required) ── */}
+
+          {/* Landing page — SEO entry point for search engines & unauthenticated visitors */}
+          <Route
+            path="/"
+            element={
+              <>
+                <SignedIn>
+                  <Navigate to="/dashboard" replace />
+                </SignedIn>
+                <SignedOut>
+                  <LandingPage />
+                </SignedOut>
+              </>
+            }
+          />
+
           <Route
             path="/sign-in/*"
             element={
@@ -162,7 +185,7 @@ export function App(): JSX.Element {
             }
           >
             {/* Dashboard */}
-            <Route path="/" element={<ManagerDashboard />} />
+            <Route path="/dashboard" element={<ManagerDashboard />} />
 
             {/* Sites */}
             <Route path="/sites" element={<SiteList />} />
@@ -207,6 +230,9 @@ export function App(): JSX.Element {
 
             {/* ── Feature 15: Defect Library ── */}
             <Route path="/defect-library" element={<DefectLibraryPage />} />
+
+            {/* ── Feature 17: Manufacturer Recalls ── */}
+            <Route path="/recalls" element={<RecallsPage />} />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

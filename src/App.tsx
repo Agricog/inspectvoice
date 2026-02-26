@@ -42,6 +42,7 @@ import IncidentForm from '@pages/IncidentForm';
 import VerifyPage from '@pages/VerifyPage';
 import SealedExportsPage from '@pages/SealedExportsPage';
 import NormalisationHistoryPage from '@pages/NormalisationHistoryPage';
+import RoutePlanner from '@pages/RoutePlanner';
 
 // =============================================
 // ORG GATE — requires active organisation
@@ -189,6 +190,9 @@ export function App(): JSX.Element {
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />
+
+            {/* Route Planner */}
+            <Route path="/route-planner" element={<RoutePlanner />} />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

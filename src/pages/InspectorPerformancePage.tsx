@@ -29,15 +29,10 @@ import {
   ChevronDown,
   Filter,
   Share2,
-  TrendingUp,
-  Clock,
-  Camera,
-  FileCheck,
-  ShieldAlert,
   ArrowUpDown,
 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
-import { INSPECTION_TYPE_LABELS, InspectionType } from '@/types';
+import { INSPECTION_TYPE_LABELS } from '@/types';
 import type { PeriodPreset } from '@/types/features14_15';
 import { PERIOD_PRESET_LABELS } from '@/types/features14_15';
 

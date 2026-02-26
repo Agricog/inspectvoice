@@ -18,8 +18,8 @@
  * API:
  *   GET  /api/v1/users/me           → current user profile
  *   PUT  /api/v1/users/me           → update profile + credentials
- *   GET  /api/v1/org                → current organisation
- *   PUT  /api/v1/org                → update org settings (admin/manager)
+ *   GET  /api/v1/org/settings       → current organisation
+ *   PUT  /api/v1/org/settings       → update org settings (admin/manager)
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -437,13 +437,13 @@ function OrganisationSection({
   org: Organisation;
   onSave: (data: Partial<Organisation>) => Promise<void>;
 }): JSX.Element {
-  const [orgName, setOrgName] = useState(org.name);
-  const [primaryColor, setPrimaryColor] = useState(org.primary_color);
+  const [orgName, setOrgName] = useState(org.name ?? '');
+  const [primaryColor, setPrimaryColor] = useState(org.primary_color ?? '#22C55E');
   const [sectionState, setSectionState] = useState<SectionState>(INITIAL_SECTION_STATE);
 
   useEffect(() => {
-    setOrgName(org.name);
-    setPrimaryColor(org.primary_color);
+    setOrgName(org.name ?? '');
+    setPrimaryColor(org.primary_color ?? '#22C55E');
   }, [org]);
 
   const handleSave = useCallback(async () => {
@@ -459,6 +459,9 @@ function OrganisationSection({
       setSectionState({ status: 'error', message: 'Failed to update organisation' });
     }
   }, [orgName, primaryColor, onSave]);
+
+  const tierLabel = (org.tier ?? 'free').charAt(0).toUpperCase() + (org.tier ?? 'free').slice(1);
+  const statusLabel = (org.subscription_status ?? 'trialing').charAt(0).toUpperCase() + (org.subscription_status ?? 'trialing').slice(1);
 
   return (
     <section className="bg-iv-surface border border-iv-border rounded-xl p-4">
@@ -504,7 +507,7 @@ function OrganisationSection({
           <input
             id="org-tier"
             type="text"
-            value={org.tier.charAt(0).toUpperCase() + org.tier.slice(1)}
+            value={tierLabel}
             disabled
             className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-muted cursor-not-allowed opacity-60"
           />
@@ -514,7 +517,7 @@ function OrganisationSection({
           <input
             id="org-sub-status"
             type="text"
-            value={org.subscription_status.charAt(0).toUpperCase() + org.subscription_status.slice(1)}
+            value={statusLabel}
             disabled
             className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-muted cursor-not-allowed opacity-60"
           />
@@ -537,15 +540,15 @@ function InspectionPreferences({
   org: Organisation;
   onSave: (data: Partial<Organisation>) => Promise<void>;
 }): JSX.Element {
-  const [defaultType, setDefaultType] = useState<InspectionType>(org.settings.default_inspection_type);
-  const [requireApproval, setRequireApproval] = useState(org.settings.require_manager_approval);
-  const [autoExport, setAutoExport] = useState(org.settings.auto_export_on_sign);
+  const [defaultType, setDefaultType] = useState<InspectionType>(org.settings?.default_inspection_type ?? InspectionType.ROUTINE_VISUAL);
+  const [requireApproval, setRequireApproval] = useState(org.settings?.require_manager_approval ?? false);
+  const [autoExport, setAutoExport] = useState(org.settings?.auto_export_on_sign ?? false);
   const [sectionState, setSectionState] = useState<SectionState>(INITIAL_SECTION_STATE);
 
   useEffect(() => {
-    setDefaultType(org.settings.default_inspection_type);
-    setRequireApproval(org.settings.require_manager_approval);
-    setAutoExport(org.settings.auto_export_on_sign);
+    setDefaultType(org.settings?.default_inspection_type ?? InspectionType.ROUTINE_VISUAL);
+    setRequireApproval(org.settings?.require_manager_approval ?? false);
+    setAutoExport(org.settings?.auto_export_on_sign ?? false);
   }, [org]);
 
   const handleSave = useCallback(async () => {
@@ -770,3 +773,4 @@ export function SettingsPage(): JSX.Element {
 }
 
 export default SettingsPage;
+

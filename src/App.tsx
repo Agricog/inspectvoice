@@ -58,6 +58,10 @@ import RecallsPage from '@pages/RecallsPage';
 // ── SEO Landing Page ──
 import LandingPage from '@pages/LandingPage';
 
+// ── Legal Pages ──
+import PrivacyPage from '@pages/PrivacyPage';
+import TermsPage from '@pages/TermsPage';
+
 // =============================================
 // ORG GATE — requires active organisation
 // =============================================
@@ -175,6 +179,10 @@ export function App(): JSX.Element {
 
           {/* Public performance share — token-scoped, no auth */}
           <Route path="/performance-share/:token" element={<PerformanceSharePage />} />
+
+          {/* Legal pages — public, no auth */}
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
 
           {/* ── Protected routes ── */}
           <Route

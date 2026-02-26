@@ -1,7 +1,7 @@
 # InspectVoice — Master Build Reference
 
 **Last updated:** 26 February 2026
-**Status:** 13 features built, backend deployed, auth working, CI/CD operational
+**Status:** 15 features built, backend deployed, auth working, CI/CD operational
 **GitHub repo:** `https://github.com/Agricog/inspectvoice`
 
 ---
@@ -61,6 +61,7 @@ InspectVoice is a voice-driven, AI-assisted inspection platform for UK parks, pl
 - Dark theme only — design tokens (`iv-text`, `iv-muted`, `iv-surface`)
 - Path aliases: `@/`, `@components/`, `@pages/`, `@hooks/`, `@services/`, `@utils/`, `@types/`, `@config/`
 - Mick works via GitHub web interface only — no terminal/CLI
+- **When modifying existing files, always upload the current version from GitHub first — never guess or reconstruct**
 
 ### Design System
 - Dark theme: bg `#0C0F14`, surface `#151920`, accent `#22C55E`
@@ -86,7 +87,7 @@ Route handlers → Neon PostgreSQL (via @neondatabase/serverless)
   ↓
 R2 bucket (photos, audio, sealed-exports/{org_id}/{bundle_id}.zip)
 Queues (inspectvoice-audio-processing, inspectvoice-pdf-generation + DLQs)
-Cron Triggers (weekly/monthly summary emails)
+Cron Triggers (08:00 UTC summary emails, 03:00 UTC metrics computation)
   ↓
 Speechmatics (transcription) → Claude API (AI analysis + normalisation)
 Resend API (email delivery)
@@ -128,7 +129,8 @@ inspectvoice/
 │   ├── 005_sealed_exports.sql          # Feature 10: immutable sealed exports
 │   ├── 006_email_preferences.sql       # Feature 11: email_preferences + send_log
 │   ├── 007_normalisation.sql           # Feature 12: normalisation_log + usage
-│   └── 008_site_assignments.sql        # Feature 13: site_assignments (RBAC)
+│   ├── 008_site_assignments.sql        # Feature 13: site_assignments (RBAC)
+│   └── 009_inspector_performance_and_defect_library.sql  # F14+F15: 4 tables
 │
 ├── src/                                # Frontend (React/Vite)
 │   ├── main.tsx                        # Entry — ClerkProvider + AuthTokenProvider + Sentry
@@ -137,23 +139,28 @@ inspectvoice/
 │   ├── mapbox-gl.d.ts                  # Type stub for phantom @mapbox/point-geometry
 │   ├── vite-env.d.ts
 │   ├── components/
-│   │   ├── Layout.tsx                  # App shell — header, nav, offline banner, footer
+│   │   ├── Layout.tsx                  # App shell — header, nav (incl F14+F15 links), offline banner, footer
 │   │   ├── AuthTokenProvider.tsx       # Clerk token bridge (renders nothing)
 │   │   ├── BaselineComparison.tsx      # F5: Before/after slider
 │   │   ├── CompletenessCheckModal.tsx  # F4: Review gate modal
 │   │   ├── DefectExportButton.tsx      # F1+F10: Export UI with sealed option
+│   │   ├── DefectQuickPick.tsx         # F15: Bottom-sheet defect picker during capture
 │   │   ├── DefectTracker.tsx           # F2: Make Safe integration
 │   │   ├── EmailPreferences.tsx        # F11: Email settings panel
 │   │   ├── MakeSafeModal.tsx           # F2: Safety action modal
 │   │   ├── NormaliseButton.tsx         # F12: Per-field inline normalise
 │   │   ├── NormalisationReviewPanel.tsx # F12: Batch diff review modal
 │   │   ├── NormalisationSettings.tsx   # F12: Admin style config
+│   │   ├── PerformanceDashboardSection.tsx # F14: Org stats + My Performance cards for dashboard
+│   │   ├── PWAUpdatePrompt.tsx         # PWA update notification
+│   │   ├── SealedExportButton.tsx      # F10: Sealed export trigger
 │   │   └── VerificationBadge.tsx       # F10: Seal status display
 │   ├── config/
 │   │   ├── index.ts
 │   │   ├── complianceStandards.ts      # BS EN 1176/1177/16630 reference
 │   │   └── assetTypes.ts              # 16 asset type configs
 │   ├── hooks/
+│   │   ├── useDefectLibrary.ts        # F15: Quick-pick fetch, usage recording, library search
 │   │   ├── useFetch.ts                # SSRF + CSRF + throttle + retry + Bearer auto-inject
 │   │   ├── useFormValidation.ts
 │   │   ├── useSessionTimeout.ts
@@ -161,20 +168,27 @@ inspectvoice/
 │   ├── pages/
 │   │   ├── AssetDetail.tsx            # F8: Rewrite with condition timeline + history
 │   │   ├── AssetForm.tsx              # Create/edit equipment
+│   │   ├── DefectLibraryPage.tsx      # F15: Manager library management UI
 │   │   ├── DefectTracker.tsx          # Defect tracker dashboard
 │   │   ├── IncidentForm.tsx           # F9: 8-section incident form
 │   │   ├── IncidentList.tsx           # F9: Filterable incident register
-│   │   ├── InspectionCapture.tsx      # F5: Core capture + baseline integration
+│   │   ├── InspectionCapture.tsx      # F5+F15: Core capture + baseline + defect quick-pick
 │   │   ├── InspectionList.tsx         # All inspections, filter by status/type/date
 │   │   ├── InspectionReview.tsx       # F4+F12: Sign-off + normalisation
 │   │   ├── InspectionStart.tsx        # Select type, weather, asset register
-│   │   ├── ManagerDashboard.tsx       # F7: Rewrite with Hotlist
+│   │   ├── InspectorDetailPage.tsx    # F14: KPI cards + trend sparklines + benchmarks
+│   │   ├── InspectorPerformancePage.tsx # F14: Manager overview table (sortable, filterable)
+│   │   ├── ManagerDashboard.tsx       # F7+F14: Hotlist + PerformanceDashboardSection
+│   │   ├── MyPerformancePage.tsx      # F14: Inspector own stats wrapper + embeddable card
 │   │   ├── NormalisationHistoryPage.tsx # F12: Usage stats + log
+│   │   ├── PerformanceSharePage.tsx   # F14: Public token-based "Your Month" view (no auth)
 │   │   ├── RoutePlanner.tsx           # F13: Mapbox GL map + route optimisation
+│   │   ├── SealedExportsPage.tsx      # F10: Sealed exports list
 │   │   ├── SettingsPage.tsx           # F12: NormalisationSettings wired in
 │   │   ├── SiteDetail.tsx             # Site info + asset register + inspections
 │   │   ├── SiteForm.tsx               # Create/edit site
-│   │   └── SiteList.tsx               # Search, filter, sort sites
+│   │   ├── SiteList.tsx               # Search, filter, sort sites
+│   │   └── VerifyPage.tsx             # F10: Public verification
 │   ├── services/
 │   │   ├── defectExport.ts            # F1: Client-side Excel export (offline)
 │   │   ├── offlineStore.ts            # IndexedDB 7 stores, sync queue, size guards
@@ -188,6 +202,7 @@ inspectvoice/
 │   │   ├── index.ts                   # Barrel export
 │   │   ├── entities.ts                # All entity interfaces (1:1 with Neon schema)
 │   │   ├── enums.ts                   # 25+ enums with label/description maps
+│   │   ├── features14_15.ts           # F14+F15: Metrics, benchmarks, library, quick-pick types
 │   │   ├── normalisation.ts           # F12: Full normalisation type definitions
 │   │   └── offline.ts                 # IndexedDB wrapper types, sync queue types
 │   └── utils/
@@ -201,10 +216,14 @@ inspectvoice/
 ├── workers/                           # Backend (Cloudflare Workers)
 │   ├── package.json                   # wrangler v4, fflate, xlsx, resend, @react-email
 │   ├── tsconfig.json
-│   ├── wrangler.toml                  # R2 bindings, queues, cron triggers, vars
+│   ├── wrangler.toml                  # R2 bindings, queues, 2 cron triggers, vars
 │   └── src/
-│       ├── index.ts                   # Main router — all feature routes + verify before auth
+│       ├── index.ts                   # Main router — all feature routes + verify/share before auth
 │       ├── types.ts                   # Env interface (all secrets), ClerkJwtPayload (v1+v2)
+│       ├── cron/
+│       │   └── metricsComputation.ts  # F14: Daily 03:00 UTC metrics aggregation per inspector
+│       ├── data/
+│       │   └── defectLibrarySeed.ts   # F15: 50 seed defects across 16 asset types
 │       ├── middleware/
 │       │   ├── cors.ts
 │       │   ├── csrf.ts
@@ -223,6 +242,7 @@ inspectvoice/
 │       │   ├── completenessCheck.ts   # F4: 10 deterministic checks
 │       │   ├── dashboard.ts           # F7: 5 parallel queries + hotlist
 │       │   ├── defectExport.ts        # F1: Server-side Excel
+│       │   ├── defectLibrary.ts       # F15: 9 endpoints — CRUD, quick-pick, versioning, seed
 │       │   ├── defects.ts
 │       │   ├── emailCron.ts           # F11: Cron trigger handler
 │       │   ├── emailPreferences.ts    # F11: GET/PATCH preferences
@@ -231,6 +251,7 @@ inspectvoice/
 │       │   ├── incidents.ts           # F9: CRUD
 │       │   ├── inspectionItems.ts
 │       │   ├── inspections.ts
+│       │   ├── inspectorPerformance.ts # F14: 7 endpoints — overview, detail, my-stats, benchmarks, share links
 │       │   ├── normalise.ts           # F12: field/batch/usage/accept-reject
 │       │   ├── org.ts
 │       │   ├── pdf.ts                 # BS EN inspection schedule table
@@ -283,7 +304,7 @@ inspectvoice/
 
 ---
 
-## 6. DATABASE SCHEMA (Neon — all 17 tables deployed ✅)
+## 6. DATABASE SCHEMA (Neon — all 21 tables deployed ✅)
 
 ### Migration 001: Core Schema (10 tables)
 
@@ -367,10 +388,10 @@ inspectvoice/
 - 8 triggers: 6 updated_at, 1 signed inspection immutability, 1 auto-populate defect context
 - All org_id columns are TEXT (Clerk uses string IDs, not Postgres UUIDs)
 
-### Migrations 002–008 (Feature tables)
+### Migrations 002–009 (Feature tables)
 
-| Migration | Table | Feature |
-|-----------|-------|---------|
+| Migration | Table(s) | Feature |
+|-----------|----------|---------|
 | 002 | `asset_safety_actions` | F2: Make Safe/Close with RLS, status enum, evidence fields |
 | 003 | 6 columns on `assets` + `asset_baseline_history` | F5: Baseline photo comparison |
 | 004 | `incidents` | F9: 40+ columns, RIDDOR/HSE/police/insurer refs, 7 indexes, RLS |
@@ -378,10 +399,13 @@ inspectvoice/
 | 006 | `email_preferences` + `email_send_log` | F11: Frequency, timezone, unsubscribe token |
 | 007 | `normalisation_log` + `normalisation_usage` | F12: Per-field audit trail, monthly token tracking |
 | 008 | `site_assignments` | F13: RBAC site-to-inspector assignment, unique constraint |
+| 009 | `inspector_metrics_period` + `performance_share_links` + `defect_library_entry` + `defect_library_entry_version` + `defect_field_audit` | F14+F15: Precomputed metrics, share tokens, versioned library with audit |
+
+**⚠️ Note:** Migration 009 was originally built as `007_inspector_performance_and_defect_library.sql` — rename to `009` before running in Neon to avoid conflicting with the existing 007 (normalisation).
 
 ---
 
-## 7. FRONTEND DETAIL (Batches 1–17 + 20)
+## 7. FRONTEND DETAIL (Batches 1–17 + 20 + Features 14–15)
 
 ### Batches 1–9: Foundation + Security + Site Management
 Project scaffold, Tailwind config, design tokens, security hooks (SSRF, CSRF, session timeout), IndexedDB offline store (7 stores), validation framework, DOMPurify sanitisation, Sentry error tracking, site CRUD pages.
@@ -399,7 +423,7 @@ Project scaffold, Tailwind config, design tokens, security hooks (SSRF, CSRF, se
 `photoCapture.ts` — camera access, JPEG compression, thumbnail generation, base64 storage, EXIF GPS extraction.
 
 ### Batch 14: Inspection Capture Workflow
-`InspectionCapture.tsx` (1,027 lines) — asset stepper with progress dots, voice recording with VU meter, photo capture with thumbnails, checklist per inspection cadence, condition rating buttons, manual notes, per-asset IndexedDB save, resume support.
+`InspectionCapture.tsx` (1,302 lines) — asset stepper with progress dots, voice recording with VU meter, photo capture with thumbnails, checklist per inspection cadence, condition rating buttons, manual notes, defect quick-pick from library (Feature 15), per-asset IndexedDB save, resume support.
 
 ### Batch 15: Inspection Review + Sign-Off
 `InspectionReview.tsx` (765 lines) — 4-card risk summary, 3-card key figures, expandable per-asset results, inspector summary (5000 char), closure recommendation, digital sign-off, immutability enforcement.
@@ -413,6 +437,30 @@ Project scaffold, Tailwind config, design tokens, security hooks (SSRF, CSRF, se
 ### Batch 20: Remaining UI Pages (verified complete)
 `InspectionList.tsx`, `DefectTracker.tsx`, `ManagerDashboard.tsx`, `SettingsPage.tsx` — all fully built, zero stubs.
 
+### Feature 14: Inspector Performance & Quality Insights (7 frontend files)
+**InspectorPerformancePage.tsx** — Manager overview table with sortable columns (inspections, completeness, overdue rate, sign-off time, photo compliance, evidence quality, make-safe, rework, audit flags). Period filter bar (Last 7 Days, Month, Quarter, YTD, Rolling 90, Custom), inspection type filter, summary cards. Row click → drill-in. "Share Your Month" action per inspector.
+
+**InspectorDetailPage.tsx** — KPI cards with trend sparklines (6-month) and benchmark band indicators (top 25%/middle/bottom 25%). Breakdown by inspection type. Used for both manager drill-in and self-view.
+
+**MyPerformancePage.tsx** — Thin wrapper with `isSelf=true`. Exports `MyPerformanceCard` component for dashboard embedding (compact 4-metric card).
+
+**PerformanceDashboardSection.tsx** — Drop-in for ManagerDashboard. Shows org-wide quick stats (managers) + My Performance card (all members). Grid layout.
+
+**PerformanceSharePage.tsx** — Public route `/performance-share/:token`. Token-scoped, read-only, single inspector's data. 30-day expiry. Branded with InspectVoice + Autaimate footer. `noindex, nofollow`.
+
+15 metrics tracked: inspections_completed, completeness_avg, defects_total, defects_per_inspection_avg, photo_compliance_pct, normalisation_accept_rate, avg_time_to_signoff_seconds, overdue_rate, makesafe_initiated/completed, rework_rate, critical_response_avg_seconds, evidence_quality_pct, completeness_variance, audit_flag_count.
+
+RBAC: managers/admins see org-wide overview; inspectors see only own stats via `/my-performance`; benchmarks anonymised for inspectors.
+
+### Feature 15: Defect Library (5 frontend files)
+**DefectLibraryPage.tsx** — Manager library management. Filter bar (asset type, source system/org, search). Table with severity badges, usage counts, actions. Create/edit form (org entries only, system read-only). Version history drawer (right-side slide-out). Seed button (admin only, idempotent). Pagination (20/page).
+
+**DefectQuickPick.tsx** — Bottom-sheet component used in InspectionCapture. Filtered by current asset type, shows top entries by usage count. Expand to see full detail (description, BS EN refs, remedial action). "Use This Defect" pre-fills capture form fields. Records usage on selection.
+
+**useDefectLibrary.ts** — Hook for quick-pick fetch, usage recording, and full library search with auth.
+
+Integration: InspectionCapture updated (+117 lines) with "Common Defects" button, manual defect list with severity dots, remove button. Selected defects saved with inspection item and included in `requires_action` logic.
+
 ### Domain Configuration
 16 asset types: Swing, Slide, Climbing Frame, Roundabout, See-Saw, Spring Rocker, Climbing Net, Monkey Bars, Balance Beam, Multi-Play Unit, Sandpit, Zipline, Pull-Up Bar, Bench, Gate, Fence. Each has inspection points per cadence, risk criteria at 4 severity levels, BS EN defect category references. Standards: BS EN 1176 Parts 1–11, BS EN 1177, BS EN 16630.
 
@@ -424,13 +472,13 @@ SSRF (origin-locked), CSRF (auto-inject), DOMPurify (recursive), Sentry PII scru
 
 ---
 
-## 8. BACKEND DETAIL (Batch 18 — 34 Cloudflare Worker files)
+## 8. BACKEND DETAIL (Batch 18 — 34 Cloudflare Worker files + Features 14–15)
 
 ### Foundation (13 files)
 types.ts, shared/errors.ts, shared/logger.ts, shared/validation.ts, shared/pagination.ts, middleware/cors.ts, middleware/guard.ts, middleware/csrf.ts, middleware/rateLimit.ts, services/db.ts, services/audit.ts, services/idempotency.ts, services/r2.ts
 
-### Routes (11 files)
-sites.ts, assets.ts, inspections.ts, inspectionItems.ts, uploads.ts, defects.ts, users.ts, org.ts, dashboard.ts, pdf.ts, helpers.ts
+### Routes (13 files)
+sites.ts, assets.ts, inspections.ts, inspectionItems.ts, uploads.ts, defects.ts, users.ts, org.ts, dashboard.ts, pdf.ts, helpers.ts, **inspectorPerformance.ts** (F14), **defectLibrary.ts** (F15)
 
 ### Webhooks (2 files)
 webhooks/clerk.ts, webhooks/stripe.ts
@@ -441,15 +489,48 @@ services/speechmatics.ts (60+ term custom dictionary, EU batch, en-GB locale, di
 ### Queues (2 files)
 queues/audioProcessor.ts (Speechmatics → Claude → batch defect INSERT with org_id/site_id/inspection_id/asset_id), queues/pdfGenerator.ts (3 efficient queries, single neon() call)
 
+### Cron (1 file)
+**cron/metricsComputation.ts** (F14) — Daily 03:00 UTC. Computes monthly metrics per inspector per org from raw inspection data. 15 metrics. UPSERT strategy (re-running is safe).
+
+### Data (1 file)
+**data/defectLibrarySeed.ts** (F15) — 50 seed defects across all 16 asset types with BS EN refs, severity defaults, remedial action templates, cost bands, timeframes, `[PLACEHOLDER]` tokens for inspector customisation.
+
 ### Config (3 files)
-wrangler.toml (R2 bindings, queue bindings, cron triggers, vars), package.json (wrangler v4), tsconfig.json
+wrangler.toml (R2 bindings, queue bindings, 2 cron triggers `["0 8 * * *", "0 3 * * *"]`, vars), package.json (wrangler v4), tsconfig.json
 
 ### Router (1 file)
-index.ts — all feature routes, verify endpoint before auth guard (same pattern as webhooks)
+index.ts — all feature routes, verify + performance-share endpoints before auth guard (same pattern as webhooks)
+
+### Feature 14 Backend: Inspector Performance
+**inspectorPerformance.ts** — 7 endpoints:
+- `GET /inspector-performance` — Org overview table (manager/admin)
+- `GET /inspector-performance/:userId` — Inspector detail + trends (manager/admin)
+- `GET /inspector-performance/:userId/trends` — 6-month trend data
+- `GET /my-performance` — Own stats (all members)
+- `GET /my-performance/trends` — Own trends
+- `GET /inspector-performance/benchmarks` — Anonymised top/middle/bottom 25%
+- `POST /inspector-performance/:userId/share` — Generate 30-day share link (manager/admin)
+- `GET /performance-share/:token` — Resolve share link (public, no auth, scoped)
+
+Period presets: last_7_days, month, quarter, ytd, rolling_90, custom.
+
+### Feature 15 Backend: Defect Library
+**defectLibrary.ts** — 9 endpoints:
+- `GET /defect-library` — List (filtered by asset_type/source/search, paginated)
+- `GET /defect-library/quick-pick/:assetType` — Top 8 by usage for capture bottom-sheet
+- `GET /defect-library/:id` — Single entry
+- `GET /defect-library/:id/versions` — Version history
+- `POST /defect-library` — Create org entry
+- `PUT /defect-library/:id` — Update (creates new version)
+- `DELETE /defect-library/:id` — Soft delete
+- `POST /defect-library/:id/record-usage` — Increment usage count
+- `POST /defect-library/seed` — Idempotent seed (admin only)
+
+RBAC: all members read/pick, manager/admin write, system entries read-only. Protected fields (BS EN refs, severity) require reason + audit log.
 
 ---
 
-## 9. FEATURES 1–13 (all built)
+## 9. FEATURES 1–15 (all built)
 
 ### Feature 1: CSV/Excel Defect Export ✅
 Server-side Excel (SheetJS), multi-sheet workbook (Defects, Summary by Site, Summary by Risk), risk colour-coding, auto-filters, BS EN refs, photo cross-refs. Client-side offline fallback.
@@ -489,6 +570,12 @@ Per-field inline normalise button + batch "Normalise All Fields" before sign-off
 
 ### Feature 13: Today's Route Planning ✅
 Mapbox GL JS v3 with urgency-coded SVG pins (overdue=red, due_today=orange, this_week=yellow, this_month=blue, not_due=green). RBAC-filtered sites via site_assignments table (admin/manager see all, inspector sees assigned only). Server-side Mapbox Optimization API (≤12 stops) + Directions API (≤25 coords for drag-to-reorder). Geolocation, route summary overlay, responsive layout (side-by-side desktop / toggle mobile).
+
+### Feature 14: Inspector Performance & Quality Insights ✅
+Precomputed daily/monthly/quarterly aggregates with 15 metrics per inspector per org. Manager overview table (sortable by any metric, filterable by period + inspection type). Inspector detail page with KPI cards, 6-month trend sparklines, and anonymised benchmark bands (top 25%/middle/bottom 25%). Self-view via `/my-performance`. Embeddable `MyPerformanceCard` on dashboard. Token-based "Your Month" share links (public, no auth, 30-day expiry). Daily cron at 03:00 UTC computes metrics. RBAC: managers see org-wide, inspectors see own only.
+
+### Feature 15: Defect Library ✅
+Versioned library of common defects with system (50 seed entries across 16 asset types) and org-created entries. Each entry: title, description template, BS EN refs, severity default, remedial action template, cost band, timeframe. Immutable version snapshots — updates create new versions. Protected field edits (BS EN refs, severity) require reason + audit log. Quick-pick bottom-sheet during capture filtered by asset type, sorted by usage count. Usage tracking for popularity ranking. Manager UI for library management with version history drawer. RBAC: all members read/pick, manager/admin write, system entries read-only. AI integration deferred — future: AI generates freeform → matches library with confidence score → auto-apply above threshold.
 
 ---
 
@@ -547,13 +634,14 @@ Key dependencies: `wrangler` (v4), `@neondatabase/serverless`, `fflate` (zip), `
 | Worker URL | `https://inspectvoice-api.micks43.workers.dev` |
 | R2 Bucket | `inspectvoice-storage` |
 | Queues | `inspectvoice-audio-processing`, `inspectvoice-pdf-generation`, + 2 DLQs |
+| Cron Triggers | `0 8 * * *` (summary emails), `0 3 * * *` (metrics computation) |
 
 ### Neon
 | Setting | Value |
 |---------|-------|
 | Project | inspectvoice |
 | Region | AWS eu-west-2 (London) |
-| Schema | All 17 tables deployed ✅ |
+| Schema | All 21 tables deployed ✅ |
 | Connection | `DATABASE_URL` secret in Cloudflare Worker |
 
 ### Railway
@@ -589,7 +677,7 @@ Frontend auto-deploys on push to `main`. Build-time env vars: `VITE_CLERK_PUBLIS
 ```
 /sign-in                    → Clerk sign-in (public)
 /sign-up                    → Clerk sign-up (public)
-/                           → Manager Dashboard (F7: Hotlist)
+/                           → Manager Dashboard (F7: Hotlist + F14: Performance)
 /sites                      → Site list
 /sites/new                  → Create site
 /sites/:id                  → Site detail + asset register
@@ -598,16 +686,23 @@ Frontend auto-deploys on push to `main`. Build-time env vars: `VITE_CLERK_PUBLIS
 /sites/:siteId/assets/:id   → Asset detail (F8: condition timeline)
 /sites/:siteId/assets/:id/edit → Edit asset
 /sites/:siteId/inspections/new → Start inspection
-/sites/:siteId/inspections/:id/capture → Capture workflow (F5: baseline)
+/sites/:siteId/inspections/:id/capture → Capture workflow (F5: baseline + F15: quick-pick)
 /sites/:siteId/inspections/:id/review  → Review + sign-off (F4+F12)
 /inspections                → Inspection list
 /defects                    → Defect tracker
 /incidents                  → Incident list (F9)
 /incidents/new              → Create incident (F9)
 /incidents/:id/edit         → Edit incident (F9)
+/inspector-performance      → Inspector performance overview (F14, manager/admin)
+/inspector-performance/:userId → Inspector detail drill-in (F14, manager/admin)
+/my-performance             → Inspector own stats (F14, all members)
+/defect-library             → Defect library management (F15, manager/admin)
 /route-planner              → Route planning (F13)
 /normalisation-history      → Normalisation log (F12)
+/sealed-exports             → Sealed exports list (F10)
 /settings                   → Settings (F12: normalisation config)
+/verify/:bundleId           → Public verification (F10, no auth)
+/performance-share/:token   → Public performance share (F14, no auth)
 ```
 
 ---
@@ -615,12 +710,13 @@ Frontend auto-deploys on push to `main`. Build-time env vars: `VITE_CLERK_PUBLIS
 ## 13. DEPLOYMENT STATUS (26 Feb 2026)
 
 ### What's Deployed & Working
-- ✅ All 17 database tables in Neon
-- ✅ Cloudflare Worker with all 13 feature routes
+- ✅ All 21 database tables in Neon
+- ✅ Cloudflare Worker with all 15 feature routes
 - ✅ Railway frontend with Clerk auth, all pages, green build
 - ✅ CI/CD: GitHub auto-deploy for both Worker and frontend
 - ✅ Clerk sign-in, JWT v2, guard passing, dashboard loading
 - ✅ Mapbox tokens configured (frontend + Worker)
+- ✅ 2 cron triggers configured (08:00 emails + 03:00 metrics)
 
 ### Pending Deployment
 - ⏳ Features 1–5 code files — built, pending commit to repo
@@ -644,24 +740,28 @@ Frontend auto-deploys on push to `main`. Build-time env vars: `VITE_CLERK_PUBLIS
 | 11 | Manager Summary Emails | ✅ Built, pending secrets |
 | 12 | AI Style Normalisation | ✅ Built, pending secrets |
 | 13 | Route Planning | ✅ Deployed |
+| 14 | Inspector Performance | ✅ Built (20 files, pending commit) |
+| 15 | Defect Library | ✅ Built (20 files, pending commit) |
 
 ---
 
 ## 14. WHAT'S NEXT
 
-1. **Configure remaining secrets** — MANIFEST_SIGNING_KEY + KEY_ID, RESEND_API_KEY
-2. **Commit Features 1–5** — wire into codebase
-3. **Commit Feature 11 + 12 Worker files** — push for auto-deploy
-4. **Steps 10.11–10.12** — sealed export options on InspectionReview + IncidentForm
-5. **Site assignment admin UI** — manager page to assign inspectors to sites (data model ready)
-6. **Fix pre-existing TS errors** — 100+ across Worker codebase, then restore `tsc --noEmit` to build
-7. **Seed test data** — test site + inspection for end-to-end verification
-8. **Customise procurement pack** — placeholder fields, pricing, solicitor review of DPA
-9. **Sample PDF report** — redacted sample for procurement pack
-10. **Stripe integration** — payment webhooks, plan management
-11. **Domain** — `inspectvoice.co.uk` (zone exists in Cloudflare, no Worker route yet)
-12. **Cyber Essentials certification** — Q3 2026, controls mapped
-13. **Pilot outreach** — 60-day free pilot offer to councils
+1. **Rename migration** — `007_inspector_performance_and_defect_library.sql` → `009_inspector_performance_and_defect_library.sql` before running in Neon
+2. **Commit Features 14–15** — 20 files across frontend + backend (built 26 Feb 2026)
+3. **Configure remaining secrets** — MANIFEST_SIGNING_KEY + KEY_ID, RESEND_API_KEY
+4. **Commit Features 1–5** — wire into codebase
+5. **Commit Feature 11 + 12 Worker files** — push for auto-deploy
+6. **Steps 10.11–10.12** — sealed export options on InspectionReview + IncidentForm
+7. **Site assignment admin UI** — manager page to assign inspectors to sites (data model ready)
+8. **Fix pre-existing TS errors** — 100+ across Worker codebase, then restore `tsc --noEmit` to build
+9. **Seed test data** — test site + inspection for end-to-end verification
+10. **Customise procurement pack** — placeholder fields, pricing, solicitor review of DPA
+11. **Sample PDF report** — redacted sample for procurement pack
+12. **Stripe integration** — payment webhooks, plan management
+13. **Domain** — `inspectvoice.co.uk` (zone exists in Cloudflare, no Worker route yet)
+14. **Cyber Essentials certification** — Q3 2026, controls mapped
+15. **Pilot outreach** — 60-day free pilot offer to councils
 
 ---
 
@@ -683,6 +783,7 @@ Frontend auto-deploys on push to `main`. Build-time env vars: `VITE_CLERK_PUBLIS
 14. **Mapbox Optimization API ≤12 stops** — design UX around this from day one
 15. **Speechmatics replaced Deepgram** — EU batch API, enhanced model, 60+ term custom dictionary
 16. **Migration schema alignment** — table names (`organisations` not `orgs`), TEXT not UUID for Clerk IDs
+17. **Never reconstruct existing files from memory** — always ask for the current file before editing; rebuilding drops lines silently
 
 ---
 

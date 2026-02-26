@@ -652,7 +652,7 @@ export function SettingsPage(): JSX.Element {
     useFetch<UserProfileResponse>('/api/v1/users/me');
 
   const { data: orgData, loading: orgLoading, error: orgError, refetch: refetchOrg } =
-    useFetch<OrgResponse>('/api/v1/org');
+    useFetch<OrgResponse>('/api/v1/org/settings');
 
   const user = userData?.data ?? null;
   const org = orgData?.data ?? null;
@@ -670,7 +670,7 @@ export function SettingsPage(): JSX.Element {
 
   const handleSaveOrg = useCallback(async (data: Partial<Organisation>) => {
     const { secureFetch } = await import('@hooks/useFetch');
-    await secureFetch('/api/v1/org', { method: 'PUT', body: data });
+    await secureFetch('/api/v1/org/settings', { method: 'PUT', body: data });
     await refetchOrg();
   }, [refetchOrg]);
 

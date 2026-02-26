@@ -208,7 +208,7 @@ function wrapInLayout(data: SummaryEmailData, body: string): string {
               <p style="margin:0;color:${COLORS.textSecondary};font-size:12px;line-height:1.5;">
                 This email was generated automatically by InspectVoice on ${escapeHtml(data.generatedAt)}.
                 To change your notification preferences or unsubscribe, visit your
-                <a href="https://inspectvoice-production.up.railway.app/settings/notifications" style="color:${COLORS.primary};text-decoration:underline;">notification settings</a>.
+                <a href="https://inspectvoice.co.uk/settings/notifications" style="color:${COLORS.primary};text-decoration:underline;">notification settings</a>.
               </p>
               <p style="margin:8px 0 0;color:${COLORS.textSecondary};font-size:11px;line-height:1.5;">
                 &copy; ${new Date().getFullYear()} InspectVoice &mdash; Autaimate Ltd. All rights reserved.
@@ -324,7 +324,7 @@ function buildRecallSection(recalls: RecallEmailItem[]): string {
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
       <tr>
         <td style="padding:0 0 8px;">
-          <a href="https://inspectvoice-production.up.railway.app/recalls" style="color:${COLORS.primary};font-size:13px;text-decoration:underline;">
+          <a href="https://inspectvoice.co.uk/recalls" style="color:${COLORS.primary};font-size:13px;text-decoration:underline;">
             Review all recalls in InspectVoice &rarr;
           </a>
         </td>
@@ -524,3 +524,4 @@ function formatInspectionType(type: string): string {
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
+

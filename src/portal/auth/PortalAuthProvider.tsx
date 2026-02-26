@@ -38,7 +38,6 @@ export function PortalAuthProvider({ children }: Props) {
 /** Gate: if not signed in → show sign-in, otherwise render children */
 function PortalAuthGate({ children }: Props) {
   const { isSignedIn, isLoaded, getToken } = useAuth();
-  const { user } = useUser();
 
   // Wire the token getter into the API client once
   useEffect(() => {

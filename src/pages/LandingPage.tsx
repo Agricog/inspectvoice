@@ -217,7 +217,7 @@ const JSON_LD_GRAPH = {
       contactPoint: {
         '@type': 'ContactPoint',
         contactType: 'sales',
-        email: 'hello@autaimate.com',
+        email: 'support@autaimate.com',
       },
     },
     // 6. WebPage with Speakable
@@ -910,7 +910,7 @@ export default function LandingPage() {
 
             <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
               <a
-                href="mailto:hello@autaimate.com?subject=InspectVoice%20Demo%20Request"
+                href="mailto:support@autaimate.com?subject=InspectVoice%20Demo%20Request"
                 className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-8 py-4 rounded-lg transition-colors text-base"
               >
                 Request a Demo
@@ -989,10 +989,10 @@ export default function LandingPage() {
                   </li>
                   <li>
                     <a
-                      href="mailto:hello@autaimate.com"
+                      href="mailto:support@autaimate.com"
                       className="hover:text-emerald-400 transition-colors"
                     >
-                      hello@autaimate.com
+                      support@autaimate.com
                     </a>
                   </li>
                 </ul>

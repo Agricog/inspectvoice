@@ -1,6 +1,6 @@
 /**
  * InspectVoice — Inspection Capture Workflow
- * Batch 14 + Feature 5 (Baseline photo comparison)
+ * Batch 14 + Feature 5 (Baseline photo comparison) + Feature 15 (Defect Quick-Pick)
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
@@ -53,6 +53,7 @@ import {
   X,
   Eye,
   Info,
+  BookOpen,
 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 
@@ -75,12 +76,19 @@ import {
   INSPECTION_TYPE_LABELS,
   AIProcessingStatus,
   TranscriptionMethod,
+  RISK_RATING_LABELS,
+  RiskRating,
+  ACTION_TIMEFRAME_LABELS,
+  ActionTimeframe,
+  CostBand,
 } from '@/types';
-import type { Asset, Inspection, InspectionItem } from '@/types';
+import type { Asset, Inspection, InspectionItem, DefectDetail } from '@/types';
 import { getAssetTypeConfig, getInspectionPointsForType } from '@config/assetTypes';
 import type { InspectionPoint } from '@config/assetTypes';
 import BaselineComparison from '@components/BaselineComparison';
 import type { BaselinePhoto, CurrentPhoto } from '@components/BaselineComparison';
+import DefectQuickPick from '@components/DefectQuickPick';
+import type { QuickPickSelection } from '@components/DefectQuickPick';
 
 // =============================================
 // TYPES
@@ -104,6 +112,8 @@ interface AssetCaptureState {
   condition: ConditionRating | null;
   /** Whether this asset's data has been saved */
   saved: boolean;
+  /** Feature 15: manually selected defects from library */
+  manualDefects: DefectDetail[];
 }
 
 function createEmptyCaptureState(): AssetCaptureState {
@@ -116,6 +126,7 @@ function createEmptyCaptureState(): AssetCaptureState {
     notes: '',
     condition: null,
     saved: false,
+    manualDefects: [],
   };
 }
 
@@ -238,6 +249,9 @@ export default function InspectionCapture(): JSX.Element {
   const [settingBaseline, setSettingBaseline] = useState(false);
   /** The first captured photo's full base64 for comparison display */
   const [firstPhotoBase64, setFirstPhotoBase64] = useState<string | null>(null);
+
+  // ---- Feature 15: Defect Quick-Pick ----
+  const [showQuickPick, setShowQuickPick] = useState(false);
 
   // ---- Saving ----
   const [saving, setSaving] = useState(false);
@@ -365,6 +379,7 @@ export default function InspectionCapture(): JSX.Element {
         notes: existing.inspector_notes ?? '',
         condition: existing.overall_condition,
         saved: true,
+        manualDefects: existing.defects ?? [],
       });
     } else {
       setCaptureState(createEmptyCaptureState());
@@ -375,6 +390,7 @@ export default function InspectionCapture(): JSX.Element {
     setVuLevel(0);
     setRecordDuration(0);
     setVoiceState(VoiceCaptureState.IDLE);
+    setShowQuickPick(false);
 
     // Cleanup any active voice capture
     if (voiceCaptureRef.current) {
@@ -612,6 +628,33 @@ export default function InspectionCapture(): JSX.Element {
   }, []);
 
   // =============================================
+  // FEATURE 15: DEFECT QUICK-PICK HANDLERS
+  // =============================================
+
+  const handleQuickPickSelect = useCallback((selection: QuickPickSelection) => {
+    const defect: DefectDetail = {
+      description: selection.description,
+      bs_en_reference: selection.bs_en_reference,
+      risk_rating: selection.risk_rating as RiskRating,
+      remedial_action: selection.remedial_action,
+      action_timeframe: (selection.action_timeframe ?? 'routine') as ActionTimeframe,
+      estimated_cost_band: (selection.estimated_cost_band ?? 'low') as CostBand,
+    };
+
+    setCaptureState((prev) => ({
+      ...prev,
+      manualDefects: [...prev.manualDefects, defect],
+    }));
+  }, []);
+
+  const handleRemoveManualDefect = useCallback((index: number) => {
+    setCaptureState((prev) => ({
+      ...prev,
+      manualDefects: prev.manualDefects.filter((_, i) => i !== index),
+    }));
+  }, []);
+
+  // =============================================
   // SAVE CURRENT ASSET
   // =============================================
 
@@ -637,10 +680,12 @@ export default function InspectionCapture(): JSX.Element {
         ai_model_version: '',
         ai_processing_status: AIProcessingStatus.PENDING,
         ai_processed_at: null,
-        defects: [],
+        defects: captureState.manualDefects,
         overall_condition: captureState.condition,
         risk_rating: null, // Set by AI analysis
-        requires_action: false,
+        requires_action: captureState.manualDefects.some(
+          (d) => d.risk_rating === RiskRating.VERY_HIGH || d.risk_rating === RiskRating.HIGH,
+        ),
         action_timeframe: null,
         inspector_confirmed: false,
         inspector_notes: captureState.notes || null,
@@ -773,7 +818,7 @@ export default function InspectionCapture(): JSX.Element {
     existingItems.has(currentAsset.asset_code);
   const isRecording = voiceState === VoiceCaptureState.RECORDING;
   const isPaused = voiceState === VoiceCaptureState.PAUSED;
-  const hasCapture = captureState.voiceTranscript || captureState.hasAudioRecording || captureState.notes || captureState.condition;
+  const hasCapture = captureState.voiceTranscript || captureState.hasAudioRecording || captureState.notes || captureState.condition || captureState.manualDefects.length > 0;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-4">
@@ -1070,6 +1115,70 @@ export default function InspectionCapture(): JSX.Element {
         </div>
       )}
 
+      {/* ── Feature 15: Common Defects Quick-Pick ── */}
+      <div className="iv-panel p-4 mb-4">
+        <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-iv-accent" />
+          Defects
+          {captureState.manualDefects.length > 0 && (
+            <span className="text-xs text-[#F97316]">({captureState.manualDefects.length})</span>
+          )}
+        </h3>
+
+        <button
+          type="button"
+          onClick={() => setShowQuickPick(true)}
+          className="iv-btn-secondary flex items-center gap-2 text-sm mb-3"
+        >
+          <BookOpen className="w-4 h-4" />
+          Common Defects
+        </button>
+
+        {/* Manual defects list */}
+        {captureState.manualDefects.length > 0 && (
+          <div className="space-y-2">
+            {captureState.manualDefects.map((defect, idx) => (
+              <div key={idx} className="p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5 ${
+                      defect.risk_rating === 'very_high' ? 'bg-[#EF4444]' :
+                      defect.risk_rating === 'high' ? 'bg-[#F97316]' :
+                      defect.risk_rating === 'medium' ? 'bg-[#EAB308]' :
+                      'bg-[#22C55E]'
+                    }`} />
+                    <div className="min-w-0">
+                      <p className="text-sm iv-text">{defect.description}</p>
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <span className="text-2xs iv-muted">
+                          {RISK_RATING_LABELS[defect.risk_rating as RiskRating] ?? defect.risk_rating}
+                        </span>
+                        {defect.bs_en_reference && (
+                          <span className="text-2xs text-iv-accent">{defect.bs_en_reference}</span>
+                        )}
+                        {defect.action_timeframe && (
+                          <span className="text-2xs iv-muted">
+                            {ACTION_TIMEFRAME_LABELS[defect.action_timeframe as ActionTimeframe] ?? defect.action_timeframe}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveManualDefect(idx)}
+                    className="iv-btn-icon text-red-400 flex-shrink-0"
+                    aria-label="Remove defect"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* ── Manual Notes ── */}
       <div className="iv-panel p-4 mb-4">
         <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
@@ -1180,6 +1289,14 @@ export default function InspectionCapture(): JSX.Element {
           </p>
         )}
       </div>
+
+      {/* ── Feature 15: Quick-Pick Bottom Sheet ── */}
+      <DefectQuickPick
+        assetType={currentAsset.asset_type}
+        isOpen={showQuickPick}
+        onClose={() => setShowQuickPick(false)}
+        onSelect={handleQuickPickSelect}
+      />
     </div>
   );
 }

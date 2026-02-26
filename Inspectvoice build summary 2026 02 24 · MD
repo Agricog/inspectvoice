@@ -1,8 +1,8 @@
-# InspectVoice Build Summary — 24–25 February 2026
+# InspectVoice Build Summary — 24–26 February 2026
 
 ## Overview
 
-Two-day build covering PWA implementation, 12 production features for council tender readiness, a complete procurement documentation pack, full backend infrastructure deployed to Neon and Cloudflare, Clerk authentication integration, GitHub CI/CD pipeline setup, scheduled email infrastructure, and AI style normalisation. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
+Three-day build covering PWA implementation, 13 production features for council tender readiness, a complete procurement documentation pack, full backend infrastructure deployed to Neon and Cloudflare, Clerk authentication integration, GitHub CI/CD pipeline setup, scheduled email infrastructure, AI style normalisation, and route planning with Mapbox GL. All code follows Autaimate v3 build standard: TypeScript strict, zero `any`, server-side validation, multi-tenancy isolation, offline-first.
 
 ---
 
@@ -651,6 +651,94 @@ During wiring, 20+ TypeScript strict mode errors were caught and fixed across 5 
 
 ---
 
+## Day 3 (26 Feb): Session 7 — Feature 13: Today's Route Planning
+
+### Feature 13: Today's Route Planning ✅
+**Purpose:** Daily operational tool for inspectors and managers. Shows all sites due/overdue for inspection on a Mapbox GL map with urgency-coded pins, sortable list, and optimised multi-stop driving route. Eliminates ad-hoc route decisions and ensures overdue sites are visible every morning.
+
+**Architecture:**
+- **Map** — Mapbox GL JS v3 (`mapbox-gl` + `react-map-gl`) — vector tiles, 60fps zoom, satellite/street toggle, dark theme (`mapbox://styles/mapbox/dark-v11`), best mobile touch performance
+- **RBAC** — `org:admin`/`org:manager` see all org sites + "unassigned" filter; `org:member` (inspector) sees assigned sites only via `site_assignments` table
+- **Due date computation** — server-side from `inspections` table: last inspection per site per type + site frequency fields → next_due → urgency classification
+- **Route optimisation** — server-side Mapbox Optimization API (≤12 stops) for optimal stop order, Mapbox Directions API (≤25 coords) for route geometry after drag-to-reorder
+- **Security** — Mapbox token server-side only for Optimization/Directions calls; URL-restricted public token for frontend tiles/styles
+
+**RBAC model — site_assignments table:**
+- Inspector access: `INNER JOIN site_assignments` filtering by `user_id` + `is_active`
+- Admin/manager access: all org sites, no join filter
+- Unassigned filter: `LEFT JOIN site_assignments WHERE sa.id IS NULL`
+- Unique constraint: one assignment per user per site per org
+- Supports future assignment UI without schema changes
+
+**Due date logic:**
+- For each site × inspection type (routine / operational / annual):
+  - `next_due = last_inspection_date + frequency_days`
+  - If never inspected → overdue immediately
+- Urgency classification: overdue (<0 days) → due_today (0) → due_this_week (≤7) → due_this_month (≤30) → not_due (>30)
+- Site-level urgency = most urgent across all inspection types
+
+**Files delivered:**
+
+| File | Path | Description |
+|------|------|-------------|
+| Migration | `migrations/008_site_assignments.sql` | `site_assignments` table — org_id, site_id, user_id, is_active, assigned_by, unique constraint, RLS, partial indexes, updated_at trigger |
+| Worker route | `workers/src/routes/routePlanner.ts` | 3 endpoints: `GET /sites` (RBAC + 5 parallel queries + due computation), `POST /optimise` (Mapbox Optimization ≤12 stops), `POST /directions` (Mapbox Directions ≤25 coords for reorder) |
+| Worker types | `workers/src/types.ts` | Added `MAPBOX_ACCESS_TOKEN` to Env interface |
+| Worker router | `workers/src/index.ts` | Added import + 3 route entries for route-planner |
+| Frontend page | `src/pages/RoutePlanner.tsx` | Full page: Mapbox GL map with urgency-coded SVG pins, side-by-side list (desktop) / toggle (mobile), urgency filters, route planning with optimise button, drag-to-reorder stops, route line overlay, geolocation, route summary overlay |
+| Type stub | `src/mapbox-gl.d.ts` | Stub declaration for phantom `@mapbox/point-geometry` transitive type reference |
+| App.tsx | `src/App.tsx` | Route added for `/route-planner` |
+| Layout.tsx | `src/components/Layout.tsx` | Nav item added: "Route" with Navigation icon |
+| package.json | `package.json` | Added `mapbox-gl` + `react-map-gl` dependencies |
+| tsconfig.json | `tsconfig.json` | Added `"types": []` to prevent auto-discovery of phantom `@types` packages |
+
+**GET /api/v1/route-planner/sites — 5 parallel queries:**
+1. Sites (RBAC-filtered: all org / assigned only / unassigned only)
+2. Last inspection per site per type (most recent signed/completed)
+3. Asset count per site
+4. Open defect count per site
+5. Assigned inspectors per site (admin view only)
+
+**POST /api/v1/route-planner/optimise:**
+- Accepts 2–12 site IDs + optional start position (geolocation)
+- RBAC check: verifies requesting user has access to all requested sites
+- Calls Mapbox Optimization API with `roundtrip=false`, `source=first` if start position provided
+- Returns: ordered stops with arrival minutes/distance, total duration/distance, GeoJSON route geometry
+
+**POST /api/v1/route-planner/directions:**
+- Accepts 2–25 coordinate pairs (for drag-to-reorder, no re-optimisation)
+- Returns: total duration/distance, per-leg breakdown, GeoJSON route geometry
+
+**Frontend features:**
+- **Urgency-coded pins** — SVG circles: red (overdue), orange (due today), yellow (due this week), blue (due this month), green (not due). Selected pin: larger with white stroke. Route number overlay when in route mode
+- **Filter bar** — All Sites, Actionable, Overdue, Due Today, This Week, This Month
+- **Unassigned toggle** — admin/manager only, shows sites with no inspector assignment
+- **Site list items** — urgency icon, site name, address, per-type due dates with colour coding, asset count, defect count, drill-in button
+- **Route controls** — "Add All to Route" / "Plan Route" (optimise) / "Clear", stop counter (x/12)
+- **Route summary overlay** — total drive time + distance + stop count, positioned on map
+- **Drag-to-reorder** — HTML5 drag events, re-runs Directions API (not re-optimise)
+- **Geolocation** — Mapbox GeolocateControl, captured position used as route start
+- **Route line** — GeoJSON source with two layers: dark shadow + green foreground
+- **Responsive** — desktop: 400px list panel + map; mobile: toggle between list and map views
+- **Map controls** — NavigationControl (zoom/compass), GeolocateControl (track position)
+
+**Secrets configured:**
+- `MAPBOX_ACCESS_TOKEN` — Cloudflare Worker secret for server-side API calls ✅
+- `VITE_MAPBOX_TOKEN` — Railway env var for frontend map tiles ✅
+
+**Migration 008 deployed to Neon ✅:**
+- `site_assignments` table with RLS, 2 partial indexes, unique constraint, updated_at trigger
+
+**TypeScript build fixes:**
+- `Map` import from `react-map-gl` clashed with JavaScript built-in `Map` — renamed to `MapGL`
+- Removed unused imports (`MapPin`, `Crosshair`, `mostUrgentDue`, `idx`)
+- Added `"types": []` to `tsconfig.json` to prevent phantom `@types/mapbox__point-geometry` auto-discovery
+- Added `src/mapbox-gl.d.ts` stub for `@mapbox/point-geometry` module resolution
+
+**Final build status:** All TypeScript errors resolved, clean `npm run build` ✅
+
+---
+
 ## Complete File Inventory
 
 ### Code Files (Features 1–5)
@@ -692,7 +780,7 @@ src/
     ├── AssetDetail.tsx           # Feature 8: Complete rewrite with condition timeline + history
     ├── IncidentList.tsx          # Feature 9: Filterable incident register
     ├── IncidentForm.tsx          # Feature 9: Multi-section incident form
-    └── App.tsx                   # Feature 9 + 12: Updated router with incident + normalisation routes
+    └── App.tsx                   # Feature 9 + 12 + 13: Updated router
 
 workers/src/
 ├── routes/
@@ -773,6 +861,30 @@ migrations/
 └── 007_normalisation.sql        # Feature 12: normalisation_log + normalisation_usage tables
 ```
 
+### Code Files (Feature 13, Day 3 Session 7)
+```
+workers/src/
+├── routes/
+│   └── routePlanner.ts          # Feature 13: 3 endpoints (sites/optimise/directions)
+├── types.ts                     # Feature 13: Added MAPBOX_ACCESS_TOKEN to Env
+└── index.ts                     # Feature 13: 3 route entries + import
+
+src/
+├── pages/
+│   └── RoutePlanner.tsx         # Feature 13: Full page — map + list + route + drag-reorder
+├── components/
+│   └── Layout.tsx               # Feature 13: Nav item added ("Route" with Navigation icon)
+├── mapbox-gl.d.ts               # Feature 13: Type stub for @mapbox/point-geometry
+└── App.tsx                      # Feature 13: /route-planner route
+
+migrations/
+└── 008_site_assignments.sql     # Feature 13: site_assignments table (RBAC)
+
+Config changes:
+├── package.json                 # Feature 13: mapbox-gl + react-map-gl dependencies
+└── tsconfig.json                # Feature 13: "types": [] to prevent phantom @types auto-discovery
+```
+
 ### Code Files (Clerk Auth + CI/CD, Day 2 Sessions 2–3)
 ```
 src/
@@ -813,7 +925,7 @@ procurement-pack/
 
 ## Database Schema (Neon — all deployed ✅)
 
-All 16 tables present:
+All 17 tables present:
 
 | Table | Source |
 |-------|--------|
@@ -832,6 +944,7 @@ All 16 tables present:
 | `organisations` | Batch 18 |
 | `photos` | Batch 18 |
 | `sealed_exports` | Migration 005 (Feature 10) |
+| `site_assignments` | Migration 008 (Feature 13) |
 | `sites` | Batch 18 |
 | `users` | Batch 18 |
 | `webhook_events` | Batch 18 |
@@ -842,6 +955,7 @@ All 16 tables present:
 - **TypeScript strict** — zero `any`, all interfaces explicitly typed
 - **Server-side validation** — never trust client data, Zod schemas on all endpoints
 - **Multi-tenancy isolation** — `org_id` on every table, RLS policies, server-side enforcement
+- **RBAC** — role-based access control via Clerk org roles, enforced at API level
 - **Offline-first** — IndexedDB for local state, queue-and-sync pattern, graceful degradation
 - **Audit logging** — all state changes logged with requestId, userId, orgId, timestamp
 - **BS EN 1176-7 compliance** — inspection structure, risk methodology, report format aligned to standard
@@ -868,6 +982,7 @@ Cron Triggers (weekly/monthly summary emails)
   ↓
 Resend API (email delivery)
 Claude API (AI normalisation)
+Mapbox API (route optimisation + directions — server-side only)
 ```
 
 **CI/CD Pipeline:**
@@ -877,7 +992,7 @@ Claude API (AI normalisation)
 
 ---
 
-## Deployment Status (End of Day — 25 Feb 2026)
+## Deployment Status (End of Day 3 — 26 Feb 2026)
 
 | Item | Status |
 |------|--------|
@@ -888,14 +1003,17 @@ Claude API (AI normalisation)
 | Migration 005 (sealed_exports) | ✅ Deployed to Neon |
 | Migration 006 (email_preferences + email_send_log) | ✅ Deployed to Neon |
 | Migration 007 (normalisation_log + normalisation_usage) | ✅ Deployed to Neon |
-| All 16 tables confirmed present | ✅ Verified via Neon Tables |
+| Migration 008 (site_assignments) | ✅ Deployed to Neon |
+| All 17 tables confirmed present | ✅ |
 | **Worker (Cloudflare)** | |
 | dashboard.ts (rewrite + hotlist) | ✅ Deployed |
 | assetHistory.ts (new) | ✅ Deployed |
 | incidents.ts (new) | ✅ Deployed |
 | claimsPack.ts (new) | ✅ Deployed |
+| routePlanner.ts (new — Feature 13) | ✅ Deployed |
 | guard.ts (Clerk v2 JWT support) | ✅ Deployed |
-| types.ts (Clerk env vars) | ✅ Deployed |
+| types.ts (Clerk + Mapbox env vars) | ✅ Deployed |
+| index.ts (all 13 features routed) | ✅ Deployed |
 | validation.ts (validateRequiredString) | ✅ Deployed |
 | wrangler.toml (build + CORS fixes) | ✅ Deployed |
 | package.json (syntax + scripts) | ✅ Deployed |
@@ -903,6 +1021,7 @@ Claude API (AI normalisation)
 | Feature 11 Worker files (5 files) | ⏳ Built, pending commit |
 | Feature 12 Worker files (2 files) | ⏳ Built, pending commit |
 | Clerk secrets (4 secrets) | ✅ Configured |
+| MAPBOX_ACCESS_TOKEN | ✅ Configured |
 | MANIFEST_SIGNING_KEY + KEY_ID | ⏳ Not yet configured (needed for Feature 10 runtime) |
 | RESEND_API_KEY | ⏳ Not yet configured (needed for Feature 11 runtime) |
 | ANTHROPIC_API_KEY | ⏳ Not yet configured (needed for Feature 12 runtime) |
@@ -915,6 +1034,8 @@ Claude API (AI normalisation)
 | Feature 10 frontend files (3 files) | ✅ Deployed |
 | Feature 11 frontend files (1 file) | ✅ Deployed (green build) |
 | Feature 12 frontend files (8 files) | ✅ Deployed (green build) |
+| Feature 13 frontend files (4 files) | ✅ Deployed (green build) |
+| VITE_MAPBOX_TOKEN | ✅ Configured |
 | Features 1–5 code files | ⏳ Built, pending commit to repo |
 | **CI/CD** | |
 | GitHub auto-deploy (Worker) | ✅ Working |
@@ -928,7 +1049,7 @@ Claude API (AI normalisation)
 
 ---
 
-## Feature Summary (all 12 features)
+## Feature Summary (all 13 features)
 
 | # | Feature | Category | Status |
 |---|---------|----------|--------|
@@ -944,6 +1065,7 @@ Claude API (AI normalisation)
 | 10 | Tamper-Evident Export Bundles | Security/Procurement | ✅ Built + Deployed |
 | 11 | Weekly/Monthly Manager Summary Emails | Operations | ✅ Built, pending secrets |
 | 12 | AI Style Normalisation | Quality/Differentiation | ✅ Built, green build, pending secrets |
+| 13 | Today's Route Planning | Daily Operations | ✅ Built + Deployed |
 
 ---
 
@@ -952,8 +1074,8 @@ Claude API (AI normalisation)
 1. **Configure remaining Worker secrets** — MANIFEST_SIGNING_KEY + KEY_ID (Feature 10), RESEND_API_KEY (Feature 11), ANTHROPIC_API_KEY (Feature 12)
 2. **Commit Features 1–5** — Wire remaining code files from Day 1 Session 2 into the codebase
 3. **Commit Feature 11 + 12 Worker files** — Push to GitHub for auto-deploy
-4. **Feature 13: Today's Route Planning** — Last item on the "Further Ahead" list (map + due sites)
-5. **Steps 10.11–10.12** — Add sealed export options to InspectionReview.tsx and IncidentForm.tsx
+4. **Steps 10.11–10.12** — Add sealed export options to InspectionReview.tsx and IncidentForm.tsx
+5. **Site assignment admin UI** — Manager page to assign inspectors to sites (data model ready, no UI yet)
 6. **Fix pre-existing TS errors** — 100+ TypeScript errors across Worker codebase (esbuild ignores them). Once fixed, restore `npx tsc --noEmit` to wrangler.toml build command
 7. **Seed test data** — Add a test site/inspection to verify full pipeline end-to-end
 8. **Customise procurement pack** — Fill in placeholder fields, verify pricing, get DPA reviewed by solicitor
@@ -963,7 +1085,7 @@ Claude API (AI normalisation)
 
 ---
 
-## Key Learnings (across both days)
+## Key Learnings (across all three days)
 
 1. **Vite env vars are build-time** — changing `VITE_*` requires redeploy, not just env var update
 2. **Clerk v2 JWT format** — org claims in nested `o` object (`o.id`, `o.rol`), not flat `org_id`/`org_role`
@@ -980,3 +1102,6 @@ Claude API (AI normalisation)
 13. **TypeScript strict array indexing** — `array[index]` returns `T | undefined`, must guard before use or helper functions
 14. **Double cast via unknown** — when TypeScript won't allow direct cast between incompatible types (e.g. `OrgSettings` to `Record<string, unknown>`), cast through `unknown` as intermediary
 15. **Prop interface alignment** — when wiring new components into existing pages, always verify actual prop names against component source, not assumed names from integration guides
+16. **`react-map-gl` Map import clashes with built-in Map** — rename to `MapGL` on import to avoid TypeScript treating `new Map<K,V>()` as the component
+17. **Phantom `@types` packages** — `mapbox-gl` v3 triggers resolution of `@types/mapbox__point-geometry` which doesn't exist as a standalone package. Fix: set `"types": []` in `tsconfig.json` to disable auto-discovery, plus add a stub `.d.ts` file
+18. **Mapbox Optimization API ≤12 stops** — design UX around this constraint from day one rather than discovering it late; Directions API supports ≤25 coords for drawing routes after reorder

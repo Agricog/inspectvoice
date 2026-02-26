@@ -22,10 +22,12 @@ import { Link } from 'react-router-dom';
 import {
   Mic,
   Shield,
+  Clock,
   FileText,
   AlertTriangle,
   CheckCircle,
   ChevronDown,
+  ChevronRight,
   BarChart3,
   Bell,
   Camera,
@@ -41,7 +43,7 @@ import {
 // SEO DATA
 // =============================================
 
-const SITE_URL = 'https://inspectvoice-production.up.railway.app';
+const SITE_URL = 'https://inspectvoice.co.uk';
 const OG_IMAGE = `${SITE_URL}/og-inspectvoice.jpg`;
 
 const PAGE_TITLE = 'InspectVoice — AI Voice-Powered Playground Inspection Software UK | BS EN 1176';
@@ -1008,3 +1010,4 @@ export default function LandingPage() {
     </>
   );
 }
+

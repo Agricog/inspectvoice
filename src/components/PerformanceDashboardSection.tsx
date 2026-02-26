@@ -17,12 +17,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  BarChart3,
   Users,
   ArrowRight,
   Loader2,
-  TrendingUp,
-  AlertTriangle,
 } from 'lucide-react';
 import { useAuth, useOrganization } from '@clerk/clerk-react';
 import { MyPerformanceCard } from '@pages/MyPerformancePage';

@@ -24,6 +24,8 @@ import {
 import { useAuth, useOrganization } from '@clerk/clerk-react';
 import { MyPerformanceCard } from '@pages/MyPerformancePage';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
 // =============================================
 // ORG PERFORMANCE SUMMARY (manager/admin only)
 // =============================================
@@ -43,7 +45,7 @@ function OrgPerformanceCard(): JSX.Element {
   const fetchStats = useCallback(async () => {
     try {
       const token = await getToken();
-      const res = await fetch('/api/v1/inspector-performance?period=month', {
+      const res = await fetch(`${API_BASE}/api/v1/inspector-performance?period=month`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;

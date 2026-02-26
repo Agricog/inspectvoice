@@ -2,20 +2,7 @@
  * InspectVoice — Cloudflare Worker Entry Point
  * Routes all HTTP requests and queue messages to their handlers.
  *
- * Request lifecycle:
- *   1. CORS preflight handling
- *   2. Webhook routes (signature-verified, no JWT)
- *   3. Public verification (no JWT — Feature 10)
- *   4. Authenticated routes (Clerk JWT → guard → route handler)
- *   5. Error boundary (catches all errors, returns structured JSON)
- *   6. CORS headers on every response
- *
- * Queue lifecycle:
- *   - AUDIO_PROCESSING_QUEUE → audioProcessor
- *   - PDF_GENERATION_QUEUE → pdfGenerator
- *
- * Cron lifecycle:
- *   - Daily 08:00 UTC → summaryEmail (checks DB for due frequencies)
+ * UPDATED: Features 14 (Inspector Performance) + 15 (Defect Library) routes added.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -77,6 +64,31 @@ import {
   getNormalisationUsage,
 } from './routes/normalise';
 
+// ── Feature 14: Inspector Performance ──
+import {
+  getPerformanceOverview,
+  getPerformanceDetail,
+  getMyPerformance,
+  getMyPerformanceTrends,
+  getPerformanceBenchmarks,
+  createPerformanceShareLink,
+  resolvePerformanceShareLink,
+} from './routes/inspectorPerformance';
+import { computeInspectorMetrics } from './cron/metricsComputation';
+
+// ── Feature 15: Defect Library ──
+import {
+  listDefectLibrary,
+  quickPickDefects,
+  getDefectLibraryEntry,
+  getDefectLibraryVersions,
+  createDefectLibraryEntry,
+  updateDefectLibraryEntry,
+  deleteDefectLibraryEntry,
+  recordLibraryUsage,
+  seedDefectLibrary,
+} from './routes/defectLibrary';
+
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
 import { handleClerkWebhook } from './routes/webhooks/clerk';
@@ -89,11 +101,6 @@ import { handlePdfQueue } from './queues/pdfGenerator';
 // ROUTE TABLE
 // =============================================
 
-/**
- * Route definitions: [method, pattern, handler]
- * Patterns use :param syntax for path parameters.
- * Order matters — first match wins.
- */
 const ROUTES: Array<[string, string, RouteHandler]> = [
   // ── Sites ──
   ['GET', '/api/v1/sites', listSites],
@@ -188,6 +195,26 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['POST', '/api/v1/sealed-exports/incidents/:id/claims-pack', createSealedClaimsPack],
   ['GET',  '/api/v1/sealed-exports/:bundleId/download', downloadSealedExport],
   ['GET',  '/api/v1/sealed-exports', listSealedExports],
+
+  // ── Feature 14: Inspector Performance ──
+  ['GET',  '/api/v1/inspector-performance/benchmarks', getPerformanceBenchmarks],
+  ['GET',  '/api/v1/inspector-performance/:userId', getPerformanceDetail],
+  ['POST', '/api/v1/inspector-performance/:userId/share', createPerformanceShareLink],
+  ['GET',  '/api/v1/inspector-performance', getPerformanceOverview],
+  ['GET',  '/api/v1/my-performance/trends', getMyPerformanceTrends],
+  ['GET',  '/api/v1/my-performance', getMyPerformance],
+  ['GET',  '/api/v1/performance-share/:token', resolvePerformanceShareLink],
+
+  // ── Feature 15: Defect Library ──
+  ['GET',    '/api/v1/defect-library/quick-pick/:assetType', quickPickDefects],
+  ['GET',    '/api/v1/defect-library/:id/versions', getDefectLibraryVersions],
+  ['POST',   '/api/v1/defect-library/:id/record-usage', recordLibraryUsage],
+  ['GET',    '/api/v1/defect-library/:id', getDefectLibraryEntry],
+  ['POST',   '/api/v1/defect-library/seed', seedDefectLibrary],
+  ['POST',   '/api/v1/defect-library', createDefectLibraryEntry],
+  ['PUT',    '/api/v1/defect-library/:id', updateDefectLibraryEntry],
+  ['DELETE', '/api/v1/defect-library/:id', deleteDefectLibraryEntry],
+  ['GET',    '/api/v1/defect-library', listDefectLibrary],
 ];
 
 /**
@@ -203,11 +230,7 @@ const WEBHOOK_ROUTES: Array<[string, string, WebhookHandler]> = [
 // =============================================
 
 export default {
-  /**
-   * HTTP request handler — the main entry point.
-   */
   async fetch(request: Request, env: Env): Promise<Response> {
-    // ── CORS Preflight ──
     if (request.method === 'OPTIONS') {
       return handlePreflight(request, env);
     }
@@ -247,13 +270,9 @@ export default {
         const params = matchRoute(pattern, path);
         if (params === null) continue;
 
-        // Authenticate and build context
         const ctx = await guard(request, env);
-
-        // Route matched — execute handler
         const response = await handler(request, params, ctx);
 
-        // Log request completion
         const latencyMs = Date.now() - ctx.startedAt;
         const logger = Logger.fromContext(ctx);
         logger.info('Request completed', {
@@ -279,10 +298,8 @@ export default {
       return addCorsHeaders(notFoundResponse, request, env);
 
    } catch (error) {
-      // ── Global Error Boundary ──
       const requestId = crypto.randomUUID();
 
-      // Production error logging — surfaces in Cloudflare Observability
       console.error(JSON.stringify({
         level: 'error',
         requestId,
@@ -297,11 +314,7 @@ export default {
     }
   },
 
-  /**
-   * Queue message handler — dispatches to the correct consumer.
-   */
   async queue(batch: MessageBatch<QueueMessageBody>, env: Env): Promise<void> {
-    // Determine queue from first message or queue name
     const firstMessage = batch.messages[0];
     if (!firstMessage) return;
 
@@ -317,7 +330,6 @@ export default {
         break;
 
       default:
-        // Unknown message type — ack all to prevent infinite redelivery
         for (const message of batch.messages) {
           message.ack();
         }
@@ -325,20 +337,28 @@ export default {
   },
 
   /**
-   * Cron trigger handler — summary email dispatch.
-   * Runs daily at 08:00 UTC, checks DB for due frequencies.
+   * Cron trigger handler.
+   * Existing: 0 8 * * * → summary emails
+   * NEW:      0 3 * * * → inspector metrics computation (run at 03:00 UTC, before working hours)
    *
-   * Schedule: 0 8 * * * (configured in wrangler.toml)
-   * - Daily recipients: every day
-   * - Weekly recipients: Mondays only
-   * - Monthly recipients: 1st of month only
+   * Add to wrangler.toml:
+   *   [triggers]
+   *   crons = ["0 8 * * *", "0 3 * * *"]
    */
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
-    ctx.waitUntil(handleSummaryEmailCron(env));
+    const cronPattern = controller.cron;
+
+    if (cronPattern === '0 3 * * *') {
+      // Feature 14: Daily metrics computation
+      ctx.waitUntil(computeInspectorMetrics(env));
+    } else {
+      // Default: summary email cron (0 8 * * *)
+      ctx.waitUntil(handleSummaryEmailCron(env));
+    }
   },
 };
 
@@ -346,19 +366,10 @@ export default {
 // ROUTE MATCHING
 // =============================================
 
-/**
- * Match a route pattern against a URL path.
- * Returns extracted params or null if no match.
- *
- * Pattern: '/api/v1/sites/:id'
- * Path:    '/api/v1/sites/abc-123'
- * Result:  { id: 'abc-123' }
- */
 function matchRoute(pattern: string, path: string): RouteParams | null {
   const patternParts = pattern.split('/');
   const pathParts = path.split('/');
 
-  // Must have same number of segments
   if (patternParts.length !== pathParts.length) return null;
 
   const params: Record<string, string> = {};
@@ -368,12 +379,10 @@ function matchRoute(pattern: string, path: string): RouteParams | null {
     const pathPart = pathParts[i] ?? '';
 
     if (patternPart.startsWith(':')) {
-      // Parameter segment — capture value
       const paramName = patternPart.slice(1);
-      if (!pathPart) return null; // Empty param value
+      if (!pathPart) return null;
       params[paramName] = pathPart;
     } else if (patternPart !== pathPart) {
-      // Static segment mismatch
       return null;
     }
   }

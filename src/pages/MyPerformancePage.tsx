@@ -16,9 +16,6 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   BarChart3,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   ArrowRight,
   Loader2,
   ClipboardCheck,

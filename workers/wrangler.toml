@@ -73,15 +73,12 @@ max_batch_size = 1
 max_retries = 3
 dead_letter_queue = "inspectvoice-pdf-dlq"
 # =============================================
-# Cron Triggers — Summary Email Dispatch
+# Cron Triggers
 # =============================================
-# Single daily trigger at 08:00 UTC.
-# Handler checks DB for which frequencies are due:
-#   - daily:   every day
-#   - weekly:  Mondays only
-#   - monthly: 1st of month only
+# 08:00 UTC — Summary email dispatch (daily/weekly/monthly)
+# 03:00 UTC — Inspector metrics computation (Feature 14)
 [triggers]
-crons = ["0 8 * * *"]
+crons = ["0 8 * * *", "0 3 * * *"]
 # =============================================
 # Observability
 # =============================================
@@ -115,5 +112,5 @@ queue = "inspectvoice-pdf-generation-staging"
 max_batch_size = 1
 max_retries = 3
 [env.staging.triggers]
-crons = ["0 8 * * *"]
+crons = ["0 8 * * *", "0 3 * * *"]
 

@@ -28,13 +28,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import Map, { Marker, Source, Layer, NavigationControl, GeolocateControl } from 'react-map-gl';
+import MapGL, { Marker, Source, Layer, NavigationControl, GeolocateControl } from 'react-map-gl';
 import type { MapRef, GeolocateResultEvent } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   Loader2,
   AlertTriangle,
-  MapPin,
   Navigation,
   Clock,
   Route as RouteIcon,
@@ -46,7 +45,6 @@ import {
   AlertCircle,
   CheckCircle2,
   XCircle,
-  Crosshair,
 } from 'lucide-react';
 
 // =============================================
@@ -251,11 +249,6 @@ function SiteListItem({
   onDrop: (() => void) | null;
 }): JSX.Element {
   const cfg = URGENCY_CONFIG[site.urgency];
-  const mostUrgentDue = site.inspection_dues.reduce<InspectionDue | null>((best, d) => {
-    if (!best) return d;
-    const urgencyOrder: Record<Urgency, number> = { overdue: 0, due_today: 1, due_this_week: 2, due_this_month: 3, not_due: 4 };
-    return urgencyOrder[d.urgency] < urgencyOrder[best.urgency] ? d : best;
-  }, null);
 
   return (
     <div
@@ -809,7 +802,7 @@ export default function RoutePlanner(): JSX.Element {
                 <p className="text-xs iv-muted mt-1">No sites match the current filter.</p>
               </div>
             ) : (
-              sites.map((site, idx) => {
+              sites.map((site) => {
                 const routeOrder = routeOrderMap.get(site.id) ?? null;
                 const isInRoute = routeStops.includes(site.id);
 
@@ -839,7 +832,7 @@ export default function RoutePlanner(): JSX.Element {
 
         {/* ── RIGHT PANEL: Map ── */}
         <div className={`flex-1 relative ${mobileView === 'map' ? 'flex' : 'hidden md:flex'}`}>
-          <Map
+          <MapGL
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}
             initialViewState={DEFAULT_VIEW}
@@ -897,7 +890,7 @@ export default function RoutePlanner(): JSX.Element {
                 />
               </Source>
             )}
-          </Map>
+          </MapGL>
 
           {/* Map overlay: route summary */}
           {routeData && (

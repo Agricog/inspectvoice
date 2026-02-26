@@ -16,10 +16,10 @@
  * - Responsive layout
  *
  * API:
- *   GET  /api/users/me           → current user profile
- *   PUT  /api/users/me           → update profile + credentials
- *   GET  /api/org                → current organisation
- *   PUT  /api/org                → update org settings (admin/manager)
+ *   GET  /api/v1/users/me           → current user profile
+ *   PUT  /api/v1/users/me           → update profile + credentials
+ *   GET  /api/v1/org                → current organisation
+ *   PUT  /api/v1/org                → update org settings (admin/manager)
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -649,10 +649,10 @@ function InspectionPreferences({
 
 export function SettingsPage(): JSX.Element {
   const { data: userData, loading: userLoading, error: userError, refetch: refetchUser } =
-    useFetch<UserProfileResponse>('/api/users/me');
+    useFetch<UserProfileResponse>('/api/v1/users/me');
 
   const { data: orgData, loading: orgLoading, error: orgError, refetch: refetchOrg } =
-    useFetch<OrgResponse>('/api/org');
+    useFetch<OrgResponse>('/api/v1/org');
 
   const user = userData?.data ?? null;
   const org = orgData?.data ?? null;
@@ -664,13 +664,13 @@ export function SettingsPage(): JSX.Element {
   // For now they update via the API and refetch.
   const handleSaveProfile = useCallback(async (data: Partial<UserEntity>) => {
     const { secureFetch } = await import('@hooks/useFetch');
-    await secureFetch('/api/users/me', { method: 'PUT', body: data });
+    await secureFetch('/api/v1/users/me', { method: 'PUT', body: data });
     await refetchUser();
   }, [refetchUser]);
 
   const handleSaveOrg = useCallback(async (data: Partial<Organisation>) => {
     const { secureFetch } = await import('@hooks/useFetch');
-    await secureFetch('/api/org', { method: 'PUT', body: data });
+    await secureFetch('/api/v1/org', { method: 'PUT', body: data });
     await refetchOrg();
   }, [refetchOrg]);
 

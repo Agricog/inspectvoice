@@ -31,12 +31,15 @@ export class HttpError extends Error {
     this.statusCode = statusCode;
     this.errorCode = errorCode;
 
-    // Maintains proper stack trace in V8
+   // Maintains proper stack trace in V8
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, this.constructor);
     }
   }
 }
+
+/** Alias for backward compatibility */
+export { HttpError as AppError };
 
 // =============================================
 // CLIENT ERRORS (4xx)

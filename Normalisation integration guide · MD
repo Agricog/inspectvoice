@@ -543,3 +543,55 @@ Deterministic, explainable matching:
    - Contains match as fallback
 3. Each match stores `match_reason` (full explanation) + `match_confidence` (exact/partial)
 4. Re-running preserves already-actioned matches, only re-creates unacknowledged ones
+# Feature 17 — Batch 2: Email Digest + Enhanced Filtering
+
+## Files to Replace (3)
+
+### 1. `workers/src/cron/summaryEmail.ts` — REPLACE ENTIRE FILE
+**What changed:**
+- Added 6th parallel query: active recalls with unacknowledged match counts
+- New `RecallEmailItem` type imported from emailTemplates
+- `AggregatedData` interface now includes `activeRecalls: RecallEmailItem[]`
+- `SummaryEmailData` passed to template builder now includes `activeRecalls`
+- `notification_log.summary_data` JSON now includes `active_recalls` count
+- `filterBySite()` passes recalls through unfiltered (recalls are org-wide)
+- No-activity check now includes `data.activeRecalls.length === 0`
+
+### 2. `workers/src/services/emailTemplates.tsx` — REPLACE ENTIRE FILE
+**What changed:**
+- New exported type: `RecallEmailItem` (title, manufacturer, severity, matchedAssetCount, unacknowledgedCount)
+- `SummaryEmailData` interface now includes `activeRecalls: RecallEmailItem[]`
+- New `buildRecallSection()` function — severity-coded recall rows with pending review counts
+- Recall section renders **before hotlist** (highest visibility for safety-critical items)
+- New `COLORS.purple` / `COLORS.purpleBg` added (violet-600/50) — reserved for future use
+- No-activity fallback now also checks `data.activeRecalls.length === 0`
+
+### 3. `src/pages/RecallsPage.tsx` — REPLACE ENTIRE FILE
+**What changed:**
+- Added `Search` back to lucide imports (now used by manufacturer search input)
+- Added state: `severityFilter` (RecallSeverity | null), `searchQuery` (string)
+- Client-side filtering: severity dropdown + manufacturer/title text search
+- Filter bar now wraps responsively (flex-col on mobile, flex-row on sm+)
+- Empty state message adapts to active filters vs no-filter
+- Removed unused `RecallStatus` local type alias
+- All Batch 1 TS6133 fixes retained (unused imports removed, getAuthToken fixed)
+
+## No Other File Changes
+No new routes, no migration, no integration edits to existing files.
+All 3 files are drop-in replacements.
+
+## Email Recall Section Behaviour
+- Recall section appears in **every** digest email (daily/weekly/monthly) when active recalls with matched assets exist
+- Not gated by recipient section preferences — recalls are always shown for safety visibility
+- Severity-sorted: critical first, then high, medium, advisory
+- Shows unacknowledged count per recall with "pending review" tag
+- Links to `/recalls` page for full management
+- Border colour adapts: red if any critical recall present, amber otherwise
+
+## Testing
+1. Commit all 3 files
+2. Deploy workers (`wrangler deploy`)
+3. Test email cron manually: trigger the cron via Cloudflare dashboard → Triggers → Run Now
+4. Verify recall section appears in email output when active recalls with matches exist
+5. Test RecallsPage filters: severity buttons, manufacturer search, combined filters
+6. Verify empty state adapts to "No recalls match your filters" when filtering

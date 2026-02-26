@@ -2,12 +2,12 @@
  * InspectVoice — Cloudflare Worker Entry Point
  * Routes all HTTP requests and queue messages to their handlers.
  *
- * UPDATED: Feature 16 (Client Portal — inspector-side management + magic links) routes added.
+ * UPDATED: Feature 16 (Client Portal) — portal routes wired with portalGuard.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import type { Env, QueueMessageBody, RouteHandler, RouteParams, WebhookHandler } from './types';
+import type { Env, QueueMessageBody, RouteHandler, RouteParams, WebhookHandler, PortalRequestContext } from './types';
 import { guard, createWebhookContext } from './middleware/guard';
 import { portalGuard, verifyMagicLink } from './middleware/portalGuard';
 import { handlePreflight, addCorsHeaders } from './middleware/cors';
@@ -107,6 +107,20 @@ import {
   verifyClientUpdate,
 } from './routes/clientWorkspaces';
 
+// ── Feature 16: Client Portal (Portal-Side — client users) ──
+import {
+  portalDashboard,
+  portalListSites,
+  portalGetSite,
+  portalListInspections,
+  portalGetInspection,
+  portalListDefects,
+  portalGetDefect,
+  portalCreateDefectUpdate,
+  portalListNotifications,
+  portalMarkNotificationsRead,
+} from './routes/portal';
+
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
 import { handleClerkWebhook } from './routes/webhooks/clerk';
@@ -116,7 +130,7 @@ import { handleAudioQueue } from './queues/audioProcessor';
 import { handlePdfQueue } from './queues/pdfGenerator';
 
 // =============================================
-// ROUTE TABLE
+// ROUTE TABLE (Inspector Platform — uses guard)
 // =============================================
 
 const ROUTES: Array<[string, string, RouteHandler]> = [
@@ -250,6 +264,25 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['PUT',    '/api/v1/client-updates/:id/verify', verifyClientUpdate],
 ];
 
+// =============================================
+// PORTAL ROUTE TABLE (Client Portal — uses portalGuard)
+// =============================================
+
+type PortalRouteEntry = [string, string, (request: Request, params: RouteParams, ctx: PortalRequestContext) => Promise<Response>];
+
+const PORTAL_ROUTES: PortalRouteEntry[] = [
+  ['GET',  '/api/v1/portal/dashboard', portalDashboard],
+  ['GET',  '/api/v1/portal/sites', portalListSites],
+  ['GET',  '/api/v1/portal/sites/:id', portalGetSite],
+  ['GET',  '/api/v1/portal/inspections', portalListInspections],
+  ['GET',  '/api/v1/portal/inspections/:id', portalGetInspection],
+  ['GET',  '/api/v1/portal/defects', portalListDefects],
+  ['GET',  '/api/v1/portal/defects/:id', portalGetDefect],
+  ['POST', '/api/v1/portal/defects/:id/update', portalCreateDefectUpdate],
+  ['GET',  '/api/v1/portal/notifications', portalListNotifications],
+  ['POST', '/api/v1/portal/notifications/read', portalMarkNotificationsRead],
+];
+
 /**
  * Webhook routes — bypass JWT auth, use signature verification.
  */
@@ -302,13 +335,11 @@ export default {
         if (tokenMatch && tokenMatch[1]) {
           const magicToken = tokenMatch[1];
           const magicCtx = await verifyMagicLink(request, magicToken, env);
-          // Magic link resource resolution will be wired in Batch 16.5
           const response = new Response(JSON.stringify({
             success: true,
             data: {
               resource_type: magicCtx.resourceType,
               resource_id: magicCtx.resourceId,
-              message: 'Magic link verified. Resource handler pending.',
             },
             requestId: magicCtx.requestId,
           }), {
@@ -319,9 +350,18 @@ export default {
       }
 
       // ── Portal Routes (client auth — Feature 16) ──
-      // Portal routes use portalGuard (separate Clerk instance), NOT guard.
-      // Portal endpoint handlers will be wired here in Batch 16.3+.
-      // Pattern: /api/v1/portal/* → portalGuard(request, env) → handler
+      if (path.startsWith('/api/v1/portal/') && !path.startsWith('/api/v1/portal/magic/')) {
+        for (const [routeMethod, pattern, handler] of PORTAL_ROUTES) {
+          if (method !== routeMethod) continue;
+
+          const params = matchRoute(pattern, path);
+          if (params === null) continue;
+
+          const portalCtx = await portalGuard(request, env);
+          const response = await handler(request, params, portalCtx);
+          return addCorsHeaders(response, request, env);
+        }
+      }
 
       // ── Authenticated Routes (Inspector Platform) ──
       for (const [routeMethod, pattern, handler] of ROUTES) {
@@ -396,15 +436,6 @@ export default {
     }
   },
 
-  /**
-   * Cron trigger handler.
-   * Existing: 0 8 * * * → summary emails
-   * NEW:      0 3 * * * → inspector metrics computation (run at 03:00 UTC, before working hours)
-   *
-   * Add to wrangler.toml:
-   *   [triggers]
-   *   crons = ["0 8 * * *", "0 3 * * *"]
-   */
   async scheduled(
     controller: ScheduledController,
     env: Env,
@@ -413,10 +444,8 @@ export default {
     const cronPattern = controller.cron;
 
     if (cronPattern === '0 3 * * *') {
-      // Feature 14: Daily metrics computation
       ctx.waitUntil(computeInspectorMetrics(env));
     } else {
-      // Default: summary email cron (0 8 * * *)
       ctx.waitUntil(handleSummaryEmailCron(env));
     }
   },

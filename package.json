@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Voice-driven AI-assisted inspection platform for UK parks, playgrounds and outdoor recreation assets",
   "scripts": {
+    "postinstall": "mkdir -p node_modules/@types/mapbox__point-geometry && echo 'export default class Point { x: number; y: number; constructor(x: number, y: number) }' > node_modules/@types/mapbox__point-geometry/index.d.ts",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

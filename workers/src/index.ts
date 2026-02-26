@@ -2,13 +2,14 @@
  * InspectVoice — Cloudflare Worker Entry Point
  * Routes all HTTP requests and queue messages to their handlers.
  *
- * UPDATED: Features 14 (Inspector Performance) + 15 (Defect Library) routes added.
+ * UPDATED: Feature 16 (Client Portal — inspector-side management + magic links) routes added.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
 import type { Env, QueueMessageBody, RouteHandler, RouteParams, WebhookHandler } from './types';
 import { guard, createWebhookContext } from './middleware/guard';
+import { portalGuard, verifyMagicLink } from './middleware/portalGuard';
 import { handlePreflight, addCorsHeaders } from './middleware/cors';
 import { formatErrorResponse } from './shared/errors';
 import { Logger } from './shared/logger';
@@ -88,6 +89,23 @@ import {
   recordLibraryUsage,
   seedDefectLibrary,
 } from './routes/defectLibrary';
+
+// ── Feature 16: Client Portal (Inspector-Side Management) ──
+import {
+  createClientWorkspace,
+  listClientWorkspaces,
+  getClientWorkspace,
+  updateClientWorkspace,
+  inviteClientUser,
+  listClientUsers,
+  updateClientUser,
+  deactivateClientUser,
+  grantSiteAccess,
+  listGrantedSites,
+  revokeSiteAccess,
+  listPendingClientUpdates,
+  verifyClientUpdate,
+} from './routes/clientWorkspaces';
 
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
@@ -215,6 +233,21 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['PUT',    '/api/v1/defect-library/:id', updateDefectLibraryEntry],
   ['DELETE', '/api/v1/defect-library/:id', deleteDefectLibraryEntry],
   ['GET',    '/api/v1/defect-library', listDefectLibrary],
+
+  // ── Feature 16: Client Workspace Management (Inspector-Side) ──
+  ['POST',   '/api/v1/client-workspaces', createClientWorkspace],
+  ['GET',    '/api/v1/client-workspaces', listClientWorkspaces],
+  ['GET',    '/api/v1/client-workspaces/:id', getClientWorkspace],
+  ['PUT',    '/api/v1/client-workspaces/:id', updateClientWorkspace],
+  ['POST',   '/api/v1/client-workspaces/:id/users', inviteClientUser],
+  ['GET',    '/api/v1/client-workspaces/:id/users', listClientUsers],
+  ['PUT',    '/api/v1/client-workspaces/:id/users/:userId', updateClientUser],
+  ['DELETE', '/api/v1/client-workspaces/:id/users/:userId', deactivateClientUser],
+  ['POST',   '/api/v1/client-workspaces/:id/sites', grantSiteAccess],
+  ['GET',    '/api/v1/client-workspaces/:id/sites', listGrantedSites],
+  ['DELETE', '/api/v1/client-workspaces/:id/sites/:siteId', revokeSiteAccess],
+  ['GET',    '/api/v1/client-updates/pending', listPendingClientUpdates],
+  ['PUT',    '/api/v1/client-updates/:id/verify', verifyClientUpdate],
 ];
 
 /**
@@ -263,7 +296,34 @@ export default {
         return addCorsHeaders(response, request, env);
       }
 
-      // ── Authenticated Routes ──
+      // ── Magic Link Routes (no auth — Feature 16) ──
+      if (path.startsWith('/api/v1/portal/magic/') && method === 'GET') {
+        const tokenMatch = path.match(/^\/api\/v1\/portal\/magic\/([a-zA-Z0-9_-]+)$/);
+        if (tokenMatch && tokenMatch[1]) {
+          const magicToken = tokenMatch[1];
+          const magicCtx = await verifyMagicLink(request, magicToken, env);
+          // Magic link resource resolution will be wired in Batch 16.5
+          const response = new Response(JSON.stringify({
+            success: true,
+            data: {
+              resource_type: magicCtx.resourceType,
+              resource_id: magicCtx.resourceId,
+              message: 'Magic link verified. Resource handler pending.',
+            },
+            requestId: magicCtx.requestId,
+          }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+          return addCorsHeaders(response, request, env);
+        }
+      }
+
+      // ── Portal Routes (client auth — Feature 16) ──
+      // Portal routes use portalGuard (separate Clerk instance), NOT guard.
+      // Portal endpoint handlers will be wired here in Batch 16.3+.
+      // Pattern: /api/v1/portal/* → portalGuard(request, env) → handler
+
+      // ── Authenticated Routes (Inspector Platform) ──
       for (const [routeMethod, pattern, handler] of ROUTES) {
         if (method !== routeMethod) continue;
 

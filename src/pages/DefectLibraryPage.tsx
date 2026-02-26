@@ -45,6 +45,8 @@ import {
 } from '@/types';
 import type { DefectLibraryEntry, DefectLibraryEntryVersion } from '@/types/features14_15';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
 // =============================================
 // TYPES
 // =============================================
@@ -157,7 +159,7 @@ export default function DefectLibraryPage(): JSX.Element {
       if (sourceFilter) params.set('source', sourceFilter);
       if (searchQuery) params.set('search', searchQuery);
 
-      const res = await fetch(`/api/v1/defect-library?${params}`, {
+      const res = await fetch(`${API_BASE}/api/v1/defect-library?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(`${res.status}`);
@@ -232,7 +234,9 @@ export default function DefectLibraryPage(): JSX.Element {
         change_note: form.change_note || (editingId ? 'Updated' : 'Initial version'),
       };
 
-      const url = editingId ? `/api/v1/defect-library/${editingId}` : '/api/v1/defect-library';
+      const url = editingId
+        ? `${API_BASE}/api/v1/defect-library/${editingId}`
+        : `${API_BASE}/api/v1/defect-library`;
       const method = editingId ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
@@ -260,7 +264,7 @@ export default function DefectLibraryPage(): JSX.Element {
     if (!confirm('Deactivate this org entry? It can be restored later.')) return;
     try {
       const token = await getToken();
-      await fetch(`/api/v1/defect-library/${entryId}`, {
+      await fetch(`${API_BASE}/api/v1/defect-library/${entryId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -277,7 +281,7 @@ export default function DefectLibraryPage(): JSX.Element {
     setHistoryVersions([]);
     try {
       const token = await getToken();
-      const res = await fetch(`/api/v1/defect-library/${entryId}/versions`, {
+      const res = await fetch(`${API_BASE}/api/v1/defect-library/${entryId}/versions`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -297,7 +301,7 @@ export default function DefectLibraryPage(): JSX.Element {
     setSeedResult(null);
     try {
       const token = await getToken();
-      const res = await fetch('/api/v1/defect-library/seed', {
+      const res = await fetch(`${API_BASE}/api/v1/defect-library/seed`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });

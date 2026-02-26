@@ -787,6 +787,140 @@ Frontend auto-deploys on push to `main`. Build-time env vars: `VITE_CLERK_PUBLIS
 
 ---
 
+---
+
+## 17. FEATURE 16: CLIENT PORTAL (built 26 Feb 2026)
+
+### What It Is
+A separate client-facing portal where councils and site owners can view inspection data, track defects, submit remedial updates, and receive notifications — without accessing the inspector platform. Separate Clerk auth boundary, separate RBAC, read-only by default with contributor write access for defect updates.
+
+### Database (Migration 010 — 7 tables, deployed to Neon)
+| Table | Purpose |
+|-------|---------|
+| `client_workspaces` | Client tenant (council/site owner). Clerk org, slug, branding JSONB, status |
+| `client_workspace_providers` | Link table: client workspace to inspection company (many-to-many ready, V1 ships 1:1) |
+| `client_users` | Client user accounts (portal Clerk). Role: viewer/contributor/admin |
+| `client_site_access` | Granular site-level permissions per workspace. Access level: full/restricted |
+| `client_defect_updates` | Client assertions on defects (acknowledge/comment/work_complete/contractor_booked/unable_to_action). NOT authoritative — inspector must verify |
+| `client_magic_links` | Token-hash-based one-off resource access (PDF/Excel/sealed bundle). SHA-256, expiry, use count limits |
+| `client_notifications` | Notification records per client user (report published, critical defect, status change, remedial verified) |
+
+25 indexes, 8 RLS policies, 2 triggers, 17 check constraints.
+
+### Backend (Cloudflare Workers — 5 new files)
+
+**portalGuard.ts** (`workers/src/middleware/`) — Separate auth boundary using PORTAL_CLERK_* env vars. JWT verification against portal Clerk JWKS. Resolves client_workspace + client_user from DB. Role hierarchy: viewer < contributor < admin. Magic link verification (SHA-256 hash lookup, expiry/use-count enforcement, access metadata logging).
+
+**clientWorkspaces.ts** (`workers/src/routes/`) — 13 inspector-side management endpoints behind regular guard. Workspace CRUD, client user invite/manage, site access grant/revoke, verification queue (prioritised by update type). RBAC: manager+ for management, inspector+ for verification.
+
+**portal.ts** (`workers/src/routes/`) — 10 portal-side client endpoints behind portalGuard. Dashboard, sites, inspections, defects (with filters), defect detail with update history, submit defect update (contributor+), notifications with mark-read.
+
+**magicLinks.ts** (`workers/src/routes/`) — Inspector-side magic link CRUD (create/list/revoke) + public resource resolution (PDF download from R2, sealed bundle download). Token generated with crypto.getRandomValues, only SHA-256 hash stored.
+
+**clientNotifications.ts** (`workers/src/services/`) — 4 notification trigger functions: notifyReportPublished, notifyCriticalDefect, notifyDefectStatusChanged, notifyRemedialVerified. Fire-and-forget, scoped through client_site_access.
+
+**index.ts** updated with portal route table, portalGuard wiring, magic link handler, and all new imports.
+
+**types.ts** updated with PortalRequestContext, MagicLinkContext, all Feature 16 entity types and enums.
+
+### Frontend (14 new files)
+
+**Portal infrastructure (4 files):**
+- `src/portal/api/portalApi.ts` — Typed fetch wrapper for all /api/v1/portal/* endpoints
+- `src/portal/auth/PortalAuthProvider.tsx` — Clerk wrapper using VITE_PORTAL_CLERK_PUBLISHABLE_KEY
+- `src/portal/layout/PortalLayout.tsx` — Sidebar nav + header with notification badge, mobile-responsive
+- `src/portal/PortalRouter.tsx` — Routes /portal/* to pages, wraps in auth + layout
+
+**Portal pages (8 files in `src/portal/pages/`):**
+- `DashboardPage.tsx` — Stat cards (sites, open defects, critical, pending), recent reports list. Also exports shared components: RiskBadge, SeverityBadge, StatusBadge, LoadingSkeleton, ErrorCard, fmtDate, fmtType
+- `SitesPage.tsx` — Card grid of granted sites with asset counts + open defects
+- `SiteDetailPage.tsx` — Site info, assets table, recent inspections list
+- `InspectionsPage.tsx` — Paginated table of signed reports with risk badges
+- `InspectionDetailPage.tsx` — Full report: severity breakdown, inspection items, defects found
+- `DefectsPage.tsx` — Filterable defect list (severity/status dropdowns), client update status
+- `DefectDetailPage.tsx` — Full defect info + submit update form (5 update types) + update history with verification status
+- `NotificationsPage.tsx` — Notification list with mark-read and mark-all-read
+
+**App.tsx** updated with portal route: `<Route path="/portal/*" element={<PortalRouter />} />`
+
+### Portal Clerk Application
+- App name: InspectVoice Portal
+- Frontend API: `https://eminent-falcon-42.clerk.accounts.dev`
+- Publishable key: `pk_test_ZW1pbmVudC1mYWxjb24tNDIuY2xlcmsuYWNjb3VudHMuZGV2JA`
+
+### Secrets Configured
+| Secret | Location | Status |
+|--------|----------|--------|
+| PORTAL_CLERK_JWKS_URL | Cloudflare Worker | Deployed |
+| PORTAL_CLERK_SECRET_KEY | Cloudflare Worker (encrypted) | Deployed |
+| PORTAL_CLERK_ISSUER | Cloudflare Worker | Deployed |
+| PORTAL_CLERK_AUTHORIZED_PARTIES | Cloudflare Worker | Deployed |
+| VITE_PORTAL_CLERK_PUBLISHABLE_KEY | Railway | Deployed |
+
+### Key Design Decisions
+1. **Separate Clerk instance** — portal users never see inspector data or UI. Complete auth boundary separation.
+2. **Client assertions, not authoritative changes** — clients propose status (work_complete etc), inspector must verify. Separation of duties for defensible audit trail.
+3. **Magic links store hash only** — SHA-256, plaintext token returned once at creation, never stored or retrievable.
+4. **Notification triggers are fire-and-forget** — failures don't block inspector workflows.
+5. **Site access is explicit** — clients only see sites granted to their workspace via client_site_access.
+6. **Portal uses light theme** — deliberate contrast with dark-themed inspector platform to make it obvious which side you're on.
+
+### Routes Added
+```
+/portal                     → Client dashboard
+/portal/sites               → Sites list
+/portal/sites/:id           → Site detail + assets
+/portal/inspections         → Inspection reports list
+/portal/inspections/:id     → Inspection report detail
+/portal/defects             → Defect tracker (filterable)
+/portal/defects/:id         → Defect detail + submit update
+/portal/notifications       → Notification list
+```
+
+### V2 Deferred
+- Request reinspection workflow
+- Client-side file upload for remedial evidence (attachments field exists, upload endpoint not built)
+- Email delivery for notifications (DB records created, Resend integration deferred)
+- Client workspace branding customisation UI
+- Organisation-level portal settings (auto-grant sites, default roles)
+
+### Updated Feature Status Table Entry
+| # | Feature | Status |
+|---|---------|--------|
+| 16 | Client Portal | Deployed (backend + frontend + auth + secrets) |
+
+### Updated Repository Structure Additions
+```
+migrations/
+  010_client_portal.sql
+
+src/portal/
+  PortalRouter.tsx
+  api/portalApi.ts
+  auth/PortalAuthProvider.tsx
+  layout/PortalLayout.tsx
+  pages/
+    DashboardPage.tsx
+    SitesPage.tsx
+    SiteDetailPage.tsx
+    InspectionsPage.tsx
+    InspectionDetailPage.tsx
+    DefectsPage.tsx
+    DefectDetailPage.tsx
+    NotificationsPage.tsx
+
+workers/src/
+  middleware/portalGuard.ts
+  routes/clientWorkspaces.ts
+  routes/portal.ts
+  routes/magicLinks.ts
+  services/clientNotifications.ts
+```
+
+### Database Total: 28 tables (was 21 + 7 new)
+
+---
+
 ## 16. HOW TO CONTINUE IN A NEW CHAT
 
 Upload this document. Then say: *"Continue InspectVoice build. Here's my master reference. [Task description]."*

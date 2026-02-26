@@ -1,143 +1,181 @@
 /**
- * InspectVoice — Portal Inspection Detail Page
- * src/portal/pages/InspectionDetailPage.tsx
+ * InspectVoice - Portal Defects Page
+ * src/portal/pages/DefectsPage.tsx
  */
 
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { fetchInspection, type PortalInspection } from '../api/portalApi';
-import { LoadingSkeleton, ErrorCard, RiskBadge, SeverityBadge, StatusBadge, fmtDate, fmtType } from './DashboardPage';
+import { Link, useSearchParams } from 'react-router-dom';
+import { fetchDefects, type PortalDefect } from '../api/portalApi';
+import { LoadingSkeleton, ErrorCard, SeverityBadge, StatusBadge, Chevron, fmtDate } from './DashboardPage';
 
-export function InspectionDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const [data, setData] = useState<PortalInspection | null>(null);
+export function DefectsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [rows, setRows] = useState<PortalDefect[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const limit = 20;
+
+  const severity = searchParams.get('severity') ?? '';
+  const status = searchParams.get('status') ?? '';
 
   useEffect(() => {
-    if (!id) return;
-    fetchInspection(id)
-      .then(setData)
-      .catch((e) => setError(e.message))
+    setLoading(true);
+    fetchDefects({
+      limit,
+      offset,
+      severity: severity || undefined,
+      status: status || undefined,
+    })
+      .then((res) => {
+        setRows(res.data);
+        setTotal(res.pagination.total);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Unknown error'))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [offset, severity, status]);
 
-  if (loading) return <LoadingSkeleton />;
+  function setFilter(key: string, val: string) {
+    const params = new URLSearchParams(searchParams);
+    if (val) {
+      params.set(key, val);
+    } else {
+      params.delete(key);
+    }
+    setSearchParams(params);
+    setOffset(0);
+  }
+
+  if (loading && offset === 0) return <LoadingSkeleton />;
   if (error) return <ErrorCard message={error} />;
-  if (!data) return null;
 
   return (
-    <div className="space-y-6">
-      <Link to="/portal/inspections" className="text-sm text-blue-600 hover:text-blue-800">
-        ← Back to inspections
-      </Link>
-
-      {/* Header card */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">{data.site_name}</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              {fmtType(data.inspection_type)} · {fmtDate(data.signed_at)}
-            </p>
-          </div>
-          {data.overall_risk_rating && <RiskBadge rating={data.overall_risk_rating} />}
-        </div>
-
-        {/* Defect severity breakdown */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-gray-100">
-          <MiniStat label="Very High" value={data.very_high_count} color="text-red-600" />
-          <MiniStat label="High" value={data.high_count} color="text-orange-600" />
-          <MiniStat label="Medium" value={data.medium_count} color="text-amber-600" />
-          <MiniStat label="Low" value={data.low_count} color="text-green-600" />
-        </div>
-
-        {data.closure_recommended && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm font-medium text-red-700">Closure Recommended</p>
-            {data.closure_reason && <p className="text-sm text-red-600 mt-1">{data.closure_reason}</p>}
-          </div>
-        )}
-
-        {data.immediate_action_required && (
-          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <p className="text-sm font-medium text-amber-700">Immediate Action Required</p>
-          </div>
-        )}
-
-        {data.pdf_url && (
-          <div className="mt-4">
-            <span className="inline-flex items-center gap-1.5 text-sm text-blue-600 font-medium">
-              📄 PDF report available
-            </span>
-          </div>
-        )}
+    <div className="space-y-4">
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3">
+        <FilterSelect
+          label="Severity"
+          value={severity}
+          onChange={(v) => setFilter('severity', v)}
+          options={[
+            { value: '', label: 'All severities' },
+            { value: 'very_high', label: 'Very High' },
+            { value: 'high', label: 'High' },
+            { value: 'medium', label: 'Medium' },
+            { value: 'low', label: 'Low' },
+          ]}
+        />
+        <FilterSelect
+          label="Status"
+          value={status}
+          onChange={(v) => setFilter('status', v)}
+          options={[
+            { value: '', label: 'All statuses' },
+            { value: 'open', label: 'Open' },
+            { value: 'in_progress', label: 'In Progress' },
+            { value: 'resolved', label: 'Resolved' },
+            { value: 'verified', label: 'Verified' },
+          ]}
+        />
+        <span className="self-center text-sm text-gray-500">
+          {total} defect{total !== 1 ? 's' : ''}
+        </span>
       </div>
 
-      {/* Inspection items */}
-      {data.items.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-900">Inspection Items ({data.items.length})</h3>
-          </div>
-          <div className="divide-y divide-gray-100">
-            {data.items.map((item) => (
-              <div key={item.id} className="px-5 py-3.5">
-                <div className="flex items-center gap-3 mb-1">
-                  <span className="text-sm font-medium text-gray-900">{item.asset_code}</span>
-                  <span className="text-xs text-gray-500">{fmtType(item.asset_type)}</span>
-                  {item.risk_rating && <RiskBadge rating={item.risk_rating} />}
-                </div>
-                {item.inspector_notes && (
-                  <p className="text-sm text-gray-600 mt-1">{item.inspector_notes}</p>
-                )}
-                {item.requires_action && item.action_timeframe && (
-                  <p className="text-xs text-amber-600 mt-1">
-                    Action required: {item.action_timeframe.replace(/_/g, ' ')}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
+      {rows.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-400 text-sm">
+          {severity || status ? 'No defects match the current filters.' : 'No defects found.'}
         </div>
-      )}
-
-      {/* Defects found */}
-      {data.defects.length > 0 && (
+      ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-900">Defects Found ({data.defects.length})</h3>
-          </div>
           <div className="divide-y divide-gray-100">
-            {data.defects.map((d) => (
+            {rows.map((d) => (
               <Link
                 key={d.id}
                 to={`/portal/defects/${d.id}`}
-                className="flex items-start gap-4 px-5 py-3.5 hover:bg-gray-50 transition-colors"
+                className="flex items-start gap-4 px-5 py-4 hover:bg-gray-50 transition-colors"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900">{d.description}</p>
-                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                  <p className="text-sm text-gray-900 line-clamp-2">{d.description}</p>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
                     <SeverityBadge severity={d.severity} />
                     <StatusBadge status={d.status} />
-                    {d.asset_code && <span className="text-xs text-gray-400">{d.asset_code}</span>}
-                    {d.due_date && <span className="text-xs text-gray-400">Due: {fmtDate(d.due_date)}</span>}
+                    {d.site_name && (
+                      <span className="text-xs text-gray-400">{d.site_name}</span>
+                    )}
+                    {d.asset_code && (
+                      <span className="text-xs text-gray-400">{d.asset_code}</span>
+                    )}
                   </div>
+                  {d.due_date && (
+                    <p className="text-xs text-gray-400 mt-1">Due: {fmtDate(d.due_date)}</p>
+                  )}
+                  {d.client_latest_status && (
+                    <p className="text-xs text-blue-500 mt-1">
+                      Client status: {d.client_latest_status.replace(/_/g, ' ')}
+                      {d.client_latest_verified === true && ' (verified)'}
+                      {d.client_latest_verified === false && ' (pending verification)'}
+                    </p>
+                  )}
                 </div>
+                <Chevron />
               </Link>
             ))}
           </div>
+
+          {total > limit && (
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between text-sm">
+              <span className="text-gray-500">
+                {offset + 1}-{Math.min(offset + limit, total)} of {total}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setOffset(Math.max(0, offset - limit))}
+                  disabled={offset === 0}
+                  className="px-3 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setOffset(offset + limit)}
+                  disabled={offset + limit >= total}
+                  className="px-3 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function MiniStat({ label, value, color }: { label: string; value: number; color: string }) {
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
   return (
-    <div className="text-center">
-      <p className={`text-xl font-bold ${value > 0 ? color : 'text-gray-300'}`}>{value}</p>
-      <p className="text-xs text-gray-500">{label}</p>
-    </div>
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
   );
 }

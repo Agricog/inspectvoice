@@ -2,7 +2,7 @@
  * InspectVoice — Cloudflare Worker Entry Point
  * Routes all HTTP requests and queue messages to their handlers.
  *
- * UPDATED: Feature 16 (Client Portal) — portal routes wired with portalGuard.
+ * UPDATED: Feature 16 Batch 16.5 — magic link CRUD + resource resolution.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -120,6 +120,14 @@ import {
   portalListNotifications,
   portalMarkNotificationsRead,
 } from './routes/portal';
+
+// ── Feature 16: Magic Links ──
+import {
+  createMagicLink,
+  listMagicLinks,
+  revokeMagicLink,
+  resolveMagicLinkResource,
+} from './routes/magicLinks';
 
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
@@ -262,6 +270,11 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['DELETE', '/api/v1/client-workspaces/:id/sites/:siteId', revokeSiteAccess],
   ['GET',    '/api/v1/client-updates/pending', listPendingClientUpdates],
   ['PUT',    '/api/v1/client-updates/:id/verify', verifyClientUpdate],
+
+  // ── Feature 16: Magic Links (Inspector-Side) ──
+  ['POST',   '/api/v1/magic-links', createMagicLink],
+  ['GET',    '/api/v1/magic-links', listMagicLinks],
+  ['DELETE', '/api/v1/magic-links/:id', revokeMagicLink],
 ];
 
 // =============================================
@@ -335,16 +348,7 @@ export default {
         if (tokenMatch && tokenMatch[1]) {
           const magicToken = tokenMatch[1];
           const magicCtx = await verifyMagicLink(request, magicToken, env);
-          const response = new Response(JSON.stringify({
-            success: true,
-            data: {
-              resource_type: magicCtx.resourceType,
-              resource_id: magicCtx.resourceId,
-            },
-            requestId: magicCtx.requestId,
-          }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
+          const response = await resolveMagicLinkResource(request, magicCtx);
           return addCorsHeaders(response, request, env);
         }
       }

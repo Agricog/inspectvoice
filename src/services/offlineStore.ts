@@ -760,6 +760,12 @@ export const sitesCache = {
     return db.getAll(IDB_STORE_NAMES.SITES_CACHE);
   },
 
+  /** Delete a cached site */
+  async delete(id: string): Promise<void> {
+    const db = await getDB();
+    await db.delete(IDB_STORE_NAMES.SITES_CACHE, id);
+  },
+
   /** Clear expired cache entries (older than maxAge ms) */
   async purgeExpired(maxAgeMs: number = 7 * 24 * 60 * 60 * 1000): Promise<number> {
     const db = await getDB();

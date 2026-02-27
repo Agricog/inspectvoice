@@ -258,6 +258,28 @@ export function SiteForm(): JSX.Element {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [postcodeLookup, setPostcodeLookup] = useState<PostcodeLookupStatus>('idle');
   const lastLookedUp = useRef<string>('');
+  const handlePostcodeBlur = useCallback(async (e: React.FocusEvent<HTMLInputElement>) => {
+    form.handleBlur('postcode')();
+    const postcode = e.target.value.trim();
+    if (!postcode || !isValidUKPostcode(postcode)) return;
+    const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
+    if (cleaned === lastLookedUp.current) return;
+    setPostcodeLookup('looking');
+    const result = await lookupPostcode(postcode);
+    if (result) {
+      lastLookedUp.current = cleaned;
+      form.setValues({
+        ...valuesRef.current,
+        latitude: String(result.latitude),
+        longitude: String(result.longitude),
+      });
+      setPostcodeLookup('found');
+      setTimeout(() => setPostcodeLookup('idle'), 2000);
+    } else {
+      setPostcodeLookup('not-found');
+      setTimeout(() => setPostcodeLookup('idle'), 3000);
+    }
+  }, [form.handleBlur, form.setValues]);
 
   useEffect(() => {
     trackPageView(isEditing ? `/sites/${id ?? ''}/edit` : '/sites/new');

@@ -4,7 +4,7 @@
  * Entry point for starting new inspections against this site.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -25,6 +25,7 @@ import {
   Loader2,
   ChevronRight,
   Info,
+  Trash2,
 } from 'lucide-react';
 import { sitesCache, assetsCache, inspections as inspectionsStore } from '@services/offlineStore';
 import { captureError } from '@utils/errorTracking';
@@ -120,10 +121,25 @@ export function SiteDetail(): JSX.Element {
   const [siteInspections, setSiteInspections] = useState<LocalInspection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (id) trackPageView(`/sites/${id}`);
   }, [id]);
+
+  const handleDelete = useCallback(async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await sitesCache.delete(id);
+      void navigate('/sites');
+    } catch (err) {
+      captureError(err, { module: 'SiteDetail', operation: 'deleteSite' });
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }, [id, navigate]);
 
   useEffect(() => {
     if (!id) {
@@ -227,6 +243,16 @@ export function SiteDetail(): JSX.Element {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="iv-btn-icon text-risk-high hover:bg-risk-high/10"
+            aria-label="Delete site"
+            title="Delete site"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+
           <Link
             to={`/sites/${site.id}/edit`}
             className="iv-btn-secondary"
@@ -244,6 +270,45 @@ export function SiteDetail(): JSX.Element {
           </Link>
         </div>
       </div>
+
+      {/* Delete confirmation */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="bg-iv-surface border border-iv-border rounded-xl p-6 max-w-sm w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-risk-high/15 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-risk-high" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-iv-text">Delete Site</h3>
+                <p className="text-2xs text-iv-muted mt-0.5">This cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-iv-muted mb-5">
+              Are you sure you want to delete <strong className="text-iv-text">{site.name}</strong>? All associated data will be removed.
+            </p>
+            <div className="flex items-center gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="iv-btn-secondary"
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-risk-high text-white rounded-lg text-sm font-medium hover:bg-risk-high/90 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deleting ? 'Deleting…' : 'Delete Site'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left column — Site info */}

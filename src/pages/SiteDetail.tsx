@@ -7,6 +7,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import MapGL, { Marker, NavigationControl } from 'react-map-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   ArrowLeft,
   Edit,
@@ -38,6 +40,12 @@ import {
   SITE_STATUS_LABELS,
 } from '@/types';
 import type { Site, CachedAsset, LocalInspection } from '@/types';
+
+// =============================================
+// CONSTANTS
+// =============================================
+
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
 
 // =============================================
 // SUB-COMPONENTS
@@ -109,6 +117,46 @@ function FrequencyCard({
   );
 }
 
+/** Embedded Mapbox mini-map with site pin */
+function SiteLocationMap({ latitude, longitude }: { latitude: number; longitude: number }): JSX.Element {
+  if (!MAPBOX_TOKEN) {
+    return (
+      <div>
+        <p className="text-sm text-iv-muted">
+          {latitude.toFixed(6)}, {longitude.toFixed(6)}
+        </p>
+        <p className="text-2xs text-iv-muted-2 mt-1">Map unavailable</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="rounded-lg overflow-hidden border border-iv-border" style={{ height: 200 }}>
+        <MapGL
+          mapboxAccessToken={MAPBOX_TOKEN}
+          initialViewState={{ longitude, latitude, zoom: 15 }}
+          style={{ width: '100%', height: '100%' }}
+          mapStyle="mapbox://styles/mapbox/dark-v11"
+          attributionControl={false}
+          interactive={true}
+          scrollZoom={false}
+        >
+          <NavigationControl position="top-right" showCompass={false} />
+          <Marker longitude={longitude} latitude={latitude} anchor="center">
+            <div className="w-8 h-8 rounded-full bg-iv-accent flex items-center justify-center shadow-lg ring-2 ring-white/30">
+              <MapPin className="w-4 h-4 text-white" />
+            </div>
+          </Marker>
+        </MapGL>
+      </div>
+      <p className="text-2xs text-iv-muted-2 mt-2">
+        {latitude.toFixed(6)}, {longitude.toFixed(6)}
+      </p>
+    </div>
+  );
+}
+
 // =============================================
 // MAIN COMPONENT
 // =============================================
@@ -133,14 +181,12 @@ export function SiteDetail(): JSX.Element {
     if (!id) return;
     setDeleting(true);
     try {
-      // Try server delete — ignore 404 (site may only exist locally)
       try {
         await secureFetch(`/api/v1/sites/${id}`, { method: 'DELETE' });
       } catch (err) {
         const is404 = err instanceof Error && err.message.includes('404');
         if (!is404) throw err;
       }
-      // Always remove from local IndexedDB cache
       await sitesCache.delete(id);
       void navigate('/sites');
     } catch (err) {
@@ -262,18 +308,12 @@ export function SiteDetail(): JSX.Element {
             <Trash2 className="w-4 h-4" />
           </button>
 
-          <Link
-            to={`/sites/${site.id}/edit`}
-            className="iv-btn-secondary"
-          >
+          <Link to={`/sites/${site.id}/edit`} className="iv-btn-secondary">
             <Edit className="w-4 h-4" />
             <span className="hidden sm:inline">Edit</span>
           </Link>
 
-          <Link
-            to={`/inspections/new?siteId=${site.id}`}
-            className="iv-btn-primary"
-          >
+          <Link to={`/inspections/new?siteId=${site.id}`} className="iv-btn-primary">
             <ClipboardCheck className="w-4 h-4" />
             <span className="hidden sm:inline">New Inspection</span>
           </Link>
@@ -351,10 +391,7 @@ export function SiteDetail(): JSX.Element {
                 </span>
               </h2>
 
-              <Link
-                to={`/sites/${site.id}/assets/new`}
-                className="iv-btn-secondary text-sm"
-              >
+              <Link to={`/sites/${site.id}/assets/new`} className="iv-btn-secondary text-sm">
                 <Plus className="w-3.5 h-3.5" />
                 Add Asset
               </Link>
@@ -519,21 +556,14 @@ export function SiteDetail(): JSX.Element {
             </div>
           </div>
 
-          {/* GPS */}
+          {/* Location — Mapbox mini-map */}
           {(site.latitude !== 0 || site.longitude !== 0) && (
             <div className="iv-panel p-5">
-              <h2 className="text-sm font-semibold text-iv-text mb-2">Location</h2>
-              <p className="text-sm text-iv-muted">
-                {site.latitude.toFixed(6)}, {site.longitude.toFixed(6)}
-              </p>
-              <a
-                href={`https://www.google.com/maps?q=${site.latitude},${site.longitude}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-iv-accent hover:underline mt-1 inline-block"
-              >
-                Open in Google Maps
-              </a>
+              <h2 className="text-sm font-semibold text-iv-text mb-3 flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-iv-accent" />
+                Location
+              </h2>
+              <SiteLocationMap latitude={site.latitude} longitude={site.longitude} />
             </div>
           )}
         </div>

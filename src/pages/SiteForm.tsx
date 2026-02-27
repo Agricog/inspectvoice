@@ -268,10 +268,10 @@ export function SiteForm(): JSX.Element {
   });
 
   // Auto-lookup coordinates when postcode changes
-  const handlePostcodeBlur = useCallback(async () => {
+  const handlePostcodeBlur = useCallback(async (e: React.FocusEvent<HTMLInputElement>) => {
     form.handleBlur('postcode')();
 
-    const postcode = form.values.postcode.trim();
+    const postcode = e.target.value.trim();
     if (!postcode || !isValidUKPostcode(postcode)) return;
 
     // Don't re-lookup the same postcode
@@ -295,7 +295,7 @@ export function SiteForm(): JSX.Element {
       setPostcodeLookup('not-found');
       setTimeout(() => setPostcodeLookup('idle'), 3000);
     }
-  }, [form]);
+  }, [form.handleBlur, form.values, form.setValues]);
 
   // Load existing site for editing
   useEffect(() => {
@@ -466,7 +466,7 @@ export function SiteForm(): JSX.Element {
                   className={`iv-input uppercase max-w-[200px] ${form.hasError('postcode') ? 'border-risk-high focus:border-risk-high focus:ring-risk-high/30' : ''}`}
                   value={form.values.postcode}
                   onChange={form.handleChange('postcode')}
-                  onBlur={() => void handlePostcodeBlur()}
+                  onBlur={(e) => void handlePostcodeBlur(e)}
                   placeholder="SW1A 1AA"
                   maxLength={10}
                   autoComplete="postal-code"

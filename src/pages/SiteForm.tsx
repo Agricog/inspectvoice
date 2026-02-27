@@ -4,7 +4,7 @@
  * Saves to API (Neon) when online, falls back to IndexedDB cache when offline.
  * Lat/lng are auto-populated from postcode via postcodes.io (free, no key).
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -242,7 +242,8 @@ export function SiteForm(): JSX.Element {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [postcodeLookup, setPostcodeLookup] = useState<PostcodeLookupStatus>('idle');
   const lastLookedUp = useRef<string>('');
-  const valuesRef = useRef<SiteFormValues>(EMPTY_FORM);
+  // Separate state for coordinates so postcode lookup can update them independently
+  const [coords, setCoords] = useState<{ latitude: string; longitude: string }>({ latitude: '', longitude: '' });
   useEffect(() => {
     trackPageView(isEditing ? `/sites/${id ?? ''}/edit` : '/sites/new');
   }, [isEditing, id]);
@@ -252,15 +253,17 @@ export function SiteForm(): JSX.Element {
     sanitise: true,
     onSubmit: async (values) => {
       try {
+        // Use coords state which is always up-to-date
+        const finalValues = { ...values, latitude: coords.latitude, longitude: coords.longitude };
         // If postcode is set but coordinates are missing, try lookup before saving
-        if (values.postcode && isValidUKPostcode(values.postcode) && !values.latitude && !values.longitude) {
-          const result = await lookupPostcode(values.postcode);
+        if (finalValues.postcode && isValidUKPostcode(finalValues.postcode) && !finalValues.latitude && !finalValues.longitude) {
+          const result = await lookupPostcode(finalValues.postcode);
           if (result) {
-            values.latitude = String(result.latitude);
-            values.longitude = String(result.longitude);
+            finalValues.latitude = String(result.latitude);
+            finalValues.longitude = String(result.longitude);
           }
         }
-        const apiPayload = buildApiPayload(values);
+        const apiPayload = buildApiPayload(finalValues);
         const localId = isEditing && id ? id : uuid();
         let savedSite: Site | null = null;
         // Try API save first
@@ -283,7 +286,7 @@ export function SiteForm(): JSX.Element {
           console.warn('[SiteForm] API save failed, saving locally:', apiErr);
         }
         // Cache locally — use server response if available, otherwise build local data
-        const siteToCache = savedSite ?? buildLocalSiteData(values, localId);
+        const siteToCache = savedSite ?? buildLocalSiteData(finalValues, localId);
         await sitesCache.put(siteToCache);
         if (!isEditing) {
           SiteEvents.created();
@@ -301,10 +304,8 @@ export function SiteForm(): JSX.Element {
       }
     },
   });
-  // Keep valuesRef in sync so async handlers always read latest state
-  valuesRef.current = form.values;
-  // Auto-lookup coordinates when postcode changes
-  const handlePostcodeBlur = useCallback(async (e: React.FocusEvent<HTMLInputElement>) => {
+  // Auto-lookup coordinates when postcode field loses focus
+  async function handlePostcodeBlur(e: React.FocusEvent<HTMLInputElement>) {
     form.handleBlur('postcode')();
     const postcode = e.target.value.trim();
     if (!postcode || !isValidUKPostcode(postcode)) return;
@@ -315,10 +316,15 @@ export function SiteForm(): JSX.Element {
     const result = await lookupPostcode(postcode);
     if (result) {
       lastLookedUp.current = cleaned;
+      const lat = String(result.latitude);
+      const lng = String(result.longitude);
+      // Update standalone coords state (always reliable, no stale closure)
+      setCoords({ latitude: lat, longitude: lng });
+      // Also update form values for display
       form.setValues({
-        ...valuesRef.current,
-        latitude: String(result.latitude),
-        longitude: String(result.longitude),
+        ...form.values,
+        latitude: lat,
+        longitude: lng,
       });
       setPostcodeLookup('found');
       setTimeout(() => setPostcodeLookup('idle'), 2000);
@@ -326,7 +332,13 @@ export function SiteForm(): JSX.Element {
       setPostcodeLookup('not-found');
       setTimeout(() => setPostcodeLookup('idle'), 3000);
     }
-  }, [form.handleBlur, form.setValues]);
+  }
+  // Keep coords in sync when form loads existing site data
+  useEffect(() => {
+    if (form.values.latitude || form.values.longitude) {
+      setCoords({ latitude: form.values.latitude, longitude: form.values.longitude });
+    }
+  }, [form.values.latitude, form.values.longitude]);
   // Load existing site for editing
   useEffect(() => {
     if (!isEditing || !id) return;
@@ -516,9 +528,9 @@ export function SiteForm(): JSX.Element {
               {form.fieldError('postcode') && (
                 <p className="text-sm text-risk-high mt-1">{form.fieldError('postcode')}</p>
               )}
-              {form.values.latitude && form.values.longitude && (
+              {coords.latitude && coords.longitude && (
                 <p className="text-2xs text-iv-muted-2 mt-1.5">
-                  📍 {form.values.latitude}, {form.values.longitude}
+                  📍 {coords.latitude}, {coords.longitude}
                 </p>
               )}
             </div>

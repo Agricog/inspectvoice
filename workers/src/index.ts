@@ -15,7 +15,7 @@ import { formatErrorResponse } from './shared/errors';
 import { Logger } from './shared/logger';
 
 // ── Route Handlers ──
-import { listSites, getSite, createSite, updateSite } from './routes/sites';
+import { listSites, getSite, createSite, updateSite, deleteSite } from './routes/sites';
 import { listAssetsBySite, getAsset, createAsset, updateAsset } from './routes/assets';
 import { getAssetHistory } from './routes/assetHistory';
 import { listInspections, getInspection, createInspection, updateInspection } from './routes/inspections';
@@ -147,6 +147,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET', '/api/v1/sites/:id', getSite],
   ['POST', '/api/v1/sites', createSite],
   ['PUT', '/api/v1/sites/:id', updateSite],
+  ['DELETE', '/api/v1/sites/:id', deleteSite],
 
   // ── Assets ──
   ['GET', '/api/v1/sites/:siteId/assets', listAssetsBySite],

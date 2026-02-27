@@ -68,7 +68,7 @@ export function Layout(): JSX.Element {
       <header className="border-b border-iv-border bg-iv-surface/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-3 group" onClick={closeMobileMenu}>
+          <Link to="/" className="flex items-center gap-3 group min-w-0" onClick={closeMobileMenu}>
             <div className="w-9 h-9 rounded-lg bg-iv-accent/15 flex items-center justify-center transition-colors group-hover:bg-iv-accent/25">
               <Shield className="w-5 h-5 text-iv-accent" />
             </div>
@@ -103,7 +103,7 @@ export function Layout(): JSX.Element {
           </nav>
 
           {/* Right side — status + mobile menu */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             {/* Online indicator (desktop) */}
             <div className="hidden md:flex items-center gap-1.5">
               {isOnline ? (

@@ -134,6 +134,7 @@ export function SiteDetail(): JSX.Element {
     setDeleting(true);
     try {
       await secureFetch(`/api/v1/sites/${id}`, { method: 'DELETE' });
+      await sitesCache.delete(id);
       void navigate('/sites');
     } catch (err) {
       captureError(err, { module: 'SiteDetail', operation: 'deleteSite' });

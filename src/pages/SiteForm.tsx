@@ -386,11 +386,11 @@ export function SiteForm(): JSX.Element {
         className="space-y-6 max-w-2xl"
       >
         {/* Site Details */}
-        <fieldset className="iv-panel p-5">
-          <legend className="text-sm font-semibold text-iv-text px-1 mb-4 flex items-center gap-2">
+        <div className="iv-panel p-5">
+          <div className="text-sm font-semibold text-iv-text mb-4 flex items-center gap-2">
             <MapPin className="w-4 h-4 text-iv-accent" />
             Site Details
-          </legend>
+          </div>
 
           <div className="space-y-4">
             <div>
@@ -506,11 +506,11 @@ export function SiteForm(): JSX.Element {
               )}
             </div>
           </div>
-        </fieldset>
+        </div>
 
         {/* Contact */}
-        <fieldset className="iv-panel p-5">
-          <legend className="text-sm font-semibold text-iv-text px-1 mb-4">Site Contact</legend>
+        <div className="iv-panel p-5">
+          <div className="text-sm font-semibold text-iv-text mb-4">Site Contact</div>
 
           <div className="space-y-4">
             <div>
@@ -563,11 +563,11 @@ export function SiteForm(): JSX.Element {
               </div>
             </div>
           </div>
-        </fieldset>
+        </div>
 
         {/* Access & Notes */}
-        <fieldset className="iv-panel p-5">
-          <legend className="text-sm font-semibold text-iv-text px-1 mb-4">Access & Notes</legend>
+        <div className="iv-panel p-5">
+          <div className="text-sm font-semibold text-iv-text mb-4">Access & Notes</div>
 
           <div className="space-y-4">
             <div>
@@ -618,13 +618,13 @@ export function SiteForm(): JSX.Element {
               />
             </div>
           </div>
-        </fieldset>
+        </div>
 
         {/* Inspection Frequency */}
-        <fieldset className="iv-panel p-5">
-          <legend className="text-sm font-semibold text-iv-text px-1 mb-4">
+        <div className="iv-panel p-5">
+          <div className="text-sm font-semibold text-iv-text mb-4">
             Inspection Frequency (BS EN 1176-7)
-          </legend>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
@@ -690,7 +690,7 @@ export function SiteForm(): JSX.Element {
               <p className="text-2xs text-iv-muted-2 mt-1">Default: 365 (yearly)</p>
             </div>
           </div>
-        </fieldset>
+        </div>
 
         {/* Submit */}
         <div className="flex items-center gap-3 pt-2">

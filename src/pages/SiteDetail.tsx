@@ -134,8 +134,9 @@ function SiteLocationMap({ latitude, longitude }: { latitude: number; longitude:
     <div>
       <div className="rounded-lg overflow-hidden border border-iv-border" style={{ height: 200 }}>
         <MapGL
-          mapboxAccessToken={MAPBOX_TOKEN}
-          initialViewState={{ longitude, latitude, zoom: 15 }}
+  key={`${latitude}-${longitude}`}
+  mapboxAccessToken={MAPBOX_TOKEN}
+  initialViewState={{ longitude, latitude, zoom: 15 }}
           style={{ width: '100%', height: '100%' }}
           mapStyle="mapbox://styles/mapbox/dark-v11"
           attributionControl={false}

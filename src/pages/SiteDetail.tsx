@@ -28,6 +28,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { sitesCache, assetsCache, inspections as inspectionsStore } from '@services/offlineStore';
+import { secureFetch } from '@hooks/useFetch';
 import { captureError } from '@utils/errorTracking';
 import { trackPageView } from '@utils/analytics';
 import {
@@ -132,7 +133,6 @@ export function SiteDetail(): JSX.Element {
     if (!id) return;
     setDeleting(true);
     try {
-      const { secureFetch } = await import('@hooks/useFetch');
       await secureFetch(`/api/v1/sites/${id}`, { method: 'DELETE' });
       void navigate('/sites');
     } catch (err) {

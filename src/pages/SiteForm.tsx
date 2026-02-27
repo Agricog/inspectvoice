@@ -182,6 +182,70 @@ function validateSiteForm(values: SiteFormValues) {
 }
 
 // =============================================
+// BUILD API PAYLOAD (only fields the worker expects)
+// =============================================
+
+function buildApiPayload(values: SiteFormValues): Record<string, unknown> {
+  return {
+    name: values.name.trim(),
+    site_code: values.site_code.trim() || null,
+    address: values.address.trim(),
+    postcode: values.postcode.trim().toUpperCase() || null,
+    latitude: values.latitude ? Number(values.latitude) : 0,
+    longitude: values.longitude ? Number(values.longitude) : 0,
+    site_type: values.site_type,
+    contact_name: values.contact_name.trim() || null,
+    contact_phone: values.contact_phone.trim() || null,
+    contact_email: values.contact_email.trim().toLowerCase() || null,
+    access_notes: values.access_notes.trim() || null,
+    parking_notes: values.parking_notes.trim() || null,
+    install_date: values.install_date || null,
+    inspection_frequency_routine_days: Number(values.inspection_frequency_routine_days),
+    inspection_frequency_operational_days: Number(values.inspection_frequency_operational_days),
+    inspection_frequency_annual_days: Number(values.inspection_frequency_annual_days),
+    status: SiteStatus.ACTIVE,
+    notes: values.notes.trim() || null,
+    metadata: {},
+  };
+}
+
+// Build a full Site object for local IndexedDB cache (used as fallback)
+function buildLocalSiteData(values: SiteFormValues, siteId: string): Site {
+  const now = new Date().toISOString();
+  return {
+    id: siteId,
+    org_id: '',
+    name: values.name.trim(),
+    site_code: values.site_code.trim() || null,
+    address: values.address.trim(),
+    postcode: values.postcode.trim().toUpperCase() || null,
+    latitude: values.latitude ? Number(values.latitude) : 0,
+    longitude: values.longitude ? Number(values.longitude) : 0,
+    site_type: values.site_type,
+    contact_name: values.contact_name.trim() || null,
+    contact_phone: values.contact_phone.trim() || null,
+    contact_email: values.contact_email.trim().toLowerCase() || null,
+    access_notes: values.access_notes.trim() || null,
+    opening_hours: null,
+    parking_notes: values.parking_notes.trim() || null,
+    install_date: values.install_date || null,
+    last_refurbishment_date: null,
+    inspection_frequency_routine_days: Number(values.inspection_frequency_routine_days),
+    inspection_frequency_operational_days: Number(values.inspection_frequency_operational_days),
+    inspection_frequency_annual_days: Number(values.inspection_frequency_annual_days),
+    total_asset_value_gbp: null,
+    maintenance_contract_ref: null,
+    status: SiteStatus.ACTIVE,
+    closure_reason: null,
+    notes: values.notes.trim() || null,
+    metadata: {},
+    created_by: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+// =============================================
 // COMPONENT
 // =============================================
 
@@ -199,74 +263,39 @@ export function SiteForm(): JSX.Element {
     trackPageView(isEditing ? `/sites/${id ?? ''}/edit` : '/sites/new');
   }, [isEditing, id]);
 
-  // Build site data from form values
-  const buildSiteData = useCallback(
-    (values: SiteFormValues): Site => {
-      const now = new Date().toISOString();
-      return {
-        id: isEditing && id ? id : uuid(),
-        org_id: '', // Set by Worker from Clerk session
-        name: values.name.trim(),
-        site_code: values.site_code.trim() || null,
-        address: values.address.trim(),
-        postcode: values.postcode.trim().toUpperCase() || null,
-        latitude: values.latitude ? Number(values.latitude) : 0,
-        longitude: values.longitude ? Number(values.longitude) : 0,
-        site_type: values.site_type,
-        contact_name: values.contact_name.trim() || null,
-        contact_phone: values.contact_phone.trim() || null,
-        contact_email: values.contact_email.trim().toLowerCase() || null,
-        access_notes: values.access_notes.trim() || null,
-        opening_hours: null,
-        parking_notes: values.parking_notes.trim() || null,
-        install_date: values.install_date || null,
-        last_refurbishment_date: null,
-        inspection_frequency_routine_days: Number(values.inspection_frequency_routine_days),
-        inspection_frequency_operational_days: Number(values.inspection_frequency_operational_days),
-        inspection_frequency_annual_days: Number(values.inspection_frequency_annual_days),
-        total_asset_value_gbp: null,
-        maintenance_contract_ref: null,
-        status: SiteStatus.ACTIVE,
-        closure_reason: null,
-        notes: values.notes.trim() || null,
-        metadata: {},
-        created_by: null,
-        created_at: isEditing ? now : now,
-        updated_at: now,
-      };
-    },
-    [isEditing, id],
-  );
-
   const form = useFormValidation<SiteFormValues>({
     initialValues: EMPTY_FORM,
     validate: validateSiteForm,
     sanitise: true,
     onSubmit: async (values) => {
       try {
-        const siteData = buildSiteData(values);
+        const apiPayload = buildApiPayload(values);
+        const localId = isEditing && id ? id : uuid();
+        let savedSite: Site | null = null;
 
-        // Save to API (Neon) — use the server response as source of truth
-        let savedSite: Site = siteData;
+        // Try API save first
         try {
-          if (isEditing) {
-            savedSite = await secureFetch<Site>(`/api/v1/sites/${siteData.id}`, {
-              method: 'PUT',
-              body: siteData,
-            });
+          if (isEditing && id) {
+            const response = await secureFetch<{ success: boolean; data: Site }>(
+              `/api/v1/sites/${id}`,
+              { method: 'PUT', body: apiPayload },
+            );
+            savedSite = response.data;
           } else {
-            savedSite = await secureFetch<Site>('/api/v1/sites', {
-              method: 'POST',
-              body: siteData,
-            });
+            const response = await secureFetch<{ success: boolean; data: Site }>(
+              '/api/v1/sites',
+              { method: 'POST', body: apiPayload },
+            );
+            savedSite = response.data;
           }
         } catch (apiErr) {
-          // If offline or API fails, fall back to local-only save
+          // API failed — fall back to local-only save
           console.warn('[SiteForm] API save failed, saving locally:', apiErr);
         }
 
-        // Cache locally (use server response if available, otherwise local data)
-        await sitesCache.put(savedSite);
+        // Cache locally — use server response if available, otherwise build local data
+        const siteToCache = savedSite ?? buildLocalSiteData(values, localId);
+        await sitesCache.put(siteToCache);
 
         if (!isEditing) {
           SiteEvents.created();
@@ -274,9 +303,8 @@ export function SiteForm(): JSX.Element {
 
         setSaveSuccess(true);
 
-        // Navigate after brief feedback
         setTimeout(() => {
-          void navigate(`/sites/${savedSite.id}`);
+          void navigate(`/sites/${siteToCache.id}`);
         }, 500);
       } catch (err) {
         captureError(err, {

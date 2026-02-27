@@ -1,8 +1,7 @@
 /**
  * InspectVoice — Site Form Page
  * Create or edit a site with full validation and offline-first save.
- * Saves to IndexedDB cache, enqueues API sync when online.
- *
+ * Saves to API (Neon) when online, falls back to IndexedDB cache when offline.
  * Lat/lng are auto-populated from postcode via postcodes.io (free, no key).
  */
 
@@ -20,6 +19,7 @@ import {
 import { v4 as uuid } from 'uuid';
 import { useFormValidation } from '@hooks/useFormValidation';
 import { sitesCache } from '@services/offlineStore';
+import { secureFetch } from '@hooks/useFetch';
 import { captureError } from '@utils/errorTracking';
 import { SiteEvents, trackPageView } from '@utils/analytics';
 import {
@@ -245,7 +245,28 @@ export function SiteForm(): JSX.Element {
     onSubmit: async (values) => {
       try {
         const siteData = buildSiteData(values);
-        await sitesCache.put(siteData);
+
+        // Save to API (Neon) — use the server response as source of truth
+        let savedSite: Site = siteData;
+        try {
+          if (isEditing) {
+            savedSite = await secureFetch<Site>(`/api/v1/sites/${siteData.id}`, {
+              method: 'PUT',
+              body: siteData,
+            });
+          } else {
+            savedSite = await secureFetch<Site>('/api/v1/sites', {
+              method: 'POST',
+              body: siteData,
+            });
+          }
+        } catch (apiErr) {
+          // If offline or API fails, fall back to local-only save
+          console.warn('[SiteForm] API save failed, saving locally:', apiErr);
+        }
+
+        // Cache locally (use server response if available, otherwise local data)
+        await sitesCache.put(savedSite);
 
         if (!isEditing) {
           SiteEvents.created();
@@ -255,7 +276,7 @@ export function SiteForm(): JSX.Element {
 
         // Navigate after brief feedback
         setTimeout(() => {
-          void navigate(`/sites/${siteData.id}`);
+          void navigate(`/sites/${savedSite.id}`);
         }, 500);
       } catch (err) {
         captureError(err, {

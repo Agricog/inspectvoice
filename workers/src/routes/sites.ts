@@ -7,13 +7,13 @@
  *   GET    /api/v1/sites/:id       — Get site detail
  *   POST   /api/v1/sites           — Create site
  *   PUT    /api/v1/sites/:id       — Update site
+ *   DELETE /api/v1/sites/:id       — Delete site
  *
  * All queries are tenant-isolated via DatabaseService (org_id from JWT).
  * All inputs are validated and sanitised server-side.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import type { RequestContext, RouteParams } from '../types';
 import { createDb } from '../services/db';
 import { writeAuditLog, buildChanges } from '../services/audit';
@@ -269,4 +269,30 @@ export async function updateSite(
     success: true,
     data: updated,
   }, ctx.requestId);
+}
+
+// =============================================
+// DELETE SITE
+// =============================================
+
+export async function deleteSite(
+  request: Request,
+  params: RouteParams,
+  ctx: RequestContext,
+): Promise<Response> {
+  validateCsrf(request);
+  await checkRateLimit(ctx, 'write');
+
+  const id = validateUUID(params['id'], 'id');
+  const db = createDb(ctx);
+
+  // Verify site exists and belongs to this org
+  const existing = await db.findByIdOrThrow<Record<string, unknown>>('sites', id, 'Site');
+
+  await db.deleteById('sites', id);
+
+  // Audit
+  void writeAuditLog(ctx, 'site.deleted', 'sites', id, { name: existing['name'] }, request);
+
+  return noContentResponse(ctx.requestId);
 }

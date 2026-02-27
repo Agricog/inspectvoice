@@ -11,6 +11,7 @@
  * - Organisation settings: name, branding (admin/manager only)
  * - Inspection preferences: default type, approval workflow, auto-export
  * - AI normalisation settings: style preset, custom guide, examples (admin/manager only)
+ * - Sign out
  * - Save per-section with loading/success/error feedback
  * - Role-based visibility (org settings only for manager/admin)
  * - Responsive layout
@@ -38,7 +39,9 @@ import {
   Plus,
   X,
   RefreshCw,
+  LogOut,
 } from 'lucide-react';
+import { useClerk } from '@clerk/clerk-react';
 import { useFetch } from '@hooks/useFetch';
 import type { User as UserEntity, Organisation } from '@/types/entities';
 import {
@@ -651,6 +654,8 @@ function InspectionPreferences({
 // =============================================
 
 export function SettingsPage(): JSX.Element {
+  const { signOut } = useClerk();
+
   const { data: userData, loading: userLoading, error: userError, refetch: refetchUser } =
     useFetch<UserProfileResponse>('/api/v1/users/me');
 
@@ -663,8 +668,6 @@ export function SettingsPage(): JSX.Element {
   const loading = userLoading || orgLoading;
   const hasError = userError || orgError;
 
-  // Save handlers — these would call secureFetch PUT in a real implementation.
-  // For now they update via the API and refetch.
   const handleSaveProfile = useCallback(async (data: Partial<UserEntity>) => {
     const { secureFetch } = await import('@hooks/useFetch');
     await secureFetch('/api/v1/users/me', { method: 'PUT', body: data });
@@ -681,6 +684,10 @@ export function SettingsPage(): JSX.Element {
     void refetchUser();
     void refetchOrg();
   }, [refetchUser, refetchOrg]);
+
+  const handleSignOut = useCallback(() => {
+    void signOut({ redirectUrl: '/sign-in' });
+  }, [signOut]);
 
   return (
     <>
@@ -765,6 +772,29 @@ export function SettingsPage(): JSX.Element {
                 </div>
               </div>
             )}
+
+            {/* Sign Out */}
+            <section className="bg-iv-surface border border-iv-border rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-red-500/15 flex items-center justify-center shrink-0 mt-0.5">
+                    <LogOut className="w-4 h-4 text-red-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-iv-text">Sign Out</p>
+                    <p className="text-2xs text-iv-muted mt-0.5">End your current session and return to the sign-in page</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-sm font-medium hover:bg-red-500/20 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign Out
+                </button>
+              </div>
+            </section>
           </>
         )}
       </div>

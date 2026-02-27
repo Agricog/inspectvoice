@@ -133,7 +133,14 @@ export function SiteDetail(): JSX.Element {
     if (!id) return;
     setDeleting(true);
     try {
-      await secureFetch(`/api/v1/sites/${id}`, { method: 'DELETE' });
+      // Try server delete — ignore 404 (site may only exist locally)
+      try {
+        await secureFetch(`/api/v1/sites/${id}`, { method: 'DELETE' });
+      } catch (err) {
+        const is404 = err instanceof Error && err.message.includes('404');
+        if (!is404) throw err;
+      }
+      // Always remove from local IndexedDB cache
       await sitesCache.delete(id);
       void navigate('/sites');
     } catch (err) {

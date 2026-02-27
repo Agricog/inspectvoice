@@ -269,6 +269,14 @@ export function SiteForm(): JSX.Element {
     sanitise: true,
     onSubmit: async (values) => {
       try {
+        // If postcode is set but coordinates are missing, try lookup before saving
+        if (values.postcode && isValidUKPostcode(values.postcode) && !values.latitude && !values.longitude) {
+          const result = await lookupPostcode(values.postcode);
+          if (result) {
+            values.latitude = String(result.latitude);
+            values.longitude = String(result.longitude);
+          }
+        }
         const apiPayload = buildApiPayload(values);
         const localId = isEditing && id ? id : uuid();
         let savedSite: Site | null = null;

@@ -4,7 +4,6 @@
  * Saves to API (Neon) when online, falls back to IndexedDB cache when offline.
  * Lat/lng are auto-populated from postcode via postcodes.io (free, no key).
  */
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -37,11 +36,9 @@ import {
   SITE_TYPE_LABELS,
 } from '@/types';
 import type { Site } from '@/types';
-
 // =============================================
 // FORM VALUES TYPE
 // =============================================
-
 type SiteFormValues = {
   name: string;
   site_code: string;
@@ -61,7 +58,6 @@ type SiteFormValues = {
   inspection_frequency_annual_days: string;
   notes: string;
 };
-
 const EMPTY_FORM: SiteFormValues = {
   name: '',
   site_code: '',
@@ -81,18 +77,14 @@ const EMPTY_FORM: SiteFormValues = {
   inspection_frequency_annual_days: '365',
   notes: '',
 };
-
 // =============================================
 // POSTCODE LOOKUP
 // =============================================
-
 type PostcodeLookupStatus = 'idle' | 'looking' | 'found' | 'not-found' | 'error';
-
 interface PostcodeLookupResult {
   latitude: number;
   longitude: number;
 }
-
 async function lookupPostcode(postcode: string): Promise<PostcodeLookupResult | null> {
   try {
     const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
@@ -110,11 +102,9 @@ async function lookupPostcode(postcode: string): Promise<PostcodeLookupResult | 
     return null;
   }
 }
-
 // =============================================
 // VALIDATION
 // =============================================
-
 function validateSiteForm(values: SiteFormValues) {
   return createValidator()
     .required('name', values.name, 'Site name')
@@ -180,11 +170,9 @@ function validateSiteForm(values: SiteFormValues) {
     )
     .validate();
 }
-
 // =============================================
 // BUILD API PAYLOAD (only fields the worker expects)
 // =============================================
-
 function buildApiPayload(values: SiteFormValues): Record<string, unknown> {
   return {
     name: values.name.trim(),
@@ -208,7 +196,6 @@ function buildApiPayload(values: SiteFormValues): Record<string, unknown> {
     metadata: {},
   };
 }
-
 // Build a full Site object for local IndexedDB cache (used as fallback)
 function buildLocalSiteData(values: SiteFormValues, siteId: string): Site {
   const now = new Date().toISOString();
@@ -244,47 +231,21 @@ function buildLocalSiteData(values: SiteFormValues, siteId: string): Site {
     updated_at: now,
   };
 }
-
 // =============================================
 // COMPONENT
 // =============================================
-
 export function SiteForm(): JSX.Element {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditing = Boolean(id) && id !== 'new';
-
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [postcodeLookup, setPostcodeLookup] = useState<PostcodeLookupStatus>('idle');
   const lastLookedUp = useRef<string>('');
-  const handlePostcodeBlur = useCallback(async (e: React.FocusEvent<HTMLInputElement>) => {
-    form.handleBlur('postcode')();
-    const postcode = e.target.value.trim();
-    if (!postcode || !isValidUKPostcode(postcode)) return;
-    const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
-    if (cleaned === lastLookedUp.current) return;
-    setPostcodeLookup('looking');
-    const result = await lookupPostcode(postcode);
-    if (result) {
-      lastLookedUp.current = cleaned;
-      form.setValues({
-        ...valuesRef.current,
-        latitude: String(result.latitude),
-        longitude: String(result.longitude),
-      });
-      setPostcodeLookup('found');
-      setTimeout(() => setPostcodeLookup('idle'), 2000);
-    } else {
-      setPostcodeLookup('not-found');
-      setTimeout(() => setPostcodeLookup('idle'), 3000);
-    }
-  }, [form.handleBlur, form.setValues]);
-
+  const valuesRef = useRef<SiteFormValues>(EMPTY_FORM);
   useEffect(() => {
     trackPageView(isEditing ? `/sites/${id ?? ''}/edit` : '/sites/new');
   }, [isEditing, id]);
-
   const form = useFormValidation<SiteFormValues>({
     initialValues: EMPTY_FORM,
     validate: validateSiteForm,
@@ -302,7 +263,6 @@ export function SiteForm(): JSX.Element {
         const apiPayload = buildApiPayload(values);
         const localId = isEditing && id ? id : uuid();
         let savedSite: Site | null = null;
-
         // Try API save first
         try {
           if (isEditing && id) {
@@ -322,17 +282,13 @@ export function SiteForm(): JSX.Element {
           // API failed — fall back to local-only save
           console.warn('[SiteForm] API save failed, saving locally:', apiErr);
         }
-
         // Cache locally — use server response if available, otherwise build local data
         const siteToCache = savedSite ?? buildLocalSiteData(values, localId);
         await sitesCache.put(siteToCache);
-
         if (!isEditing) {
           SiteEvents.created();
         }
-
         setSaveSuccess(true);
-
         setTimeout(() => {
           void navigate(`/sites/${siteToCache.id}`);
         }, 500);
@@ -345,26 +301,22 @@ export function SiteForm(): JSX.Element {
       }
     },
   });
-
+  // Keep valuesRef in sync so async handlers always read latest state
+  valuesRef.current = form.values;
   // Auto-lookup coordinates when postcode changes
   const handlePostcodeBlur = useCallback(async (e: React.FocusEvent<HTMLInputElement>) => {
     form.handleBlur('postcode')();
-
     const postcode = e.target.value.trim();
     if (!postcode || !isValidUKPostcode(postcode)) return;
-
     // Don't re-lookup the same postcode
     const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
     if (cleaned === lastLookedUp.current) return;
-
     setPostcodeLookup('looking');
     const result = await lookupPostcode(postcode);
-
     if (result) {
       lastLookedUp.current = cleaned;
       form.setValues({
-        ...form.values,
-        postcode: form.values.postcode,
+        ...valuesRef.current,
         latitude: String(result.latitude),
         longitude: String(result.longitude),
       });
@@ -374,12 +326,10 @@ export function SiteForm(): JSX.Element {
       setPostcodeLookup('not-found');
       setTimeout(() => setPostcodeLookup('idle'), 3000);
     }
-  }, [form.handleBlur, form.values, form.setValues]);
-
+  }, [form.handleBlur, form.setValues]);
   // Load existing site for editing
   useEffect(() => {
     if (!isEditing || !id) return;
-
     async function loadSite(): Promise<void> {
       try {
         const cached = await sitesCache.get(id as string);
@@ -387,11 +337,9 @@ export function SiteForm(): JSX.Element {
           setLoadError('Site not found.');
           return;
         }
-
         const site = cached.data;
         const loadedPostcode = site.postcode ?? '';
         lastLookedUp.current = loadedPostcode.replace(/\s+/g, '').toUpperCase();
-
         form.setValues({
           name: site.name,
           site_code: site.site_code ?? '',
@@ -416,11 +364,9 @@ export function SiteForm(): JSX.Element {
         captureError(err, { module: 'SiteForm', operation: 'loadSite' });
       }
     }
-
     void loadSite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isEditing]);
-
   if (loadError) {
     return (
       <div className="iv-panel p-8 text-center">
@@ -432,13 +378,11 @@ export function SiteForm(): JSX.Element {
       </div>
     );
   }
-
   return (
     <>
       <Helmet>
         <title>{isEditing ? 'Edit Site' : 'Add Site'} — InspectVoice</title>
       </Helmet>
-
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <button
@@ -458,7 +402,6 @@ export function SiteForm(): JSX.Element {
           </p>
         </div>
       </div>
-
       <form
         onSubmit={(e) => void form.handleSubmit(e)}
         noValidate
@@ -470,7 +413,6 @@ export function SiteForm(): JSX.Element {
             <MapPin className="w-4 h-4 text-iv-accent" />
             Site Details
           </div>
-
           <div className="space-y-4">
             <div>
               <label htmlFor="name" className="iv-label">Site Name *</label>
@@ -489,7 +431,6 @@ export function SiteForm(): JSX.Element {
                 <p className="text-sm text-risk-high mt-1">{form.fieldError('name')}</p>
               )}
             </div>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label htmlFor="site_type" className="iv-label">Site Type *</label>
@@ -504,7 +445,6 @@ export function SiteForm(): JSX.Element {
                   ))}
                 </select>
               </div>
-
               <div>
                 <label htmlFor="site_code" className="iv-label">Site Code</label>
                 <input
@@ -519,7 +459,6 @@ export function SiteForm(): JSX.Element {
                 />
               </div>
             </div>
-
             <div>
               <label htmlFor="address" className="iv-label">Address *</label>
               <textarea
@@ -535,7 +474,6 @@ export function SiteForm(): JSX.Element {
                 <p className="text-sm text-risk-high mt-1">{form.fieldError('address')}</p>
               )}
             </div>
-
             <div>
               <label htmlFor="postcode" className="iv-label">Postcode</label>
               <div className="flex items-center gap-3">
@@ -586,11 +524,9 @@ export function SiteForm(): JSX.Element {
             </div>
           </div>
         </div>
-
         {/* Contact */}
         <div className="iv-panel p-5">
           <div className="text-sm font-semibold text-iv-text mb-4">Site Contact</div>
-
           <div className="space-y-4">
             <div>
               <label htmlFor="contact_name" className="iv-label">Contact Name</label>
@@ -605,7 +541,6 @@ export function SiteForm(): JSX.Element {
                 autoComplete="name"
               />
             </div>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label htmlFor="contact_phone" className="iv-label">Phone</label>
@@ -623,7 +558,6 @@ export function SiteForm(): JSX.Element {
                   <p className="text-sm text-risk-high mt-1">{form.fieldError('contact_phone')}</p>
                 )}
               </div>
-
               <div>
                 <label htmlFor="contact_email" className="iv-label">Email</label>
                 <input
@@ -643,11 +577,9 @@ export function SiteForm(): JSX.Element {
             </div>
           </div>
         </div>
-
         {/* Access & Notes */}
         <div className="iv-panel p-5">
           <div className="text-sm font-semibold text-iv-text mb-4">Access & Notes</div>
-
           <div className="space-y-4">
             <div>
               <label htmlFor="access_notes" className="iv-label">Access Notes</label>
@@ -660,7 +592,6 @@ export function SiteForm(): JSX.Element {
                 maxLength={1000}
               />
             </div>
-
             <div>
               <label htmlFor="parking_notes" className="iv-label">Parking Notes</label>
               <input
@@ -673,7 +604,6 @@ export function SiteForm(): JSX.Element {
                 maxLength={500}
               />
             </div>
-
             <div>
               <label htmlFor="install_date" className="iv-label">Installation Date</label>
               <input
@@ -684,7 +614,6 @@ export function SiteForm(): JSX.Element {
                 onChange={form.handleChange('install_date')}
               />
             </div>
-
             <div>
               <label htmlFor="notes" className="iv-label">Additional Notes</label>
               <textarea
@@ -698,13 +627,11 @@ export function SiteForm(): JSX.Element {
             </div>
           </div>
         </div>
-
         {/* Inspection Frequency */}
         <div className="iv-panel p-5">
           <div className="text-sm font-semibold text-iv-text mb-4">
             Inspection Frequency (BS EN 1176-7)
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label htmlFor="freq_routine" className="iv-label">Routine Visual (days)</label>
@@ -726,7 +653,6 @@ export function SiteForm(): JSX.Element {
               )}
               <p className="text-2xs text-iv-muted-2 mt-1">Default: 7 (weekly)</p>
             </div>
-
             <div>
               <label htmlFor="freq_operational" className="iv-label">Operational (days)</label>
               <input
@@ -747,7 +673,6 @@ export function SiteForm(): JSX.Element {
               )}
               <p className="text-2xs text-iv-muted-2 mt-1">Default: 90 (quarterly)</p>
             </div>
-
             <div>
               <label htmlFor="freq_annual" className="iv-label">Annual Main (days)</label>
               <input
@@ -770,7 +695,6 @@ export function SiteForm(): JSX.Element {
             </div>
           </div>
         </div>
-
         {/* Submit */}
         <div className="flex items-center gap-3 pt-2">
           <button
@@ -785,7 +709,6 @@ export function SiteForm(): JSX.Element {
             )}
             {saveSuccess ? 'Saved' : isEditing ? 'Update Site' : 'Create Site'}
           </button>
-
           <button
             type="button"
             className="iv-btn-secondary"
@@ -794,7 +717,6 @@ export function SiteForm(): JSX.Element {
           >
             Cancel
           </button>
-
           {form.submitted && form.errors.length > 0 && (
             <p className="text-sm text-risk-high flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4" />

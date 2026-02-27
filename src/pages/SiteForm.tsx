@@ -2,9 +2,11 @@
  * InspectVoice — Site Form Page
  * Create or edit a site with full validation and offline-first save.
  * Saves to IndexedDB cache, enqueues API sync when online.
+ *
+ * Lat/lng are auto-populated from postcode via postcodes.io (free, no key).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -13,6 +15,7 @@ import {
   Loader2,
   MapPin,
   AlertCircle,
+  CheckCircle,
 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { useFormValidation } from '@hooks/useFormValidation';
@@ -78,6 +81,35 @@ const EMPTY_FORM: SiteFormValues = {
   inspection_frequency_annual_days: '365',
   notes: '',
 };
+
+// =============================================
+// POSTCODE LOOKUP
+// =============================================
+
+type PostcodeLookupStatus = 'idle' | 'looking' | 'found' | 'not-found' | 'error';
+
+interface PostcodeLookupResult {
+  latitude: number;
+  longitude: number;
+}
+
+async function lookupPostcode(postcode: string): Promise<PostcodeLookupResult | null> {
+  try {
+    const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
+    const res = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(cleaned)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.status === 200 && data.result) {
+      return {
+        latitude: data.result.latitude,
+        longitude: data.result.longitude,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 // =============================================
 // VALIDATION
@@ -160,6 +192,8 @@ export function SiteForm(): JSX.Element {
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [postcodeLookup, setPostcodeLookup] = useState<PostcodeLookupStatus>('idle');
+  const lastLookedUp = useRef<string>('');
 
   useEffect(() => {
     trackPageView(isEditing ? `/sites/${id ?? ''}/edit` : '/sites/new');
@@ -233,6 +267,36 @@ export function SiteForm(): JSX.Element {
     },
   });
 
+  // Auto-lookup coordinates when postcode changes
+  const handlePostcodeBlur = useCallback(async () => {
+    form.handleBlur('postcode')();
+
+    const postcode = form.values.postcode.trim();
+    if (!postcode || !isValidUKPostcode(postcode)) return;
+
+    // Don't re-lookup the same postcode
+    const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
+    if (cleaned === lastLookedUp.current) return;
+
+    setPostcodeLookup('looking');
+    const result = await lookupPostcode(postcode);
+
+    if (result) {
+      lastLookedUp.current = cleaned;
+      form.setValues({
+        ...form.values,
+        postcode: form.values.postcode,
+        latitude: String(result.latitude),
+        longitude: String(result.longitude),
+      });
+      setPostcodeLookup('found');
+      setTimeout(() => setPostcodeLookup('idle'), 2000);
+    } else {
+      setPostcodeLookup('not-found');
+      setTimeout(() => setPostcodeLookup('idle'), 3000);
+    }
+  }, [form]);
+
   // Load existing site for editing
   useEffect(() => {
     if (!isEditing || !id) return;
@@ -246,11 +310,14 @@ export function SiteForm(): JSX.Element {
         }
 
         const site = cached.data;
+        const loadedPostcode = site.postcode ?? '';
+        lastLookedUp.current = loadedPostcode.replace(/\s+/g, '').toUpperCase();
+
         form.setValues({
           name: site.name,
           site_code: site.site_code ?? '',
           address: site.address,
-          postcode: site.postcode ?? '',
+          postcode: loadedPostcode,
           latitude: site.latitude ? String(site.latitude) : '',
           longitude: site.longitude ? String(site.longitude) : '',
           site_type: site.site_type,
@@ -390,58 +457,53 @@ export function SiteForm(): JSX.Element {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label htmlFor="postcode" className="iv-label">Postcode</label>
+            <div>
+              <label htmlFor="postcode" className="iv-label">Postcode</label>
+              <div className="flex items-center gap-3">
                 <input
                   id="postcode"
                   type="text"
-                  className={`iv-input uppercase ${form.hasError('postcode') ? 'border-risk-high focus:border-risk-high focus:ring-risk-high/30' : ''}`}
+                  className={`iv-input uppercase max-w-[200px] ${form.hasError('postcode') ? 'border-risk-high focus:border-risk-high focus:ring-risk-high/30' : ''}`}
                   value={form.values.postcode}
                   onChange={form.handleChange('postcode')}
-                  onBlur={form.handleBlur('postcode')}
+                  onBlur={() => void handlePostcodeBlur()}
                   placeholder="SW1A 1AA"
                   maxLength={10}
                   autoComplete="postal-code"
                 />
-                {form.fieldError('postcode') && (
-                  <p className="text-sm text-risk-high mt-1">{form.fieldError('postcode')}</p>
+                {postcodeLookup === 'looking' && (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-iv-muted">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Looking up coordinates…
+                  </span>
+                )}
+                {postcodeLookup === 'found' && (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Coordinates set
+                  </span>
+                )}
+                {postcodeLookup === 'not-found' && (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-risk-medium">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Postcode not found
+                  </span>
+                )}
+                {postcodeLookup === 'error' && (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-risk-high">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Lookup failed — coordinates can be added manually
+                  </span>
                 )}
               </div>
-
-              <div>
-                <label htmlFor="latitude" className="iv-label">Latitude</label>
-                <input
-                  id="latitude"
-                  type="text"
-                  inputMode="decimal"
-                  className={`iv-input ${form.hasError('latitude') ? 'border-risk-high focus:border-risk-high focus:ring-risk-high/30' : ''}`}
-                  value={form.values.latitude}
-                  onChange={form.handleChange('latitude')}
-                  onBlur={form.handleBlur('latitude')}
-                  placeholder="51.5074"
-                />
-                {form.fieldError('latitude') && (
-                  <p className="text-sm text-risk-high mt-1">{form.fieldError('latitude')}</p>
-                )}
-              </div>
-
-              <div>
-                <label htmlFor="longitude" className="iv-label">Longitude</label>
-                <input
-                  id="longitude"
-                  type="text"
-                  inputMode="decimal"
-                  className={`iv-input ${form.hasError('longitude') ? 'border-risk-high focus:border-risk-high focus:ring-risk-high/30' : ''}`}
-                  value={form.values.longitude}
-                  onChange={form.handleChange('longitude')}
-                  onBlur={form.handleBlur('longitude')}
-                  placeholder="-0.1278"
-                />
-                {form.fieldError('longitude') && (
-                  <p className="text-sm text-risk-high mt-1">{form.fieldError('longitude')}</p>
-                )}
-              </div>
+              {form.fieldError('postcode') && (
+                <p className="text-sm text-risk-high mt-1">{form.fieldError('postcode')}</p>
+              )}
+              {form.values.latitude && form.values.longitude && (
+                <p className="text-2xs text-iv-muted-2 mt-1.5">
+                  📍 {form.values.latitude}, {form.values.longitude}
+                </p>
+              )}
             </div>
           </div>
         </fieldset>

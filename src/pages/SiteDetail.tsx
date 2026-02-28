@@ -528,27 +528,27 @@ export function SiteDetail(): JSX.Element {
             </div>
           </div>
 
-          {/* Quick actions */}
+          {/* Quick actions — ?type= pre-selects on InspectionStart */}
           <div className="iv-panel p-5">
             <h2 className="text-sm font-semibold text-iv-text mb-3">Quick Actions</h2>
 
             <div className="space-y-2">
               <Link
-                to={`/sites/${site.id}/inspect/new`}
+                to={`/sites/${site.id}/inspect/new?type=routine_visual`}
                 className="iv-card-interactive flex items-center gap-3 py-2.5 px-3 w-full"
               >
                 <ClipboardCheck className="w-4 h-4 text-iv-accent shrink-0" />
                 <span className="text-sm text-iv-text">Start Routine Visual</span>
               </Link>
               <Link
-                to={`/sites/${site.id}/inspect/new`}
+                to={`/sites/${site.id}/inspect/new?type=operational`}
                 className="iv-card-interactive flex items-center gap-3 py-2.5 px-3 w-full"
               >
                 <ClipboardCheck className="w-4 h-4 text-risk-medium shrink-0" />
                 <span className="text-sm text-iv-text">Start Operational</span>
               </Link>
               <Link
-                to={`/sites/${site.id}/inspect/new`}
+                to={`/sites/${site.id}/inspect/new?type=annual_main`}
                 className="iv-card-interactive flex items-center gap-3 py-2.5 px-3 w-full"
               >
                 <ClipboardCheck className="w-4 h-4 text-risk-high shrink-0" />

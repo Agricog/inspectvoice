@@ -314,7 +314,7 @@ export function SiteDetail(): JSX.Element {
             <span className="hidden sm:inline">Edit</span>
           </Link>
 
-          <Link to={`/inspections/new?siteId=${site.id}`} className="iv-btn-primary">
+          <Link to={`/sites/${site.id}/inspect/new`} className="iv-btn-primary">
             <ClipboardCheck className="w-4 h-4" />
             <span className="hidden sm:inline">New Inspection</span>
           </Link>
@@ -534,21 +534,21 @@ export function SiteDetail(): JSX.Element {
 
             <div className="space-y-2">
               <Link
-                to={`/inspections/new?siteId=${site.id}&type=routine_visual`}
+                to={`/sites/${site.id}/inspect/new`}
                 className="iv-card-interactive flex items-center gap-3 py-2.5 px-3 w-full"
               >
                 <ClipboardCheck className="w-4 h-4 text-iv-accent shrink-0" />
                 <span className="text-sm text-iv-text">Start Routine Visual</span>
               </Link>
               <Link
-                to={`/inspections/new?siteId=${site.id}&type=operational`}
+                to={`/sites/${site.id}/inspect/new`}
                 className="iv-card-interactive flex items-center gap-3 py-2.5 px-3 w-full"
               >
                 <ClipboardCheck className="w-4 h-4 text-risk-medium shrink-0" />
                 <span className="text-sm text-iv-text">Start Operational</span>
               </Link>
               <Link
-                to={`/inspections/new?siteId=${site.id}&type=annual_main`}
+                to={`/sites/${site.id}/inspect/new`}
                 className="iv-card-interactive flex items-center gap-3 py-2.5 px-3 w-full"
               >
                 <ClipboardCheck className="w-4 h-4 text-risk-high shrink-0" />

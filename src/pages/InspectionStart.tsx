@@ -3,10 +3,12 @@
  * Batch 11
  *
  * Route: /sites/:siteId/inspect/new
+ * Optional query param: ?type=routine_visual|operational|annual_main
  *
  * Workflow:
  *   1. Pre-loads site info and asset register from IndexedDB cache
  *   2. Inspector selects inspection type (Routine Visual / Operational / Annual Main)
+ *      — if ?type= query param provided, pre-selects matching type
  *   3. Records weather and surface conditions
  *   4. Reviews and confirms asset register (can add new assets on-site)
  *   5. Creates draft inspection in IndexedDB
@@ -27,7 +29,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   ArrowLeft,
@@ -71,6 +73,13 @@ const SELECTABLE_TYPES = [
   InspectionType.OPERATIONAL,
   InspectionType.ANNUAL_MAIN,
 ] as const;
+
+/** Map of query param values to InspectionType enum values */
+const TYPE_PARAM_MAP: Record<string, InspectionType> = {
+  routine_visual: InspectionType.ROUTINE_VISUAL,
+  operational: InspectionType.OPERATIONAL,
+  annual_main: InspectionType.ANNUAL_MAIN,
+};
 
 /** Weather condition options */
 const WEATHER_OPTIONS: Array<{ value: WeatherCondition; label: string; icon: string }> = [
@@ -117,6 +126,11 @@ function typeIcon(type: InspectionType): JSX.Element {
 export default function InspectionStart(): JSX.Element {
   const { siteId } = useParams<{ siteId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // ---- Resolve pre-selected type from ?type= query param ----
+  const typeParam = searchParams.get('type');
+  const preSelectedType = typeParam ? TYPE_PARAM_MAP[typeParam] ?? null : null;
 
   // ---- Loading state ----
   const [loading, setLoading] = useState(true);
@@ -127,7 +141,7 @@ export default function InspectionStart(): JSX.Element {
   const [assets, setAssets] = useState<Asset[]>([]);
 
   // ---- Form state ----
-  const [selectedType, setSelectedType] = useState<InspectionType | null>(null);
+  const [selectedType, setSelectedType] = useState<InspectionType | null>(preSelectedType);
   const [weather, setWeather] = useState<WeatherCondition | null>(null);
   const [surfaceCondition, setSurfaceCondition] = useState<SurfaceCondition | null>(null);
   const [temperature, setTemperature] = useState<string>('');

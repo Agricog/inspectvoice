@@ -343,21 +343,26 @@ export default {
         return addCorsHeaders(response, request, env);
       }
 
-      // ── Upload Proxy (token-only auth, no JWT) ──
-      if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
-        const match = path.match(/^\/api\/v1\/uploads\/put\/(.+)$/);
-        if (match && match[1]) {
-          const r2Key = decodeURIComponent(match[1]);
-          // Create minimal context for upload handler (no JWT verification)
-          const uploadCtx = {
-            requestId: crypto.randomUUID(),
-            env,
-            // Upload handler validates its own token, doesn't need JWT context
-          };
-          const response = await proxyUploadToR2(request, { r2Key }, uploadCtx as any);
-          return addCorsHeaders(response, request, env);
-        }
-      }
+     // ── Upload Proxy (token-only auth, no JWT) ──
+if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
+  const match = path.match(/^\/api\/v1\/uploads\/put\/(.+)$/);
+  if (match && match[1]) {
+    const r2Key = decodeURIComponent(match[1]);
+    // Derive orgId from key prefix (format: {orgId}/type/itemId/uuid.ext)
+    const orgId = r2Key.split('/')[0] ?? '';
+    const response = await proxyUploadToR2(request, { r2Key }, {
+      env,
+      requestId: crypto.randomUUID(),
+      orgId,
+      userId: '',
+      userRole: '',
+      method,
+      path,
+      startedAt: Date.now(),
+    } as RequestContext);
+    return addCorsHeaders(response, request, env);
+  }
+}
 
       // ── Public Verification (no auth — Feature 10) ──
       if (path.startsWith('/api/v1/verify/') && method === 'GET') {

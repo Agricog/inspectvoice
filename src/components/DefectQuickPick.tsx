@@ -24,6 +24,7 @@
  * FIX: 1 Mar 2026
  *   - Added CustomDefectForm so inspectors can manually enter defects
  *     when the defect library API is empty or search returns no results.
+ *   - Defined COST_BAND_LABELS locally (not exported from @/types).
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -42,7 +43,6 @@ import {
   RiskRating,
   ACTION_TIMEFRAME_LABELS,
   ActionTimeframe,
-  COST_BAND_LABELS,
   CostBand,
 } from '@/types';
 
@@ -92,6 +92,16 @@ const DESCRIPTION_MAX = 1000;
 const REMEDIAL_MAX = 1000;
 const BS_EN_MAX = 200;
 
+/**
+ * Defined locally because COST_BAND_LABELS is not exported from @/types.
+ * If it gets added to @/types in future, this can be replaced with an import.
+ */
+const COST_BAND_LABELS: Record<string, string> = {
+  [CostBand.LOW]: 'Low',
+  [CostBand.MEDIUM]: 'Medium',
+  [CostBand.HIGH]: 'High',
+};
+
 const SEVERITY_OPTIONS: { value: RiskRating; label: string }[] = [
   { value: RiskRating.LOW, label: RISK_RATING_LABELS[RiskRating.LOW] },
   { value: RiskRating.MEDIUM, label: RISK_RATING_LABELS[RiskRating.MEDIUM] },
@@ -109,9 +119,9 @@ const TIMEFRAME_OPTIONS: { value: ActionTimeframe; label: string }[] = [
 ];
 
 const COST_BAND_OPTIONS: { value: CostBand; label: string }[] = [
-  { value: CostBand.LOW, label: COST_BAND_LABELS[CostBand.LOW] },
-  { value: CostBand.MEDIUM, label: COST_BAND_LABELS[CostBand.MEDIUM] },
-  { value: CostBand.HIGH, label: COST_BAND_LABELS[CostBand.HIGH] },
+  { value: CostBand.LOW, label: COST_BAND_LABELS[CostBand.LOW] ?? 'Low' },
+  { value: CostBand.MEDIUM, label: COST_BAND_LABELS[CostBand.MEDIUM] ?? 'Medium' },
+  { value: CostBand.HIGH, label: COST_BAND_LABELS[CostBand.HIGH] ?? 'High' },
 ];
 
 // =============================================
@@ -499,7 +509,7 @@ export default function DefectQuickPick({
                         <p className="text-sm font-medium iv-text truncate">{item.title}</p>
                         <p className="text-2xs iv-muted">
                           {RISK_RATING_LABELS[item.severity_default as RiskRating] ?? item.severity_default}
-                          {item.cost_band && ` · ${COST_BAND_LABELS[item.cost_band as CostBand] ?? item.cost_band}`}
+                          {item.cost_band && ` · ${COST_BAND_LABELS[item.cost_band] ?? item.cost_band}`}
                           {item.timeframe_default && ` · ${ACTION_TIMEFRAME_LABELS[item.timeframe_default as ActionTimeframe] ?? item.timeframe_default}`}
                         </p>
                       </div>

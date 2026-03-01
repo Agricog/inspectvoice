@@ -26,11 +26,11 @@
  *   - AI completeness check modal before sign-off
  *   - Sign-off confirmation with name + timestamp
  *   - Updates inspection status to COMPLETED in IndexedDB
+ *   - Sync-before-check: forces sync to Postgres before opening completeness modal
  *   - Dark theme, mobile-first, accessible
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
-
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -50,8 +50,8 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-
 import { inspections, inspectionItems } from '@services/offlineStore';
+import { syncService } from '@services/syncService';
 import { captureError } from '@utils/errorTracking';
 import {
   InspectionStatus,
@@ -75,7 +75,6 @@ import type {
 // =============================================
 // BATCH MAPPING — tracks which result maps to which local state field
 // =============================================
-
 interface BatchFieldMapping {
   /** Key for matching: 'inspector_summary' | 'item_{itemId}_defect_{idx}' */
   stateKey: string;
@@ -88,7 +87,6 @@ interface BatchFieldMapping {
 // =============================================
 // HELPERS
 // =============================================
-
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '\u2014';
   try {
@@ -152,7 +150,6 @@ function riskColour(risk: RiskRating | null): string {
 // =============================================
 // RISK SUMMARY CARD
 // =============================================
-
 function RiskSummaryCard({
   label,
   count,
@@ -178,7 +175,6 @@ function RiskSummaryCard({
 // =============================================
 // ASSET RESULT CARD (expandable, with normalisation)
 // =============================================
-
 function AssetResultCard({
   item,
   siteId,
@@ -193,7 +189,6 @@ function AssetResultCard({
   const [expanded, setExpanded] = useState(false);
   const config = getAssetTypeConfig(item.asset_type);
   const typeName = config?.name ?? item.asset_type;
-
   const hasTranscript = Boolean(item.voice_transcript);
   const hasNotes = Boolean(item.inspector_notes);
   const defectCount = item.defects.length;
@@ -229,7 +224,6 @@ function AssetResultCard({
             <p className="text-xs iv-muted truncate">{typeName}</p>
           </div>
         </div>
-
         <div className="flex items-center gap-2 flex-shrink-0">
           {/* Quick indicators */}
           {hasTranscript && <Mic className="w-3.5 h-3.5 iv-muted" />}
@@ -237,12 +231,10 @@ function AssetResultCard({
           {defectCount > 0 && (
             <span className="text-xs text-[#F97316]">{defectCount} defect{defectCount !== 1 ? 's' : ''}</span>
           )}
-
           {/* Condition badge */}
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${conditionBadgeClass(item.overall_condition)}`}>
             {item.overall_condition ? CONDITION_LABELS[item.overall_condition] : 'N/A'}
           </span>
-
           {expanded ? (
             <ChevronDown className="w-4 h-4 iv-muted" />
           ) : (
@@ -343,7 +335,6 @@ function AssetResultCard({
 // =============================================
 // MAIN COMPONENT
 // =============================================
-
 export default function InspectionReview(): JSX.Element {
   const { siteId, inspectionId } = useParams<{ siteId: string; inspectionId: string }>();
   const navigate = useNavigate();
@@ -369,6 +360,7 @@ export default function InspectionReview(): JSX.Element {
 
   // ---- Completeness check modal ----
   const [showCompletenessCheck, setShowCompletenessCheck] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   // ---- Normalisation ----
   const [batchNormalising, setBatchNormalising] = useState(false);
@@ -379,7 +371,6 @@ export default function InspectionReview(): JSX.Element {
   // ---- Load data ----
   useEffect(() => {
     if (!siteId || !inspectionId) return;
-
     let cancelled = false;
 
     async function loadData(): Promise<void> {
@@ -420,7 +411,6 @@ export default function InspectionReview(): JSX.Element {
     }
 
     void loadData();
-
     return () => {
       cancelled = true;
     };
@@ -450,17 +440,14 @@ export default function InspectionReview(): JSX.Element {
       setItems((prev) =>
         prev.map((item) => {
           if (item.id !== itemId) return item;
-
           // Defect fields are named defect_0, defect_1, etc.
           if (fieldName.startsWith('defect_')) {
             const indexStr = fieldName.split('_')[1];
             if (indexStr === undefined) return item;
             const defectIndex = parseInt(indexStr, 10);
             if (isNaN(defectIndex) || defectIndex >= item.defects.length) return item;
-
             const existingDefect = item.defects[defectIndex];
             if (!existingDefect) return item;
-
             const updatedDefects: DefectDetail[] = [...item.defects];
             updatedDefects[defectIndex] = {
               ...existingDefect,
@@ -478,7 +465,6 @@ export default function InspectionReview(): JSX.Element {
   // ---- Batch normalise all normalisable text fields ----
   const handleBatchNormalise = useCallback(async () => {
     if (!inspectionId) return;
-
     setBatchNormalising(true);
     setBatchResults([]);
     setBatchMappings([]);
@@ -506,7 +492,6 @@ export default function InspectionReview(): JSX.Element {
         for (let i = 0; i < item.defects.length; i++) {
           const defect = item.defects[i];
           if (!defect) continue;
-
           fields.push({
             field_name: 'defect_description',
             original_text: defect.description,
@@ -580,18 +565,30 @@ export default function InspectionReview(): JSX.Element {
     setBatchMappings([]);
   }, []);
 
-  // ---- Completeness check → opens modal instead of directly signing ----
+  // ---- Completeness check → sync then open modal ----
   const canSubmit = signedByName.trim().length >= 2 && !completed;
 
-  const handleRequestSignOff = useCallback(() => {
+  const handleRequestSignOff = useCallback(async () => {
     if (!canSubmit) return;
+
+    // Force-sync inspection data to Postgres before opening modal.
+    // This ensures the server completeness check has real data.
+    // If sync fails (offline, auth), the modal falls back to local checks.
+    setSyncing(true);
+    try {
+      await syncService.syncNow();
+    } catch {
+      // Sync failure is non-blocking — modal handles offline fallback
+    } finally {
+      setSyncing(false);
+    }
+
     setShowCompletenessCheck(true);
   }, [canSubmit]);
 
   // ---- Actual sign off (called after completeness check passes) ----
   const handleSignOff = useCallback(async () => {
     if (!canSubmit || !inspectionId || !inspection) return;
-
     setShowCompletenessCheck(false);
     setSubmitting(true);
     setSubmitError(null);
@@ -620,7 +617,6 @@ export default function InspectionReview(): JSX.Element {
       };
 
       const result = await inspections.update(inspectionId, updatedData);
-
       if (result) {
         setInspection(result.data);
       }
@@ -644,7 +640,6 @@ export default function InspectionReview(): JSX.Element {
   // =============================================
   // RENDER: LOADING / ERROR
   // =============================================
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -684,14 +679,12 @@ export default function InspectionReview(): JSX.Element {
   // =============================================
   // RENDER: COMPLETED STATE
   // =============================================
-
   if (completed) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <Helmet>
           <title>Inspection Complete | InspectVoice</title>
         </Helmet>
-
         <div className="iv-panel p-8 text-center">
           <CheckCircle2 className="w-16 h-16 text-[#22C55E] mx-auto mb-4" />
           <h1 className="text-2xl font-bold iv-text mb-2">Inspection Complete</h1>
@@ -738,7 +731,6 @@ export default function InspectionReview(): JSX.Element {
   // =============================================
   // RENDER: REVIEW FORM
   // =============================================
-
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <Helmet>
@@ -774,7 +766,6 @@ export default function InspectionReview(): JSX.Element {
       {/* ── Summary Stats ── */}
       <div className="mb-4">
         <h2 className="text-base font-semibold iv-text mb-3">Inspection Summary</h2>
-
         {/* Condition overview */}
         <div className="grid grid-cols-4 gap-2 mb-3">
           <RiskSummaryCard
@@ -802,7 +793,6 @@ export default function InspectionReview(): JSX.Element {
             icon={<XCircle className="w-4 h-4" />}
           />
         </div>
-
         {/* Key figures */}
         <div className="grid grid-cols-3 gap-2">
           <div className="iv-panel p-3 text-center">
@@ -882,7 +872,6 @@ export default function InspectionReview(): JSX.Element {
           <p className="text-sm iv-muted mb-3">
             Dangerous conditions were identified. Do you recommend closure of the site or specific assets?
           </p>
-
           <label className="flex items-center gap-3 cursor-pointer mb-3">
             <input
               type="checkbox"
@@ -892,7 +881,6 @@ export default function InspectionReview(): JSX.Element {
             />
             <span className="text-sm iv-text">I recommend immediate closure or restricted access</span>
           </label>
-
           {closureRecommended && (
             <textarea
               value={closureReason}
@@ -947,7 +935,6 @@ export default function InspectionReview(): JSX.Element {
           By signing off, you confirm that this inspection has been conducted in accordance with
           BS EN 1176-7 and all findings are accurately recorded.
         </p>
-
         <div className="mb-4">
           <label htmlFor="signed-by" className="iv-label mb-1 block">
             Inspector Name <span className="text-red-400">*</span>
@@ -970,17 +957,22 @@ export default function InspectionReview(): JSX.Element {
           )}
         </div>
 
-        {/* Button now opens completeness check modal instead of directly signing */}
+        {/* Button: sync data → open completeness check modal */}
         <button
           type="button"
-          onClick={handleRequestSignOff}
-          disabled={!canSubmit || submitting}
+          onClick={() => void handleRequestSignOff()}
+          disabled={!canSubmit || submitting || syncing}
           className="iv-btn-primary flex items-center gap-2 w-full sm:w-auto justify-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
               Signing off...
+            </>
+          ) : syncing ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Syncing data...
             </>
           ) : (
             <>

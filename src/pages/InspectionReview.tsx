@@ -30,6 +30,10 @@
  *   - Dark theme, mobile-first, accessible
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
+ *
+ * FIX: 1 Mar 2026
+ *   - Custom type display: loads assets from cache to resolve custom_type_name
+ *     from metadata, so review page shows "Roundabout" instead of "custom_playground".
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -50,7 +54,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { inspections, inspectionItems } from '@services/offlineStore';
+import { inspections, inspectionItems, assetsCache } from '@services/offlineStore';
 import { syncService } from '@services/syncService';
 import { captureError } from '@utils/errorTracking';
 import {
@@ -87,6 +91,35 @@ interface BatchFieldMapping {
 // =============================================
 // HELPERS
 // =============================================
+
+/** Map of asset_id → custom type display name (from metadata.custom_type_name) */
+type CustomTypeNameMap = Map<string, string>;
+
+/**
+ * Resolve a friendly display name for an asset type.
+ * For custom types (keys starting with 'custom_'), looks up the inspector's
+ * custom name from the asset's metadata. Falls back to the raw key only as
+ * a last resort.
+ */
+function resolveAssetTypeName(
+  assetType: string,
+  assetId: string,
+  customTypeNames: CustomTypeNameMap,
+): string {
+  const config = getAssetTypeConfig(assetType);
+  if (config) return config.name;
+
+  // Custom type — try the metadata lookup
+  const customName = customTypeNames.get(assetId);
+  if (customName) return customName;
+
+  // Last resort: humanise the raw key
+  return assetType
+    .replace(/^custom_/, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '\u2014';
   try {
@@ -179,16 +212,17 @@ function AssetResultCard({
   item,
   siteId,
   inspectionId,
+  customTypeNames,
   onFieldNormalised,
 }: {
   item: InspectionItem;
   siteId: string;
   inspectionId: string;
+  customTypeNames: CustomTypeNameMap;
   onFieldNormalised: (itemId: string, fieldName: string, normalisedText: string) => void;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const config = getAssetTypeConfig(item.asset_type);
-  const typeName = config?.name ?? item.asset_type;
+  const typeName = resolveAssetTypeName(item.asset_type, item.asset_id, customTypeNames);
   const hasTranscript = Boolean(item.voice_transcript);
   const hasNotes = Boolean(item.inspector_notes);
   const defectCount = item.defects.length;
@@ -346,6 +380,7 @@ export default function InspectionReview(): JSX.Element {
   // ---- Data ----
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [items, setItems] = useState<InspectionItem[]>([]);
+  const [customTypeNames, setCustomTypeNames] = useState<CustomTypeNameMap>(new Map());
 
   // ---- Form ----
   const [summary, setSummary] = useState('');
@@ -393,6 +428,24 @@ export default function InspectionReview(): JSX.Element {
 
         const itemList = localItems.map((li) => li.data);
         setItems(itemList);
+
+        // ── Build custom type name lookup from cached assets ──
+        // Assets store custom_type_name in metadata when inspector picks "Custom"
+        try {
+          const cachedAssets = await assetsCache.getBySite(siteId!);
+          const nameMap: CustomTypeNameMap = new Map();
+          for (const ca of cachedAssets) {
+            const asset = ca.data;
+            const meta = asset.metadata as Record<string, unknown> | null | undefined;
+            if (meta && typeof meta === 'object' && typeof meta.custom_type_name === 'string' && meta.custom_type_name) {
+              nameMap.set(asset.id, meta.custom_type_name);
+            }
+          }
+          setCustomTypeNames(nameMap);
+        } catch (assetError) {
+          // Non-blocking — worst case shows humanised key instead of custom name
+          captureError(assetError, { module: 'InspectionReview', operation: 'loadAssetCustomNames' });
+        }
 
         // Pre-fill from existing inspection data
         if (insp.inspector_summary) setSummary(insp.inspector_summary);
@@ -828,6 +881,7 @@ export default function InspectionReview(): JSX.Element {
                 item={item}
                 siteId={siteId}
                 inspectionId={inspectionId}
+                customTypeNames={customTypeNames}
                 onFieldNormalised={handleFieldNormalised}
               />
             ))}

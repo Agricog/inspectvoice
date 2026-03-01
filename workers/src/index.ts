@@ -175,8 +175,6 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['POST', '/api/v1/uploads/photo', requestPhotoUpload],
   ['POST', '/api/v1/uploads/audio', requestAudioUpload],
   // NOTE: PUT /api/v1/uploads/put/:r2Key moved to token-only auth below
-  ['POST', '/api/v1/uploads/photo/:r2Key/confirm', confirmPhotoUpload],
-  ['POST', '/api/v1/uploads/audio/:r2Key/confirm', confirmAudioUpload],
   ['GET', '/api/v1/files/:r2Key', downloadFile],
 
   // ── Defects ──
@@ -360,6 +358,24 @@ if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
       path,
       startedAt: Date.now(),
     } as RequestContext);
+    return addCorsHeaders(response, request, env);
+  }
+}
+      // ── Upload Confirm Routes (r2Key contains slashes — handle before router) ──
+if (method === 'POST') {
+  const photoConfirmMatch = path.match(/^\/api\/v1\/uploads\/photo\/(.+)\/confirm$/);
+  if (photoConfirmMatch && photoConfirmMatch[1]) {
+    const r2Key = decodeURIComponent(photoConfirmMatch[1]);
+    const ctx = await guard(request, env);
+    const response = await confirmPhotoUpload(request, { r2Key }, ctx);
+    return addCorsHeaders(response, request, env);
+  }
+
+  const audioConfirmMatch = path.match(/^\/api\/v1\/uploads\/audio\/(.+)\/confirm$/);
+  if (audioConfirmMatch && audioConfirmMatch[1]) {
+    const r2Key = decodeURIComponent(audioConfirmMatch[1]);
+    const ctx = await guard(request, env);
+    const response = await confirmAudioUpload(request, { r2Key }, ctx);
     return addCorsHeaders(response, request, env);
   }
 }

@@ -459,7 +459,7 @@ export default function CompletenessCheckModal({
        const response = await secureFetch(`/api/v1/inspections/${inspection.id}/completeness-check`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-        });
+        }) as Response;
 
         if (!response.ok) {
           // Fallback to local checks if server fails

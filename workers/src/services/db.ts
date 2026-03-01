@@ -17,7 +17,7 @@
 
 import type { RequestContext } from '../types';
 import { Logger } from '../shared/logger';
-import { InternalError, NotFoundError } from '../shared/errors';
+import { BadRequestError, ConflictError, InternalError, NotFoundError } from '../shared/errors';
 
 // =============================================
 // NEON CLIENT
@@ -42,6 +42,18 @@ type NeonQueryFunction = <T extends Record<string, unknown>>(
   sql: string,
   params?: unknown[],
 ) => Promise<NeonQueryResult<T>>;
+
+/**
+ * Neon error shape — the driver exposes Postgres error fields
+ * as properties on the thrown Error object.
+ */
+interface NeonDatabaseError extends Error {
+  code?: string;           // Postgres error code e.g. '23505', '23503', '23514'
+  constraint?: string;     // Constraint name
+  detail?: string;         // Error detail from Postgres
+  severity?: string;       // ERROR, FATAL, etc.
+  sourceError?: unknown;   // Original error
+}
 
 /**
  * Create a Neon SQL query function from the DATABASE_URL.
@@ -350,7 +362,7 @@ export class DatabaseService {
       this.logger.error('Raw execute failed', error, {
         sql: truncateSql(sql),
       });
-      throw new InternalError('Database operation failed');
+      throw mapDatabaseError(error);
     }
   }
 
@@ -388,30 +400,71 @@ export class DatabaseService {
       this.logger.error('Database query failed', error, {
         sql: truncateSql(sql),
         durationMs,
+        pgCode: (error as NeonDatabaseError).code,
+        pgDetail: (error as NeonDatabaseError).detail,
+        pgConstraint: (error as NeonDatabaseError).constraint,
       });
 
-      // Map common Postgres errors to HTTP errors
-      if (error instanceof Error) {
-        if (error.message.includes('unique_violation') || error.message.includes('duplicate key')) {
-          // Import dynamically to avoid circular deps
-          const { ConflictError } = await import('../shared/errors');
-          throw new ConflictError('A record with this identifier already exists');
-        }
-
-        if (error.message.includes('foreign_key_violation')) {
-          const { BadRequestError } = await import('../shared/errors');
-          throw new BadRequestError('Referenced record does not exist');
-        }
-
-        if (error.message.includes('check_violation')) {
-          const { BadRequestError } = await import('../shared/errors');
-          throw new BadRequestError('Data validation constraint failed');
-        }
-      }
-
-      throw new InternalError('Database operation failed');
+      throw mapDatabaseError(error);
     }
   }
+}
+
+// =============================================
+// ERROR MAPPING
+// =============================================
+
+/**
+ * Map Postgres/Neon errors to application errors.
+ *
+ * Checks BOTH:
+ *   - Postgres error codes (e.g. '23505') — reliable, driver-agnostic
+ *   - Error message substrings — fallback for drivers that don't expose .code
+ *
+ * Surfaces the real Postgres message for unmapped errors so we can debug.
+ */
+function mapDatabaseError(error: unknown): never {
+  const dbErr = error as NeonDatabaseError;
+  const code = dbErr.code ?? '';
+  const message = dbErr.message ?? '';
+  const detail = dbErr.detail ?? '';
+  const constraint = dbErr.constraint ?? '';
+
+  // Build a debug-friendly message that includes the real Postgres error
+  const debugInfo = [
+    code ? `code=${code}` : '',
+    constraint ? `constraint=${constraint}` : '',
+    detail ? `detail=${detail}` : '',
+    message,
+  ].filter(Boolean).join(' | ');
+
+  // ── Unique violation (23505) ──
+  if (code === '23505' || message.includes('unique_violation') || message.includes('duplicate key')) {
+    throw new ConflictError(`Duplicate record: ${constraint || 'unique constraint violated'}`);
+  }
+
+  // ── Foreign key violation (23503) ──
+  if (code === '23503' || message.includes('foreign_key_violation') || message.includes('violates foreign key constraint')) {
+    throw new BadRequestError(`Referenced record does not exist: ${constraint || detail || 'foreign key constraint'}`);
+  }
+
+  // ── Check constraint violation (23514) ──
+  if (code === '23514' || message.includes('check_violation') || message.includes('violates check constraint')) {
+    throw new BadRequestError(`Validation failed: ${constraint || detail || 'check constraint'}`);
+  }
+
+  // ── Not-null violation (23502) ──
+  if (code === '23502' || message.includes('not-null constraint') || message.includes('null value in column')) {
+    throw new BadRequestError(`Missing required field: ${detail || message}`);
+  }
+
+  // ── Invalid text representation / type mismatch (22P02) ──
+  if (code === '22P02' || message.includes('invalid input syntax')) {
+    throw new BadRequestError(`Invalid data format: ${message}`);
+  }
+
+  // ── Unmapped error — surface the real message for debugging ──
+  throw new InternalError(`Database error: ${debugInfo}`);
 }
 
 // =============================================

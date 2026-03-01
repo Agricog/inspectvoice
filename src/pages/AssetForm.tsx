@@ -8,6 +8,7 @@
  *
  * Features:
  *   - Category → Asset Type cascading selection
+ *   - Custom type input for "Custom" selections and "Other" category
  *   - Auto-populates compliance standard from assetTypes config
  *   - Conditionally shows playground-specific fields (surface, fall height)
  *   - Full validation via createValidator
@@ -19,7 +20,6 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -40,9 +40,9 @@ import {
   FileText,
   ToggleLeft,
   ToggleRight,
+  PenLine,
 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
-
 import { useFormValidation } from '@hooks/useFormValidation';
 import { assetsCache } from '@services/offlineStore';
 import {
@@ -66,7 +66,6 @@ import {
   getAssetTypeConfig,
   getAssetTypesForCategory,
 } from '@config/assetTypes';
-
 import type { Asset } from '@/types';
 
 // =============================================
@@ -78,6 +77,7 @@ interface AssetFormValues {
   asset_code: string;
   asset_category: string;
   asset_type: string;
+  custom_type_name: string;
   manufacturer: string;
   model: string;
   serial_number: string;
@@ -95,6 +95,7 @@ const EMPTY_FORM: AssetFormValues = {
   asset_code: '',
   asset_category: '',
   asset_type: '',
+  custom_type_name: '',
   manufacturer: '',
   model: '',
   serial_number: '',
@@ -121,12 +122,24 @@ const CATEGORIES = [
   AssetCategory.OTHER,
 ] as const;
 
-/** Get filtered asset types for the selected category */
-function getTypesForCategory(category: string): Array<{ key: string; name: string }> {
-  if (!category) return [];
+/** Check if an asset type key is a custom/other type */
+function isCustomType(assetType: string): boolean {
+  return assetType.startsWith('custom_');
+}
 
+/** The fixed key used when the "Other" category is selected */
+const OTHER_CATEGORY_TYPE_KEY = 'custom_other';
+
+/** Get filtered asset types for the selected category.
+ *  Custom entries are relabelled to just "Custom".
+ *  The "Other" category returns no dropdown options (handled separately). */
+function getTypesForCategory(category: string): Array<{ key: string; name: string }> {
+  if (!category || category === AssetCategory.OTHER) return [];
   const configs = getAssetTypesForCategory(category as AssetCategory);
-  return configs.map((c) => ({ key: c.key, name: c.name }));
+  return configs.map((c) => ({
+    key: c.key,
+    name: isCustomType(c.key) ? 'Custom' : c.name,
+  }));
 }
 
 /** Whether the category shows playground-specific fields (surface, fall height) */
@@ -136,14 +149,14 @@ function showsPlaygroundFields(category: string): boolean {
 
 /** Generate a suggested asset code: TYPE-001 format */
 function suggestAssetCode(assetType: string, existingCodes: string[]): string {
+  // For custom types, use "CUST" as prefix
+  if (isCustomType(assetType)) return '';
   const config = getAssetTypeConfig(assetType);
   if (!config) return '';
-
   const prefix = config.name
     .toUpperCase()
     .replace(/[^A-Z]/g, '')
     .substring(0, 4);
-
   // Find highest existing number for this prefix
   let maxNum = 0;
   for (const code of existingCodes) {
@@ -153,7 +166,6 @@ function suggestAssetCode(assetType: string, existingCodes: string[]): string {
       if (num > maxNum) maxNum = num;
     }
   }
-
   return `${prefix}-${String(maxNum + 1).padStart(3, '0')}`;
 }
 
@@ -165,6 +177,14 @@ function formToAsset(
 ): Asset {
   const now = new Date().toISOString();
   const config = getAssetTypeConfig(values.asset_type);
+
+  // Build metadata, preserving existing and adding custom_type_name when relevant
+  const metadata: Record<string, unknown> = { ...(existingAsset?.metadata ?? {}) };
+  if (isCustomType(values.asset_type) && values.custom_type_name.trim()) {
+    metadata.custom_type_name = values.custom_type_name.trim();
+  } else {
+    delete metadata.custom_type_name;
+  }
 
   return {
     id: existingAsset?.id ?? uuid(),
@@ -196,7 +216,7 @@ function formToAsset(
     is_active: values.is_active,
     decommissioned_date: existingAsset?.decommissioned_date ?? null,
     decommission_reason: existingAsset?.decommission_reason ?? null,
-    metadata: existingAsset?.metadata ?? {},
+    metadata,
     created_at: existingAsset?.created_at ?? now,
     updated_at: now,
   };
@@ -204,10 +224,12 @@ function formToAsset(
 
 /** Convert existing Asset to form values for editing */
 function assetToForm(asset: Asset): AssetFormValues {
+  const meta = (asset.metadata ?? {}) as Record<string, unknown>;
   return {
     asset_code: asset.asset_code,
     asset_category: asset.asset_category,
     asset_type: asset.asset_type,
+    custom_type_name: typeof meta.custom_type_name === 'string' ? meta.custom_type_name : '',
     manufacturer: asset.manufacturer ?? '',
     model: asset.model ?? '',
     serial_number: asset.serial_number ?? '',
@@ -246,16 +268,30 @@ function validateAssetForm(values: AssetFormValues): ValidationResult {
     ValidationErrorCode.PATTERN,
   );
 
-  // Asset type must exist in config
+  // Asset type must exist in config OR be a recognised custom key
   v.check(
     'asset_type',
     () => {
       if (!values.asset_type) return null;
+      if (isCustomType(values.asset_type)) return null; // custom types are always valid keys
       return !ASSET_TYPE_CONFIG[values.asset_type]
         ? 'Selected asset type is not recognised'
         : null;
     },
     ValidationErrorCode.INVALID_FORMAT,
+  );
+
+  // Custom type name is required when a custom type is selected
+  v.check(
+    'custom_type_name',
+    () => {
+      if (!isCustomType(values.asset_type)) return null;
+      if (!values.custom_type_name.trim()) return 'Please enter a name for this equipment';
+      if (values.custom_type_name.trim().length > 100)
+        return 'Custom type name must be 100 characters or fewer';
+      return null;
+    },
+    ValidationErrorCode.REQUIRED,
   );
 
   // Install date must not be in the future
@@ -336,7 +372,6 @@ function validateAssetForm(values: AssetFormValues): ValidationResult {
 export default function AssetForm(): JSX.Element {
   const { siteId, assetId } = useParams<{ siteId: string; assetId: string }>();
   const navigate = useNavigate();
-
   const isEditMode = Boolean(assetId);
   const pageTitle = isEditMode ? 'Edit Asset' : 'Add Asset';
 
@@ -347,13 +382,12 @@ export default function AssetForm(): JSX.Element {
   const [existingAsset, setExistingAsset] = useState<Asset | null>(null);
   const [existingCodes, setExistingCodes] = useState<string[]>([]);
   const [complianceStandard, setComplianceStandard] = useState<string | null>(null);
-
   const formTopRef = useRef<HTMLDivElement>(null);
+  const customNameInputRef = useRef<HTMLInputElement>(null);
 
   // ---- Load existing asset for edit mode ----
   useEffect(() => {
     if (!isEditMode || !assetId || !siteId) return;
-
     let cancelled = false;
 
     async function loadAsset(): Promise<void> {
@@ -385,7 +419,6 @@ export default function AssetForm(): JSX.Element {
     }
 
     void loadAsset();
-
     return () => {
       cancelled = true;
     };
@@ -394,7 +427,6 @@ export default function AssetForm(): JSX.Element {
   // ---- Load existing asset codes for suggestion ----
   useEffect(() => {
     if (!siteId) return;
-
     let cancelled = false;
 
     async function loadCodes(): Promise<void> {
@@ -408,7 +440,6 @@ export default function AssetForm(): JSX.Element {
     }
 
     void loadCodes();
-
     return () => {
       cancelled = true;
     };
@@ -422,7 +453,6 @@ export default function AssetForm(): JSX.Element {
     validateOnBlur: true,
     onSubmit: async (values) => {
       if (!siteId) return;
-
       setSaveError(null);
 
       try {
@@ -455,9 +485,18 @@ export default function AssetForm(): JSX.Element {
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       const category = e.target.value;
       form.setValue('asset_category', category);
-      // Reset type when category changes
+
+      // Reset type and custom name when category changes
       form.setValue('asset_type', '');
+      form.setValue('custom_type_name', '');
       setComplianceStandard(null);
+
+      // If "Other" category, auto-set type to custom_other
+      if (category === AssetCategory.OTHER) {
+        form.setValue('asset_type', OTHER_CATEGORY_TYPE_KEY);
+        // Focus the custom name input after render
+        setTimeout(() => customNameInputRef.current?.focus(), 50);
+      }
 
       // Clear playground fields if switching away
       if (!showsPlaygroundFields(category)) {
@@ -475,11 +514,19 @@ export default function AssetForm(): JSX.Element {
       const assetType = e.target.value;
       form.setValue('asset_type', assetType);
 
+      // Clear custom name when switching to a non-custom type
+      if (!isCustomType(assetType)) {
+        form.setValue('custom_type_name', '');
+      } else {
+        // Focus custom name input when "Custom" is selected
+        setTimeout(() => customNameInputRef.current?.focus(), 50);
+      }
+
       const config = getAssetTypeConfig(assetType);
       setComplianceStandard(config?.complianceStandard ?? null);
 
-      // Auto-suggest code if empty
-      if (!form.values.asset_code && assetType) {
+      // Auto-suggest code if empty (not for custom types)
+      if (!form.values.asset_code && assetType && !isCustomType(assetType)) {
         const suggested = suggestAssetCode(assetType, existingCodes);
         if (suggested) {
           form.setValue('asset_code', suggested);
@@ -494,8 +541,10 @@ export default function AssetForm(): JSX.Element {
     form.setValue('is_active', !form.values.is_active);
   }, [form]);
 
-  // ---- Available types for selected category ----
+  // ---- Derived state ----
+  const isOtherCategory = form.values.asset_category === AssetCategory.OTHER;
   const availableTypes = getTypesForCategory(form.values.asset_category);
+  const showCustomNameInput = isCustomType(form.values.asset_type);
   const showPlayground = showsPlaygroundFields(form.values.asset_category);
 
   // ---- Render helpers ----
@@ -513,6 +562,7 @@ export default function AssetForm(): JSX.Element {
     max?: string;
     step?: string;
     inputMode?: 'numeric' | 'decimal' | 'text';
+    inputRef?: React.RefObject<HTMLInputElement>;
   }): JSX.Element {
     const {
       field,
@@ -526,6 +576,7 @@ export default function AssetForm(): JSX.Element {
       max,
       step,
       inputMode,
+      inputRef,
     } = config;
     const error = form.fieldError(field);
     const fieldId = `asset-${String(field)}`;
@@ -539,6 +590,7 @@ export default function AssetForm(): JSX.Element {
         </label>
         <input
           id={fieldId}
+          ref={inputRef}
           type={type}
           value={String(form.values[field] ?? '')}
           onChange={form.handleChange(field)}
@@ -741,22 +793,45 @@ export default function AssetForm(): JSX.Element {
               })),
             })}
 
-            {/* Asset Type */}
-            {renderSelect({
-              field: 'asset_type',
-              label: 'Asset Type',
-              required: true,
-              icon: <Wrench className="w-3.5 h-3.5 iv-muted" />,
-              placeholder: form.values.asset_category
-                ? 'Select type...'
-                : 'Select a category first',
-              onChange: handleTypeChange,
-              disabled: !form.values.asset_category,
-              options: availableTypes.map((t) => ({
-                value: t.key,
-                label: t.name,
-              })),
-            })}
+            {/* Asset Type dropdown — hidden when "Other" category selected */}
+            {!isOtherCategory &&
+              renderSelect({
+                field: 'asset_type',
+                label: 'Asset Type',
+                required: true,
+                icon: <Wrench className="w-3.5 h-3.5 iv-muted" />,
+                placeholder: form.values.asset_category
+                  ? 'Select type...'
+                  : 'Select a category first',
+                onChange: handleTypeChange,
+                disabled: !form.values.asset_category,
+                options: availableTypes.map((t) => ({
+                  value: t.key,
+                  label: t.name,
+                })),
+              })}
+
+            {/* "Other" category label — explains the text input below */}
+            {isOtherCategory && (
+              <div className="p-3 rounded-lg bg-[#1A1F2B] border border-[#2A2F3A]">
+                <p className="text-xs iv-muted">
+                  Enter the equipment type below. It will appear as the asset type in inspections and reports.
+                </p>
+              </div>
+            )}
+
+            {/* Custom type name input — shown when Custom selected OR Other category */}
+            {showCustomNameInput && (
+              renderField({
+                field: 'custom_type_name',
+                label: isOtherCategory ? 'Equipment Type' : 'Custom Type Name',
+                required: true,
+                icon: <PenLine className="w-3.5 h-3.5 iv-muted" />,
+                placeholder: 'e.g. Rope Pyramid, Trim Trail, Water Play Feature',
+                hint: 'This name will appear as the asset type in inspections and reports.',
+                inputRef: customNameInputRef,
+              })
+            )}
 
             {/* Asset Code */}
             {renderField({
@@ -800,7 +875,6 @@ export default function AssetForm(): JSX.Element {
                 icon: <Factory className="w-3.5 h-3.5 iv-muted" />,
                 placeholder: 'e.g. Wicksteed, Kompan',
               })}
-
               {renderField({
                 field: 'model',
                 label: 'Model',
@@ -815,7 +889,6 @@ export default function AssetForm(): JSX.Element {
                 icon: <Hash className="w-3.5 h-3.5 iv-muted" />,
                 placeholder: 'Manufacturer serial number',
               })}
-
               {renderField({
                 field: 'install_date',
                 label: 'Install Date',
@@ -837,7 +910,6 @@ export default function AssetForm(): JSX.Element {
                 step: '0.01',
                 inputMode: 'decimal',
               })}
-
               {renderField({
                 field: 'expected_lifespan_years',
                 label: 'Expected Lifespan (years)',
@@ -886,7 +958,6 @@ export default function AssetForm(): JSX.Element {
                   step: '1',
                   inputMode: 'numeric',
                 })}
-
                 {renderField({
                   field: 'impact_attenuation_required_mm',
                   label: 'Required Surfacing Depth (mm)',
@@ -1006,7 +1077,6 @@ export default function AssetForm(): JSX.Element {
               </>
             )}
           </button>
-
           <Link
             to={`/sites/${siteId}`}
             className="iv-btn-secondary flex items-center gap-2 justify-center"

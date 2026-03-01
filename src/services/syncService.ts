@@ -116,7 +116,17 @@ export interface SyncStatusDetail {
   lastSyncedAt?: number;
 }
 
-/** R2 signed URL response from the API */
+/**
+ * API response envelope.
+ * secureFetch returns the full { success, data } wrapper — not just data.
+ * All handlers that read response fields must unwrap .data first.
+ */
+interface ApiResponse<T> {
+  success: boolean;
+  data: T;
+}
+
+/** R2 signed URL response from the API (inside .data envelope) */
 interface R2SignedUrlResponse {
   upload_url: string;
   r2_key: string;
@@ -125,8 +135,11 @@ interface R2SignedUrlResponse {
 
 /** API response for synced entities */
 interface SyncEntityResponse {
-  id: string;
-  updated_at: string;
+  success: boolean;
+  data: {
+    id: string;
+    updated_at: string;
+  };
 }
 
 // =============================================
@@ -460,6 +473,7 @@ class SyncService {
    *   2. Request signed upload URL from API
    *   3. PUT base64-decoded bytes to R2
    *   4. Mark photo as uploaded with R2 key/URL
+   *   5. Confirm upload with API (creates photo DB record)
    */
   private async processPhotoUpload(photoId: string): Promise<void> {
     // 1. Load from IndexedDB
@@ -475,8 +489,8 @@ class SyncService {
       throw new Error('Photo has no inspection_item_id — cannot upload until item is saved');
     }
 
-    // 2. Request signed URL
-    const signedUrl = await secureFetch<R2SignedUrlResponse>(
+    // 2. Request signed URL — secureFetch returns { success, data } envelope
+    const { data: signedUrl } = await secureFetch<ApiResponse<R2SignedUrlResponse>>(
       '/api/v1/uploads/photo',
       {
         method: 'POST',
@@ -511,7 +525,7 @@ class SyncService {
     await pendingPhotos.markUploaded(photo.id, signedUrl.r2_key, signedUrl.r2_url);
 
     // 5. Notify API that upload is complete (links photo to inspection item)
-    await secureFetch<void>(
+    await secureFetch<ApiResponse<unknown>>(
       `/api/v1/uploads/photo/${signedUrl.r2_key}/confirm`,
       {
         method: 'POST',
@@ -550,8 +564,8 @@ class SyncService {
       throw new Error('Audio has no inspection_item_id — cannot upload until item is saved');
     }
 
-    // 1. Request signed URL
-    const signedUrl = await secureFetch<R2SignedUrlResponse>(
+    // 1. Request signed URL — secureFetch returns { success, data } envelope
+    const { data: signedUrl } = await secureFetch<ApiResponse<R2SignedUrlResponse>>(
       '/api/v1/uploads/audio',
       {
         method: 'POST',
@@ -587,7 +601,7 @@ class SyncService {
     await pendingAudio.markUploaded(audio.id, signedUrl.r2_key);
 
     // 4. Notify API → triggers Speechmatics transcription → Claude analysis pipeline
-    await secureFetch<void>(
+    await secureFetch<ApiResponse<unknown>>(
       `/api/v1/uploads/audio/${signedUrl.r2_key}/confirm`,
       {
         method: 'POST',

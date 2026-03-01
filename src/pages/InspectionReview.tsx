@@ -222,7 +222,7 @@ function AssetResultCard({
   onFieldNormalised: (itemId: string, fieldName: string, normalisedText: string) => void;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const typeName = resolveAssetTypeName(item.asset_type, item.asset_id, customTypeNames);
+  const typeName = resolveAssetTypeName(item.asset_type, item.asset_id ?? '', customTypeNames);
   const hasTranscript = Boolean(item.voice_transcript);
   const hasNotes = Boolean(item.inspector_notes);
   const defectCount = item.defects.length;

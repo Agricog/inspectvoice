@@ -247,8 +247,10 @@ export default function InspectionCapture(): JSX.Element {
 
   // ---- Baseline comparison ----
   const [settingBaseline, setSettingBaseline] = useState(false);
-  /** The first captured photo's full base64 for comparison display */
-  const [firstPhotoBase64, setFirstPhotoBase64] = useState<string | null>(null);
+/** The first captured photo's full base64 for comparison display */
+const [firstPhotoBase64, setFirstPhotoBase64] = useState<string | null>(null);
+/** Locally-set baseline (avoids mutating assets array which causes re-render crash) */
+const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
 
   // ---- Feature 15: Defect Quick-Pick ----
   const [showQuickPick, setShowQuickPick] = useState(false);
@@ -271,7 +273,7 @@ export default function InspectionCapture(): JSX.Element {
   // ---- Baseline data for current asset ----
   // These fields come from migration 003 — cast needed until Asset type is updated
   const assetRecord = currentAsset ? (currentAsset as unknown as Record<string, unknown>) : null;
-  const baselinePhoto: BaselinePhoto | null = assetRecord?.['baseline_photo_url']
+  const serverBaseline: BaselinePhoto | null = assetRecord?.['baseline_photo_url']
     ? {
         src: assetRecord['baseline_photo_url'] as string,
         takenAt: (assetRecord['baseline_photo_taken_at'] as string) ?? new Date().toISOString(),
@@ -279,6 +281,9 @@ export default function InspectionCapture(): JSX.Element {
         condition: (assetRecord['baseline_condition'] as ConditionRating) ?? null,
       }
     : null;
+
+  // Local baseline takes priority (set via "Set as Baseline" button)
+  const baselinePhoto = localBaseline ?? serverBaseline;
 
   const currentPhoto: CurrentPhoto | null = firstPhotoBase64
     ? {
@@ -390,6 +395,7 @@ export default function InspectionCapture(): JSX.Element {
 
     setPhotoThumbnails([]);
     setFirstPhotoBase64(null);
+    setLocalBaseline(null);
     setVuLevel(0);
     setRecordDuration(0);
     setVoiceState(VoiceCaptureState.IDLE);
@@ -578,23 +584,16 @@ export default function InspectionCapture(): JSX.Element {
     try {
       const now = new Date().toISOString();
 
-      // Update the local assets state — actual R2 upload + DB persist happens on sync
-      // The sync service will detect the baseline fields and upload to R2/DB
-      setAssets((prev) =>
-        prev.map((a) =>
-          a.id === currentAsset.id
-            ? Object.assign({}, a, {
-                baseline_photo_url: `data:image/jpeg;base64,${firstPhotoBase64}`,
-                baseline_photo_taken_at: now,
-                baseline_photo_taken_by: 'Inspector',
-                baseline_condition: captureState.condition,
-                baseline_photo_inspection_id: inspectionId,
-              })
-            : a,
-        ),
-      );
+      // Store baseline in local state — avoids mutating assets array
+      // which previously caused a re-render cascade and React error #310
+      setLocalBaseline({
+        src: `data:image/jpeg;base64,${firstPhotoBase64}`,
+        takenAt: now,
+        takenBy: 'Inspector',
+        condition: captureState.condition,
+      });
 
-      // Also persist baseline flag to IndexedDB pending queue for sync
+      // Persist baseline photo to IndexedDB pending queue for sync
       try {
         await pendingPhotos.add({
           inspection_item_id: '',

@@ -9,7 +9,6 @@
  * Interaction:
  *   - Drag the slider handle left/right to reveal more of either image
  *   - Touch + mouse support
- *   - Pinch-to-zoom (future enhancement)
  *   - Tap labels to snap to 0%, 50%, or 100%
  *
  * Also includes:
@@ -17,6 +16,12 @@
  *   - Date stamps
  *   - "Set as Baseline" button for new assets
  *   - "No Baseline" state with prompt to set one
+ *
+ * FIX: 1 Mar 2026
+ *   - Moved ALL hooks before conditional returns to fix Rules of Hooks
+ *     violation that caused React error #310 when baseline state changed.
+ *   - Used callback ref + ResizeObserver for reliable container measurement.
+ *   - Wrapped CONDITION_LABELS in String() for safety.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -88,7 +93,6 @@ function ConditionBadge({
     condition === ConditionRating.DANGEROUS ? 'bg-[#EF4444]/80 text-white' :
     'bg-[#2A2F3A]/80 iv-muted';
 
-  // Safety: String() wrap prevents React #310 if CONDITION_LABELS returns non-primitive
   const conditionText = condition
     ? String(CONDITION_LABELS[condition] ?? 'Unknown')
     : 'N/A';
@@ -117,94 +121,12 @@ function formatShortDate(dateStr: string): string {
 }
 
 // =============================================
-// NO BASELINE STATE
-// =============================================
-
-function NoBaselineState({
-  onSetBaseline,
-  settingBaseline,
-  hasCurrent,
-}: {
-  onSetBaseline?: () => void;
-  settingBaseline?: boolean;
-  hasCurrent: boolean;
-}): JSX.Element {
-  return (
-    <div className="iv-panel p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <ArrowLeftRight className="w-4 h-4 text-[#22C55E]" />
-        <h3 className="text-sm font-semibold iv-text">Baseline Comparison</h3>
-      </div>
-
-      <div className="flex flex-col items-center justify-center py-6 gap-3">
-        <ImageOff className="w-10 h-10 iv-muted" />
-        <div className="text-center">
-          <p className="text-sm iv-text font-medium">No Baseline Photo</p>
-          <p className="text-xs iv-muted mt-1">
-            Set a baseline photo to track deterioration over time
-          </p>
-        </div>
-
-        {hasCurrent && onSetBaseline && (
-          <button
-            type="button"
-            onClick={onSetBaseline}
-            disabled={settingBaseline}
-            className="iv-btn-secondary flex items-center gap-2 text-sm mt-2 disabled:opacity-50"
-          >
-            <Star className="w-4 h-4" />
-            {settingBaseline ? 'Setting...' : 'Set Current Photo as Baseline'}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// =============================================
-// NO CURRENT PHOTO STATE
-// =============================================
-
-function BaselineOnlyState({
-  baseline,
-}: {
-  baseline: BaselinePhoto;
-}): JSX.Element {
-  return (
-    <div className="iv-panel p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <ArrowLeftRight className="w-4 h-4 text-[#22C55E]" />
-        <h3 className="text-sm font-semibold iv-text">Baseline Reference</h3>
-      </div>
-
-      <div className="relative rounded-lg overflow-hidden border border-[#2A2F3A]">
-        <img
-          src={baseline.src}
-          alt={`Baseline photo`}
-          className="w-full h-48 object-cover"
-        />
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Clock className="w-3 h-3 text-white/70" />
-              <span className="text-xs text-white/80">
-                {formatShortDate(baseline.takenAt)}
-              </span>
-            </div>
-            <ConditionBadge condition={baseline.condition} label="Baseline" />
-          </div>
-        </div>
-      </div>
-
-      <p className="text-xs iv-muted mt-2 text-center">
-        Take a photo to compare against this baseline
-      </p>
-    </div>
-  );
-}
-
-// =============================================
-// COMPARISON SLIDER COMPONENT
+// MAIN COMPONENT
+//
+// CRITICAL: All hooks are declared BEFORE any conditional returns.
+// The original code had useCallback hooks after early returns which
+// violated the Rules of Hooks and caused React error #310 when
+// baseline transitioned from null → object between renders.
 // =============================================
 
 export default function BaselineComparison({
@@ -215,25 +137,21 @@ export default function BaselineComparison({
   onSetBaseline,
   settingBaseline = false,
 }: BaselineComparisonProps): JSX.Element {
+  // ── ALL HOOKS MUST BE ABOVE ANY RETURN ──
+
   const [sliderPosition, setSliderPosition] = useState(50);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const isDragging = useRef(false);
   const [containerWidth, setContainerWidth] = useState(0);
-
-  // FIX: Use a callback ref + ResizeObserver to measure container width.
-  // A callback ref fires when the element mounts/unmounts, which correctly handles
-  // the transition from NoBaselineState → slider without depending on prop changes.
   const observerRef = useRef<ResizeObserver | null>(null);
 
+  // Callback ref: fires when the slider div mounts/unmounts
   const containerRefCallback = useCallback((el: HTMLDivElement | null) => {
-    // Clean up previous observer
     if (observerRef.current) {
       observerRef.current.disconnect();
       observerRef.current = null;
     }
-    // Assign to containerRef for pointer event calculations
-    (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-
+    containerRef.current = el;
     if (!el) {
       setContainerWidth(0);
       return;
@@ -254,24 +172,7 @@ export default function BaselineComparison({
     };
   }, []);
 
-  // No baseline set
-  if (!baseline) {
-    return (
-      <NoBaselineState
-        onSetBaseline={onSetBaseline}
-        settingBaseline={settingBaseline}
-        hasCurrent={Boolean(current)}
-      />
-    );
-  }
-
-  // Baseline but no current photo yet
-  if (!current) {
-    return <BaselineOnlyState baseline={baseline} />;
-  }
-
-  // ---- Slider interaction ----
-
+  // Slider interaction handlers — declared here BEFORE any returns
   const updatePosition = useCallback((clientX: number) => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -295,12 +196,84 @@ export default function BaselineComparison({
     isDragging.current = false;
   }, []);
 
-  // Snap positions
   const snapTo = useCallback((percent: number) => {
     setSliderPosition(percent);
   }, []);
 
-  // Detect condition change
+  // ── ALL HOOKS ARE NOW ABOVE THIS LINE ──
+  // ── CONDITIONAL RENDERS BELOW ──
+
+  // No baseline set
+  if (!baseline) {
+    return (
+      <div className="iv-panel p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <ArrowLeftRight className="w-4 h-4 text-[#22C55E]" />
+          <h3 className="text-sm font-semibold iv-text">Baseline Comparison</h3>
+        </div>
+
+        <div className="flex flex-col items-center justify-center py-6 gap-3">
+          <ImageOff className="w-10 h-10 iv-muted" />
+          <div className="text-center">
+            <p className="text-sm iv-text font-medium">No Baseline Photo</p>
+            <p className="text-xs iv-muted mt-1">
+              Set a baseline photo to track deterioration over time
+            </p>
+          </div>
+
+          {current && onSetBaseline && (
+            <button
+              type="button"
+              onClick={onSetBaseline}
+              disabled={settingBaseline}
+              className="iv-btn-secondary flex items-center gap-2 text-sm mt-2 disabled:opacity-50"
+            >
+              <Star className="w-4 h-4" />
+              {settingBaseline ? 'Setting...' : 'Set Current Photo as Baseline'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Baseline but no current photo yet
+  if (!current) {
+    return (
+      <div className="iv-panel p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <ArrowLeftRight className="w-4 h-4 text-[#22C55E]" />
+          <h3 className="text-sm font-semibold iv-text">Baseline Reference</h3>
+        </div>
+
+        <div className="relative rounded-lg overflow-hidden border border-[#2A2F3A]">
+          <img
+            src={baseline.src}
+            alt="Baseline photo"
+            className="w-full h-48 object-cover"
+          />
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-3 h-3 text-white/70" />
+                <span className="text-xs text-white/80">
+                  {formatShortDate(baseline.takenAt)}
+                </span>
+              </div>
+              <ConditionBadge condition={baseline.condition} label="Baseline" />
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs iv-muted mt-2 text-center">
+          Take a photo to compare against this baseline
+        </p>
+      </div>
+    );
+  }
+
+  // ── FULL COMPARISON SLIDER ──
+
   const conditionChanged = baseline.condition !== null &&
     currentCondition !== null &&
     baseline.condition !== currentCondition;
@@ -375,7 +348,6 @@ export default function BaselineComparison({
           className="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg z-10"
           style={{ left: `${sliderPosition}%`, transform: 'translateX(-50%)' }}
         >
-          {/* Handle */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center">
             <ArrowLeftRight className="w-4 h-4 text-[#151920]" />
           </div>

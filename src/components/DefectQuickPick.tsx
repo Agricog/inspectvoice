@@ -101,16 +101,17 @@ const SEVERITY_OPTIONS: { value: RiskRating; label: string }[] = [
 
 const TIMEFRAME_OPTIONS: { value: ActionTimeframe; label: string }[] = [
   { value: ActionTimeframe.IMMEDIATE, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.IMMEDIATE] },
-  { value: ActionTimeframe.URGENT, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.URGENT] },
+  { value: ActionTimeframe.HOURS_48, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.HOURS_48] },
+  { value: ActionTimeframe.WEEK_1, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.WEEK_1] },
+  { value: ActionTimeframe.MONTH_1, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.MONTH_1] },
+  { value: ActionTimeframe.NEXT_INSPECTION, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.NEXT_INSPECTION] },
   { value: ActionTimeframe.ROUTINE, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.ROUTINE] },
-  { value: ActionTimeframe.PLANNED, label: ACTION_TIMEFRAME_LABELS[ActionTimeframe.PLANNED] },
 ];
 
 const COST_BAND_OPTIONS: { value: CostBand; label: string }[] = [
   { value: CostBand.LOW, label: COST_BAND_LABELS[CostBand.LOW] },
   { value: CostBand.MEDIUM, label: COST_BAND_LABELS[CostBand.MEDIUM] },
   { value: CostBand.HIGH, label: COST_BAND_LABELS[CostBand.HIGH] },
-  { value: CostBand.VERY_HIGH, label: COST_BAND_LABELS[CostBand.VERY_HIGH] },
 ];
 
 // =============================================

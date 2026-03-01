@@ -16,6 +16,7 @@ import { Logger } from './shared/logger';
 
 // ── Route Handlers ──
 import { listSites, getSite, createSite, updateSite, deleteSite } from './routes/sites';
+import { runCompletenessCheck } from './routes/completenessCheck';
 import { listAssetsBySite, getAsset, createAsset, updateAsset } from './routes/assets';
 import { getAssetHistory } from './routes/assetHistory';
 import { listInspections, getInspection, createInspection, updateInspection } from './routes/inspections';
@@ -197,6 +198,9 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   // ── PDF ──
   ['POST', '/api/v1/inspections/:id/pdf', triggerPdfGeneration],
   ['GET', '/api/v1/inspections/:id/pdf', downloadPdf],
+
+  // ── Completeness Check ──
+  ['POST', '/api/v1/inspections/:id/completeness-check', runCompletenessCheck],
 
   // ── Users ──
   ['GET', '/api/v1/users/me', getMe],

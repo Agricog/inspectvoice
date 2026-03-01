@@ -220,6 +220,11 @@ export enum PlaygroundAssetType {
   MULTI_PLAY = 'multi_play',
   SANDPIT = 'sandpit',
   ZIPLINE = 'zipline',
+  SPINNER_BOWL = 'spinner_bowl',
+  IN_GROUND_TRAMPOLINE = 'in_ground_trampoline',
+  TUNNEL = 'tunnel',
+  PLAYHOUSE = 'playhouse',
+  CUSTOM = 'custom_playground',
 }
 
 export enum OutdoorGymAssetType {
@@ -230,6 +235,15 @@ export enum OutdoorGymAssetType {
   STRETCH_STATION = 'stretch_station',
   WOBBLE_BOARD = 'wobble_board',
   BALANCE_BEAM = 'balance_beam',
+  LEG_PRESS = 'leg_press',
+  CHEST_PRESS = 'chest_press',
+  LAT_PULLDOWN = 'lat_pulldown',
+  SIT_UP_BENCH = 'sit_up_bench',
+  EXERCISE_BIKE = 'exercise_bike',
+  AIR_WALKER = 'air_walker',
+  PARALLEL_BARS = 'parallel_bars',
+  BODY_TWIST = 'body_twist',
+  CUSTOM = 'custom_outdoor_gym',
 }
 
 export enum FurnitureAssetType {
@@ -241,10 +255,19 @@ export enum FurnitureAssetType {
   BOLLARD = 'bollard',
   PICNIC_TABLE = 'picnic_table',
   SHELTER = 'shelter',
+  LITTER_BIN = 'litter_bin',
+  CUSTOM = 'custom_furniture',
+}
+
+export enum SportsAssetType {
+  BASKETBALL_HOOP = 'basketball_hoop',
+  FOOTBALL_GOAL = 'football_goal',
+  TENNIS_NET = 'tennis_net',
+  CUSTOM = 'custom_sports',
 }
 
 /** Union of all asset types for form inputs */
-export type AssetType = PlaygroundAssetType | OutdoorGymAssetType | FurnitureAssetType | string;
+export type AssetType = PlaygroundAssetType | OutdoorGymAssetType | FurnitureAssetType | SportsAssetType | string;
 
 // =============================================
 // SURFACE TYPES

@@ -456,23 +456,10 @@ export default function CompletenessCheckModal({
         setIsOffline(false);
 
         // Online: call worker endpoint
-       const response = await secureFetch(`/api/v1/inspections/${inspection.id}/completeness-check`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }) as Response;
-
-        if (!response.ok) {
-          // Fallback to local checks if server fails
-          const localResult = runOfflineChecks(
-            inspection, items, inspectorSummary, closureRecommended, closureReason,
-          );
-          setResult(localResult);
-          setIsOffline(true);
-          setLoading(false);
-          return;
-        }
-
-        const json = await response.json() as { data: CompletenessResult };
+       const json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
+          `/api/v1/inspections/${inspection.id}/completeness-check`,
+          { method: 'POST' },
+        );
         setResult(json.data);
         setLoading(false);
       } catch {

@@ -40,6 +40,7 @@ import {
 import type { Inspection, InspectionItem } from '@/types';
 import { RiskRating, ConditionRating } from '@/types';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
+import { secureFetch } from '@hooks/useFetch';
 
 // =============================================
 // TYPES
@@ -455,7 +456,7 @@ export default function CompletenessCheckModal({
         setIsOffline(false);
 
         // Online: call worker endpoint
-        const response = await fetch(`/api/v1/inspections/${inspection.id}/completeness-check`, {
+       const response = await secureFetch(`/api/v1/inspections/${inspection.id}/completeness-check`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         });

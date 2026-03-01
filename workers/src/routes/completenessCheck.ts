@@ -25,6 +25,7 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
+import { neon } from '@neondatabase/serverless';
 import type { RequestContext, RouteParams } from '../types';
 import { createDb } from '../services/db';
 import { checkRateLimit } from '../middleware/rateLimit';
@@ -157,7 +158,7 @@ function runDeterministicChecks(
     }
   }
 
-  // ── 3. Photo coverage ──
+  // ── 3. Photo coverage (uses photo_count injected by route handler) ──
   for (const item of items) {
     const photoCount = item['photo_count'] as number | undefined;
     if (!photoCount || photoCount === 0) {
@@ -255,7 +256,6 @@ function runDeterministicChecks(
   for (const item of items) {
     const defects = item['defects'] as Array<Record<string, unknown>> | undefined;
     const condition = item['overall_condition'] as string | null;
-
     if (defects && defects.length > 0 && condition === 'good') {
       issues.push({
         code: 'GOOD_WITH_DEFECTS',
@@ -336,7 +336,6 @@ function calculateQuality(
 ): { score: number; grade: string } {
   // Start at 100, deduct for issues
   let score = 100;
-
   for (const issue of issues) {
     if (issue.severity === 'blocking') {
       score -= 15;
@@ -391,12 +390,43 @@ export async function runCompletenessCheck(
     { orderBy: 'asset_code', orderDirection: 'asc' },
   );
 
+  // ── Fetch photo counts per inspection item from the photos table ──
+  // The inspection_items table does NOT have a photo_count column.
+  // Photos are stored in a separate `photos` table linked by inspection_item_id.
+  // We query actual counts here and inject them into the items for the checks.
+  const itemIds = items.map((item) => item['id'] as string);
+
+  if (itemIds.length > 0) {
+    const sql = neon(ctx.env.DATABASE_URL);
+    const photoCountRows = await sql(
+      `SELECT inspection_item_id, COUNT(*)::int AS photo_count
+       FROM photos
+       WHERE inspection_item_id = ANY($1)
+       GROUP BY inspection_item_id`,
+      [itemIds],
+    );
+
+    // Build lookup map: inspection_item_id → photo_count
+    const photoCountMap = new Map<string, number>();
+    for (const row of photoCountRows as Array<Record<string, unknown>>) {
+      photoCountMap.set(
+        row['inspection_item_id'] as string,
+        Number(row['photo_count'] ?? 0),
+      );
+    }
+
+    // Inject photo counts into items for deterministic checks
+    for (const item of items) {
+      const itemId = item['id'] as string;
+      item['photo_count'] = photoCountMap.get(itemId) ?? 0;
+    }
+  }
+
   // Run deterministic checks
   const issues = runDeterministicChecks(inspection, items);
 
   // Calculate quality
   const { score, grade } = calculateQuality(issues, items.length);
-
   const blockingCount = issues.filter((i) => i.severity === 'blocking').length;
   const advisoryCount = issues.filter((i) => i.severity === 'advisory').length;
 

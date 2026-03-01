@@ -47,6 +47,9 @@ const ACTION_TIMEFRAMES = [
 const AI_STATUSES = ['pending', 'processing', 'completed', 'failed'] as const;
 const TRANSCRIPTION_METHODS = ['deepgram', 'web_speech_api', 'manual'] as const;
 
+/** Columns that require explicit ::jsonb casting in parameterised queries */
+const JSONB_COLUMNS = new Set(['defects', 'ai_analysis']);
+
 // =============================================
 // HELPER: Verify inspection belongs to org
 // =============================================
@@ -172,7 +175,7 @@ export async function createInspectionItem(
     audio_r2_key: null,
     voice_transcript: validateOptionalString(body['voice_transcript'], 'voice_transcript', { maxLength: 50000 }),
     transcription_method: validateOptionalEnum(body['transcription_method'], 'transcription_method', TRANSCRIPTION_METHODS),
-    ai_analysis: body['ai_analysis'] ?? null,
+    ai_analysis: body['ai_analysis'] ? JSON.stringify(body['ai_analysis']) : null,
     ai_model_version: validateOptionalString(body['ai_model_version'], 'ai_model_version', { maxLength: 50 }) ?? '',
     ai_processing_status: validateOptionalEnum(body['ai_processing_status'], 'ai_processing_status', AI_STATUSES) ?? 'pending',
     ai_processed_at: null,
@@ -190,10 +193,12 @@ export async function createInspectionItem(
     created_at: new Date().toISOString(),
   };
 
-  // Insert (raw — no org_id column on inspection_items)
+  // Insert — explicit ::jsonb cast for jsonb columns
   const columns = Object.keys(data);
   const values = Object.values(data);
-  const placeholders = columns.map((_, i) => `$${i + 1}`);
+  const placeholders = columns.map((col, i) =>
+    JSONB_COLUMNS.has(col) ? `$${i + 1}::jsonb` : `$${i + 1}`
+  );
 
   const insertSql = `INSERT INTO inspection_items (${columns.join(', ')})
     VALUES (${placeholders.join(', ')})
@@ -262,8 +267,10 @@ export async function updateInspectionItem(
     return jsonResponse({ success: true, data: existing }, ctx.requestId);
   }
 
-  // Update (raw — no org_id on inspection_items, verified via ownership check)
-  const setClauses = Object.keys(data).map((col, i) => `${col} = $${i + 1}`);
+  // Update — explicit ::jsonb cast for jsonb columns
+  const setClauses = Object.keys(data).map((col, i) =>
+    JSONB_COLUMNS.has(col) ? `${col} = $${i + 1}::jsonb` : `${col} = $${i + 1}`
+  );
   const updateSql = `UPDATE inspection_items SET ${setClauses.join(', ')}
     WHERE id = $${Object.keys(data).length + 1}
     RETURNING *`;

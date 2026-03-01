@@ -2561,6 +2561,63 @@ const CUSTOM_SPORTS: AssetTypeConfig = {
 };
 
 // =============================================
+// OTHER / UNCATEGORISED
+// =============================================
+
+const CUSTOM_OTHER: AssetTypeConfig = {
+  key: 'custom_other',
+  name: 'Other Equipment',
+  category: AssetCategory.OTHER,
+  complianceStandard: 'General duty of care / applicable BS EN standard',
+  inspectionPoints: [
+    {
+      label: 'Overall structural condition',
+      description: 'Check all structural members for integrity, stability, damage.',
+      appliesTo: ['routine_visual', 'operational', 'annual_main'],
+    },
+    {
+      label: 'Surface condition and sharp edges',
+      description: 'Check all surfaces for damage, sharp edges, protrusions.',
+      appliesTo: ['routine_visual', 'operational', 'annual_main'],
+    },
+    {
+      label: 'Moving parts and mechanisms',
+      description: 'Check all moving parts for function, wear, entrapment risk.',
+      appliesTo: ['operational', 'annual_main'],
+    },
+    {
+      label: 'Fixings and connections',
+      description: 'Check all bolts, screws, and fixings for tightness and condition.',
+      appliesTo: ['operational', 'annual_main'],
+    },
+    {
+      label: 'Foundation and stability',
+      description: 'Check item is securely fixed, stable, level.',
+      appliesTo: ['annual_main'],
+    },
+  ],
+  riskCriteria: {
+    very_high: [
+      'Structural failure or collapse risk',
+      'Sharp protrusion causing laceration risk',
+    ],
+    high: [
+      'Significant structural damage',
+      'Item loose or unstable',
+    ],
+    medium: [
+      'Minor structural wear',
+      'Surface corrosion or rot',
+    ],
+    low: [
+      'Cosmetic wear',
+      'Minor weathering',
+    ],
+  },
+  bsEnDefectCategories: [],
+};
+
+// =============================================
 // MASTER CONFIGURATION REGISTRY
 // =============================================
 
@@ -2611,6 +2668,9 @@ export const ASSET_TYPE_CONFIG: Record<string, AssetTypeConfig> = {
   football_goal: FOOTBALL_GOAL,
   tennis_net: TENNIS_NET,
   custom_sports: CUSTOM_SPORTS,
+
+  // Other / Uncategorised
+  custom_other: CUSTOM_OTHER,
 } as const;
 
 // =============================================

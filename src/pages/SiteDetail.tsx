@@ -208,6 +208,8 @@ export function SiteDetail(): JSX.Element {
         const is404 = err instanceof Error && err.message.includes('404');
         if (!is404) throw err;
       }
+      // Clean up IndexedDB (deleteDraft handles draft; for review, fall through)
+      await inspectionsStore.deleteDraft(inspectionId);
       setSiteInspections((prev) => prev.filter((i) => i.id !== inspectionId));
       setConfirmDeleteInspection(null);
     } catch (err) {

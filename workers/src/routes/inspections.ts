@@ -7,6 +7,7 @@
  *   GET    /api/v1/inspections/:id       — Get inspection with items
  *   POST   /api/v1/inspections           — Create inspection (from sync)
  *   PUT    /api/v1/inspections/:id       — Update inspection (from sync)
+ *   DELETE /api/v1/inspections/:id       — Delete draft/review inspection
  *
  * State Machine (enforced here):
  *   DRAFT → REVIEW → SIGNED → EXPORTED
@@ -364,4 +365,45 @@ export async function updateInspection(
     success: true,
     data: updated,
   }, ctx.requestId);
+}
+
+// =============================================
+// DELETE INSPECTION
+// =============================================
+
+export async function deleteInspection(
+  request: Request,
+  params: RouteParams,
+  ctx: RequestContext,
+): Promise<Response> {
+  validateCsrf(request);
+  await checkRateLimit(ctx, 'write');
+
+  const id = validateUUID(params['id'], 'id');
+  const db = createDb(ctx);
+  const logger = Logger.fromContext(ctx);
+
+  const existing = await db.findByIdOrThrow<Record<string, unknown>>('inspections', id, 'Inspection');
+  const currentStatus = existing['status'] as string;
+
+  // Only draft and review inspections can be deleted
+  if (IMMUTABLE_STATUSES.has(currentStatus)) {
+    throw new ConflictError(
+      `Cannot delete a ${currentStatus} inspection. Signed and exported inspections are permanent records.`,
+    );
+  }
+
+  // Delete child records first, then the inspection
+  await db.deleteByParent('inspection_items', 'inspection_id', id);
+  await db.deleteById('inspections', id);
+
+  void writeAuditLog(ctx, 'inspection.deleted', 'inspections', id, {
+    inspection_type: existing['inspection_type'],
+    site_id: existing['site_id'],
+    status: currentStatus,
+  }, request);
+
+  logger.info('Inspection deleted', { inspectionId: id, status: currentStatus });
+
+  return jsonResponse({ success: true, data: null }, ctx.requestId);
 }

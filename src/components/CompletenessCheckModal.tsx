@@ -41,6 +41,7 @@ import type { Inspection, InspectionItem } from '@/types';
 import { RiskRating, ConditionRating } from '@/types';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
 import { secureFetch } from '@hooks/useFetch';
+import { pendingPhotos } from '@services/offlineStore';
 
 // =============================================
 // TYPES
@@ -103,16 +104,44 @@ const CATEGORY_ORDER = ['condition', 'defect', 'evidence', 'compliance', 'summar
 // OFFLINE CHECKS (subset — runs without server)
 // =============================================
 
-function runOfflineChecks(
+/**
+ * Gather photo counts from IndexedDB for each inspection item.
+ * This queries the pending_photos store which holds captured photos
+ * before they sync to R2/Postgres.
+ */
+async function getOfflinePhotoCounts(
+  items: InspectionItem[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    try {
+      const photos = await pendingPhotos.getByItem(item.id);
+      counts.set(item.id, photos.length);
+    } catch {
+      // IndexedDB query failed — assume 0 (safe default, will flag as blocking)
+      counts.set(item.id, 0);
+    }
+  }
+  return counts;
+}
+
+/**
+ * Run deterministic completeness checks locally.
+ * Now async to support IndexedDB photo count queries.
+ *
+ * Covers all checks the server does EXCEPT BS EN coverage analysis
+ * (which requires the full asset type config on the server).
+ */
+async function runOfflineChecks(
   _inspection: Inspection,
   items: InspectionItem[],
   inspectorSummary: string,
   closureRecommended: boolean,
   closureReason: string,
-): CompletenessResult {
+): Promise<CompletenessResult> {
   const issues: CompletenessIssue[] = [];
 
-  // Condition ratings
+  // ── 1. Condition ratings ──
   for (const item of items) {
     if (!item.overall_condition) {
       issues.push({
@@ -125,7 +154,7 @@ function runOfflineChecks(
     }
   }
 
-  // Defect completeness
+  // ── 2. Defect completeness ──
   for (const item of items) {
     for (let i = 0; i < item.defects.length; i++) {
       const defect = item.defects[i]!;
@@ -184,7 +213,35 @@ function runOfflineChecks(
     }
   }
 
-  // Condition/risk consistency
+  // ── 3. Photo coverage (queries IndexedDB) ──
+  const photoCounts = await getOfflinePhotoCounts(items);
+  for (const item of items) {
+    const count = photoCounts.get(item.id) ?? 0;
+    if (count === 0) {
+      issues.push({
+        code: 'MISSING_PHOTO',
+        severity: 'blocking',
+        message: `No photos captured for ${item.asset_code}`,
+        assetCode: item.asset_code,
+        category: 'evidence',
+      });
+    }
+  }
+
+  // ── 4. Defective assets without notes/transcript ──
+  for (const item of items) {
+    if (item.defects.length > 0 && !item.voice_transcript && !item.inspector_notes) {
+      issues.push({
+        code: 'DEFECTIVE_NO_NOTES',
+        severity: 'advisory',
+        message: `${item.asset_code}: has defects but no voice transcript or notes`,
+        assetCode: item.asset_code,
+        category: 'evidence',
+      });
+    }
+  }
+
+  // ── 5. Condition/risk consistency ──
   for (const item of items) {
     if (item.overall_condition === ConditionRating.GOOD &&
         (item.risk_rating === RiskRating.VERY_HIGH || item.risk_rating === RiskRating.HIGH)) {
@@ -218,20 +275,7 @@ function runOfflineChecks(
     }
   }
 
-  // Defective assets without notes
-  for (const item of items) {
-    if (item.defects.length > 0 && !item.voice_transcript && !item.inspector_notes) {
-      issues.push({
-        code: 'DEFECTIVE_NO_NOTES',
-        severity: 'advisory',
-        message: `${item.asset_code}: has defects but no voice transcript or notes`,
-        assetCode: item.asset_code,
-        category: 'evidence',
-      });
-    }
-  }
-
-  // Closure
+  // ── 6. Closure recommendation ──
   const veryHighCount = items.filter((i) => i.risk_rating === RiskRating.VERY_HIGH).length;
   if (veryHighCount > 0 && !closureRecommended) {
     issues.push({
@@ -253,7 +297,7 @@ function runOfflineChecks(
     });
   }
 
-  // Summary
+  // ── 7. Inspector summary ──
   if (!inspectorSummary || inspectorSummary.length < 20) {
     issues.push({
       code: 'MISSING_SUMMARY',
@@ -264,7 +308,7 @@ function runOfflineChecks(
     });
   }
 
-  // No assets
+  // ── 8. No assets ──
   if (items.length === 0) {
     issues.push({
       code: 'NO_ASSETS',
@@ -275,7 +319,7 @@ function runOfflineChecks(
     });
   }
 
-  // Score
+  // ── Quality scoring ──
   let score = 100;
   for (const issue of issues) {
     score -= issue.severity === 'blocking' ? 15 : 5;
@@ -457,9 +501,9 @@ export default function CompletenessCheckModal({
     async function runCheck(): Promise<void> {
       try {
         if (!online) {
-          // Offline: run local checks only
+          // Offline: run local checks only (includes IndexedDB photo query)
           setIsOffline(true);
-          const localResult = runOfflineChecks(
+          const localResult = await runOfflineChecks(
             inspection, items, inspectorSummary, closureRecommended, closureReason,
           );
           setResult(localResult);
@@ -477,8 +521,8 @@ export default function CompletenessCheckModal({
         setResult(json.data);
         setLoading(false);
       } catch {
-        // Any failure (404 = not synced yet, 500, network) → fall back to local checks
-        const localResult = runOfflineChecks(
+        // Any failure (404 = not synced, 500, network) → fall back to local checks
+        const localResult = await runOfflineChecks(
           inspection, items, inspectorSummary, closureRecommended, closureReason,
         );
         setResult(localResult);

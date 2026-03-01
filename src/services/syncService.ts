@@ -1,6 +1,6 @@
 /**
  * InspectVoice — Sync Service
- * Batch 17
+ * Batch 17 + Dependency-Ordered Processing
  *
  * Background sync engine that processes the IndexedDB sync queue.
  * Uploads media to R2, syncs inspection data to the API,
@@ -9,18 +9,18 @@
  *
  * Architecture:
  *   - Singleton service (one instance per app lifecycle)
- *   - Processes queue FIFO via polling when online
+ *   - Processes queue in DEPENDENCY ORDER (not FIFO)
  *   - Pauses automatically when offline
  *   - Resumes automatically when connectivity returns
  *   - Never blocks the UI — all work is async
  *   - Uses secureFetch for all API calls (SSRF + CSRF protected)
  *
- * Queue entry types processed:
- *   UPLOAD_PHOTO      → base64 → R2 signed URL upload
- *   UPLOAD_AUDIO      → Blob → R2 signed URL upload
- *   SYNC_INSPECTION   → POST/PUT inspection data to API
- *   SYNC_INSPECTION_ITEM → POST/PUT inspection item to API
- *   CREATE_ASSET      → POST new asset to API
+ * Dependency chain (lower number = higher priority):
+ *   0: CREATE_ASSET         → assets must exist before items reference them
+ *   1: SYNC_INSPECTION      → inspections must exist before items reference them
+ *   2: SYNC_INSPECTION_ITEM → items must exist before media links to them
+ *   3: UPLOAD_PHOTO         → depends on inspection_item_id
+ *   3: UPLOAD_AUDIO         → depends on inspection_item_id
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
@@ -64,6 +64,42 @@ const MAINTENANCE_INTERVAL_MS = 30 * 60 * 1000;
 
 /** Maximum number of entries to process per poll cycle */
 const MAX_ENTRIES_PER_CYCLE = 20;
+
+// =============================================
+// DEPENDENCY ORDERING
+// =============================================
+
+/**
+ * Priority map for sync operation types.
+ * Lower number = processed first.
+ *
+ * The dependency chain requires:
+ *   Assets → Inspections → Inspection Items → Media (photos/audio)
+ *
+ * Processing out of order causes FK violations on the server.
+ */
+const SYNC_PRIORITY: Record<SyncOperationType, number> = {
+  [SyncOperationType.CREATE_ASSET]: 0,
+  [SyncOperationType.SYNC_INSPECTION]: 1,
+  [SyncOperationType.SYNC_INSPECTION_ITEM]: 2,
+  [SyncOperationType.UPLOAD_PHOTO]: 3,
+  [SyncOperationType.UPLOAD_AUDIO]: 3,
+};
+
+/**
+ * Sort sync queue entries by dependency priority.
+ * Within the same priority level, preserves FIFO order (by queue id).
+ */
+function sortByDependency(
+  entries: Array<SyncQueueEntry & { id: number }>,
+): Array<SyncQueueEntry & { id: number }> {
+  return [...entries].sort((a, b) => {
+    const priorityDiff = SYNC_PRIORITY[a.type] - SYNC_PRIORITY[b.type];
+    if (priorityDiff !== 0) return priorityDiff;
+    // Same priority — preserve FIFO by queue insertion order
+    return a.id - b.id;
+  });
+}
 
 // =============================================
 // TYPES
@@ -228,7 +264,15 @@ class SyncService {
   // QUEUE PROCESSING
   // =============================================
 
-  /** Main queue processing loop */
+  /**
+   * Main queue processing loop.
+   *
+   * Entries are sorted by dependency priority before processing:
+   *   CREATE_ASSET (0) → SYNC_INSPECTION (1) → SYNC_INSPECTION_ITEM (2) → media (3)
+   *
+   * This ensures parent records exist on the server before children
+   * reference them via foreign keys.
+   */
   private async processQueue(): Promise<void> {
     // Guard: don't run concurrently
     if (this.isProcessing) return;
@@ -258,9 +302,11 @@ class SyncService {
 
       this.updateStatus(SyncStatus.SYNCING, { pendingCount: entries.length });
 
-      // Process up to MAX_ENTRIES_PER_CYCLE entries per poll
-      const batch = entries.slice(0, MAX_ENTRIES_PER_CYCLE);
+      // Sort by dependency priority, then take batch
+      const sorted = sortByDependency(entries);
+      const batch = sorted.slice(0, MAX_ENTRIES_PER_CYCLE);
       let successCount = 0;
+      let blockedByDependency = false;
 
       for (const entry of batch) {
         // Re-check connectivity between entries
@@ -293,6 +339,18 @@ class SyncService {
         if (success) {
           successCount++;
           await syncQueue.remove(entry.id);
+        } else {
+          // If a parent operation fails, skip all children in this cycle.
+          // E.g., if CREATE_ASSET fails, don't attempt SYNC_INSPECTION_ITEM
+          // which depends on that asset existing.
+          const failedPriority = SYNC_PRIORITY[entry.type];
+          const remainingHasChildren = batch.some(
+            (e) => SYNC_PRIORITY[e.type] > failedPriority,
+          );
+          if (remainingHasChildren) {
+            blockedByDependency = true;
+            break;
+          }
         }
 
         // Brief pause between entries to avoid hammering the API
@@ -306,8 +364,17 @@ class SyncService {
         this.updateStatus(SyncStatus.SYNCED, { pendingCount: 0 });
       } else {
         this.updateStatus(
-          successCount > 0 ? SyncStatus.IDLE : SyncStatus.ERROR,
-          { pendingCount: remaining },
+          blockedByDependency
+            ? SyncStatus.ERROR
+            : successCount > 0
+              ? SyncStatus.IDLE
+              : SyncStatus.ERROR,
+          {
+            pendingCount: remaining,
+            lastError: blockedByDependency
+              ? 'Waiting for parent record to sync before processing dependents'
+              : undefined,
+          },
         );
       }
     } catch (error) {
@@ -403,6 +470,11 @@ class SyncService {
       return;
     }
 
+    // Guard: inspection_item_id must be set (linked via linkToItem)
+    if (!photo.inspection_item_id) {
+      throw new Error('Photo has no inspection_item_id — cannot upload until item is saved');
+    }
+
     // 2. Request signed URL
     const signedUrl = await secureFetch<R2SignedUrlResponse>(
       '/api/v1/uploads/photo',
@@ -472,6 +544,11 @@ class SyncService {
     const recordings = await pendingAudio.getUnsynced();
     const audio = recordings.find((a) => a.id === audioId);
     if (!audio) return;
+
+    // Guard: inspection_item_id must be set
+    if (!audio.inspection_item_id) {
+      throw new Error('Audio has no inspection_item_id — cannot upload until item is saved');
+    }
 
     // 1. Request signed URL
     const signedUrl = await secureFetch<R2SignedUrlResponse>(

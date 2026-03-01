@@ -365,6 +365,9 @@ export default function InspectionCapture(): JSX.Element {
   }, [siteId, inspectionId]);
 
   // ---- Load existing data when asset changes ----
+  // FIX: Depend on currentAsset?.id (stable string) instead of currentAsset (object reference)
+  // This prevents handleSetBaseline → setAssets → Object.assign from triggering this effect
+  // and wiping firstPhotoBase64, which caused the React error #310 black screen crash.
   useEffect(() => {
     if (!currentAsset) return;
 
@@ -397,7 +400,7 @@ export default function InspectionCapture(): JSX.Element {
       voiceCaptureRef.current.cancel();
       voiceCaptureRef.current = null;
     }
-  }, [currentIndex, currentAsset, existingItems]);
+  }, [currentIndex, currentAsset?.id, existingItems]);
 
   // ---- Cleanup on unmount ----
   useEffect(() => {
@@ -491,6 +494,9 @@ export default function InspectionCapture(): JSX.Element {
   // PHOTO CAPTURE HANDLERS
   // =============================================
 
+  // FIX: Use functional updater for setFirstPhotoBase64 to avoid stale closure.
+  // Previously depended on captureState.photoIds.length which could be stale
+  // on rapid photo captures, causing firstPhotoBase64 to be overwritten.
   const handlePhotoCapture = useCallback(async (file: File) => {
     if (!currentAsset) return;
 
@@ -522,15 +528,14 @@ export default function InspectionCapture(): JSX.Element {
       ]);
 
       // Store first photo's full base64 for baseline comparison display
-      if (captureState.photoIds.length === 0) {
-        setFirstPhotoBase64(result.base64Data);
-      }
+      // Functional updater: only set if no photo stored yet (prev === null)
+      setFirstPhotoBase64((prev) => (prev === null ? result.base64Data : prev));
     } catch (error) {
       captureError(error, { module: 'InspectionCapture', operation: 'capturePhoto' });
     } finally {
       setPhotoProcessing(false);
     }
-  }, [currentAsset, captureState.photoIds.length]);
+  }, [currentAsset]);
 
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

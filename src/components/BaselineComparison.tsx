@@ -88,9 +88,14 @@ function ConditionBadge({
     condition === ConditionRating.DANGEROUS ? 'bg-[#EF4444]/80 text-white' :
     'bg-[#2A2F3A]/80 iv-muted';
 
+  // Safety: String() wrap prevents React #310 if CONDITION_LABELS returns non-primitive
+  const conditionText = condition
+    ? String(CONDITION_LABELS[condition] ?? 'Unknown')
+    : 'N/A';
+
   return (
     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colour}`}>
-      {label}: {condition ? CONDITION_LABELS[condition] : 'N/A'}
+      {label}: {conditionText}
     </span>
   );
 }
@@ -213,21 +218,41 @@ export default function BaselineComparison({
   const [sliderPosition, setSliderPosition] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
-
-  // FIX: Use ResizeObserver to measure container width asynchronously
-  // instead of reading containerRef.current.offsetWidth during render.
-  // DOM reads during render force synchronous layout and contributed to React error #310.
   const [containerWidth, setContainerWidth] = useState(0);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+  // FIX: Use a callback ref + ResizeObserver to measure container width.
+  // A callback ref fires when the element mounts/unmounts, which correctly handles
+  // the transition from NoBaselineState → slider without depending on prop changes.
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  const containerRefCallback = useCallback((el: HTMLDivElement | null) => {
+    // Clean up previous observer
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    // Assign to containerRef for pointer event calculations
+    (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+
+    if (!el) {
+      setContainerWidth(0);
+      return;
+    }
     const observer = new ResizeObserver(([entry]) => {
       if (entry) setContainerWidth(entry.contentRect.width);
     });
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [baseline, current]);
+    observerRef.current = observer;
+  }, []);
+
+  // Cleanup observer on unmount
+  useEffect(() => {
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, []);
 
   // No baseline set
   if (!baseline) {
@@ -312,7 +337,7 @@ export default function BaselineComparison({
 
       {/* Slider container */}
       <div
-        ref={containerRef}
+        ref={containerRefCallback}
         className="relative w-full h-56 sm:h-64 rounded-lg overflow-hidden border border-[#2A2F3A] cursor-col-resize select-none touch-none"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

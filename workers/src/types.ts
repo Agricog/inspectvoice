@@ -52,6 +52,7 @@ export interface Env {
   readonly MAX_PAGE_SIZE: string;
   readonly READ_ONLY_MODE: string;
   readonly WEBHOOKS_PAUSED: string;
+  readonly WORKERS_PUBLIC_URL: string;
 
   // ── R2 Bucket ──
   readonly INSPECTVOICE_BUCKET: R2Bucket;

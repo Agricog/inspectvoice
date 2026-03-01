@@ -32,6 +32,7 @@ ALLOWED_ORIGIN = "https://inspectvoice.co.uk"
 PORTAL_CLERK_AUTHORIZED_PARTIES = "https://eminent-falcon-42.clerk.accounts.dev"
 PORTAL_CLERK_ISSUER = "https://eminent-falcon-42.clerk.accounts.dev"
 PORTAL_CLERK_JWKS_URL = "https://eminent-falcon-42.clerk.accounts.dev/.well-known/jwks.json"
+WORKERS_PUBLIC_URL = "https://inspectvoice-api.micks43.workers.dev"
 
 # =============================================
 # Secrets (set via: npx wrangler secret put <NAME>)

@@ -173,6 +173,8 @@ export function SiteDetail(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteInspection, setConfirmDeleteInspection] = useState<string | null>(null);
+  const [deletingInspection, setDeletingInspection] = useState(false);
 
   useEffect(() => {
     if (id) trackPageView(`/sites/${id}`);
@@ -196,6 +198,25 @@ export function SiteDetail(): JSX.Element {
       setConfirmDelete(false);
     }
   }, [id, navigate]);
+
+  const handleDeleteInspection = useCallback(async (inspectionId: string) => {
+    setDeletingInspection(true);
+    try {
+      try {
+        await secureFetch(`/api/v1/inspections/${inspectionId}`, { method: 'DELETE' });
+      } catch (err) {
+        const is404 = err instanceof Error && err.message.includes('404');
+        if (!is404) throw err;
+      }
+      await inspectionsStore.delete(inspectionId);
+      setSiteInspections((prev) => prev.filter((i) => i.id !== inspectionId));
+      setConfirmDeleteInspection(null);
+    } catch (err) {
+      captureError(err, { module: 'SiteDetail', operation: 'deleteInspection' });
+    } finally {
+      setDeletingInspection(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -321,7 +342,7 @@ export function SiteDetail(): JSX.Element {
         </div>
       </div>
 
-      {/* Delete confirmation */}
+      {/* Site delete confirmation */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div className="bg-iv-surface border border-iv-border rounded-xl p-6 max-w-sm w-full shadow-xl">
@@ -354,6 +375,45 @@ export function SiteDetail(): JSX.Element {
               >
                 {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 {deleting ? 'Deleting…' : 'Delete Site'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inspection delete confirmation */}
+      {confirmDeleteInspection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="bg-iv-surface border border-iv-border rounded-xl p-6 max-w-sm w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-risk-high/15 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-risk-high" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-iv-text">Delete Inspection</h3>
+                <p className="text-2xs text-iv-muted mt-0.5">This cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-iv-muted mb-5">
+              Are you sure you want to delete this inspection? All captured data, photos, and defects will be removed.
+            </p>
+            <div className="flex items-center gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteInspection(null)}
+                className="iv-btn-secondary"
+                disabled={deletingInspection}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteInspection(confirmDeleteInspection)}
+                disabled={deletingInspection}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-risk-high text-white rounded-lg text-sm font-medium hover:bg-risk-high/90 disabled:opacity-50 transition-colors"
+              >
+                {deletingInspection ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deletingInspection ? 'Deleting…' : 'Delete'}
               </button>
             </div>
           </div>
@@ -472,32 +532,48 @@ export function SiteDetail(): JSX.Element {
                   .sort((a, b) => b.lastModified - a.lastModified)
                   .slice(0, 10)
                   .map((inspection) => (
-                    <Link
-                      key={inspection.id}
-                      to={`/inspections/${inspection.id}`}
-                      className="iv-card-interactive flex items-center gap-3 py-2.5 px-3"
-                    >
-                      <div className="w-8 h-8 rounded-md bg-iv-surface-2 flex items-center justify-center shrink-0">
-                        <ClipboardCheck className="w-4 h-4 text-iv-muted" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-iv-text truncate">
-                          {inspection.data.inspection_type} Inspection
-                        </p>
-                        <p className="text-2xs text-iv-muted">
-                          {new Date(inspection.data.inspection_date).toLocaleDateString('en-GB')}
-                        </p>
-                      </div>
-                      <span className={`iv-badge text-2xs ${
-                        inspection.data.status === 'draft' ? 'bg-iv-surface-2 text-iv-muted' :
-                        inspection.data.status === 'review' ? 'bg-risk-medium/15 text-risk-medium' :
-                        inspection.data.status === 'signed' ? 'bg-risk-low/15 text-risk-low' :
-                        'bg-iv-accent/15 text-iv-accent'
-                      }`}>
-                        {inspection.data.status}
-                      </span>
-                      <ChevronRight className="w-4 h-4 text-iv-muted-2 shrink-0" />
-                    </Link>
+                    <div key={inspection.id} className="iv-card-interactive flex items-center gap-3 py-2.5 px-3">
+                      <Link
+                        to={`/inspections/${inspection.id}`}
+                        className="flex items-center gap-3 min-w-0 flex-1"
+                      >
+                        <div className="w-8 h-8 rounded-md bg-iv-surface-2 flex items-center justify-center shrink-0">
+                          <ClipboardCheck className="w-4 h-4 text-iv-muted" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-iv-text truncate">
+                            {inspection.data.inspection_type} Inspection
+                          </p>
+                          <p className="text-2xs text-iv-muted">
+                            {new Date(inspection.data.inspection_date).toLocaleDateString('en-GB')}
+                          </p>
+                        </div>
+                        <span className={`iv-badge text-2xs ${
+                          inspection.data.status === 'draft' ? 'bg-iv-surface-2 text-iv-muted' :
+                          inspection.data.status === 'review' ? 'bg-risk-medium/15 text-risk-medium' :
+                          inspection.data.status === 'signed' ? 'bg-risk-low/15 text-risk-low' :
+                          'bg-iv-accent/15 text-iv-accent'
+                        }`}>
+                          {inspection.data.status}
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-iv-muted-2 shrink-0" />
+                      </Link>
+                      {(inspection.data.status === 'draft' || inspection.data.status === 'review') && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setConfirmDeleteInspection(inspection.id);
+                          }}
+                          className="iv-btn-icon text-risk-high hover:bg-risk-high/10 shrink-0"
+                          aria-label="Delete inspection"
+                          title="Delete inspection"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   ))}
               </div>
             )}

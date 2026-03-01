@@ -208,6 +208,7 @@ export function SiteDetail(): JSX.Element {
         const is404 = err instanceof Error && err.message.includes('404');
         if (!is404) throw err;
       }
+      await inspectionsStore.delete(inspectionId);
       setSiteInspections((prev) => prev.filter((i) => i.id !== inspectionId));
       setConfirmDeleteInspection(null);
     } catch (err) {
@@ -533,7 +534,11 @@ export function SiteDetail(): JSX.Element {
                   .map((inspection) => (
                     <div key={inspection.id} className="iv-card-interactive flex items-center gap-3 py-2.5 px-3">
                       <Link
-                        to={`/inspections/${inspection.id}`}
+                        to={
+                          inspection.data.status === 'draft'
+                            ? `/sites/${site.id}/inspections/${inspection.id}/capture`
+                            : `/sites/${site.id}/inspections/${inspection.id}/review`
+                        }
                         className="flex items-center gap-3 min-w-0 flex-1"
                       >
                         <div className="w-8 h-8 rounded-md bg-iv-surface-2 flex items-center justify-center shrink-0">

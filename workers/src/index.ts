@@ -19,7 +19,7 @@ import { listSites, getSite, createSite, updateSite, deleteSite } from './routes
 import { runCompletenessCheck } from './routes/completenessCheck';
 import { listAssetsBySite, getAsset, createAsset, updateAsset } from './routes/assets';
 import { getAssetHistory } from './routes/assetHistory';
-import { listInspections, getInspection, createInspection, updateInspection } from './routes/inspections';
+import { listInspections, getInspection, createInspection, updateInspection, deleteInspection } from './routes/inspections';
 import { listInspectionItems, createInspectionItem, updateInspectionItem, getAiStatus } from './routes/inspectionItems';
 import { requestPhotoUpload, requestAudioUpload, proxyUploadToR2, confirmPhotoUpload, confirmAudioUpload, downloadFile } from './routes/uploads';
 import { listDefects, getDefect, updateDefect } from './routes/defects';
@@ -162,6 +162,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET', '/api/v1/inspections/:id', getInspection],
   ['POST', '/api/v1/inspections', createInspection],
   ['PUT', '/api/v1/inspections/:id', updateInspection],
+  ['DELETE', '/api/v1/inspections/:id', deleteInspection],
 
   // ── Inspection Items ──
   ['GET', '/api/v1/inspection-items/:inspectionId', listInspectionItems],

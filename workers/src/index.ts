@@ -3,6 +3,7 @@
  * Routes all HTTP requests and queue messages to their handlers.
  *
  * UPDATED: Feature 16 Batch 16.5 — magic link CRUD + resource resolution.
+ * UPDATED: Upload proxy moved out of JWT auth for cross-origin uploads.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -170,10 +171,10 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['PUT', '/api/v1/inspection-items/:id', updateInspectionItem],
   ['GET', '/api/v1/inspection-items/:id/ai-status', getAiStatus],
 
-  // ── Uploads ──
+  // ── Uploads (JWT-protected endpoints) ──
   ['POST', '/api/v1/uploads/photo', requestPhotoUpload],
   ['POST', '/api/v1/uploads/audio', requestAudioUpload],
-  ['PUT', '/api/v1/uploads/put/:r2Key', proxyUploadToR2],
+  // NOTE: PUT /api/v1/uploads/put/:r2Key moved to token-only auth below
   ['POST', '/api/v1/uploads/photo/:r2Key/confirm', confirmPhotoUpload],
   ['POST', '/api/v1/uploads/audio/:r2Key/confirm', confirmAudioUpload],
   ['GET', '/api/v1/files/:r2Key', downloadFile],
@@ -342,6 +343,22 @@ export default {
         return addCorsHeaders(response, request, env);
       }
 
+      // ── Upload Proxy (token-only auth, no JWT) ──
+      if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
+        const match = path.match(/^\/api\/v1\/uploads\/put\/(.+)$/);
+        if (match && match[1]) {
+          const r2Key = decodeURIComponent(match[1]);
+          // Create minimal context for upload handler (no JWT verification)
+          const uploadCtx = {
+            requestId: crypto.randomUUID(),
+            env,
+            // Upload handler validates its own token, doesn't need JWT context
+          };
+          const response = await proxyUploadToR2(request, { r2Key }, uploadCtx as any);
+          return addCorsHeaders(response, request, env);
+        }
+      }
+
       // ── Public Verification (no auth — Feature 10) ──
       if (path.startsWith('/api/v1/verify/') && method === 'GET') {
         const response = await verifyBundle(request, env);
@@ -363,10 +380,8 @@ export default {
       if (path.startsWith('/api/v1/portal/') && !path.startsWith('/api/v1/portal/magic/')) {
         for (const [routeMethod, pattern, handler] of PORTAL_ROUTES) {
           if (method !== routeMethod) continue;
-
           const params = matchRoute(pattern, path);
           if (params === null) continue;
-
           const portalCtx = await portalGuard(request, env);
           const response = await handler(request, params, portalCtx);
           return addCorsHeaders(response, request, env);
@@ -376,7 +391,6 @@ export default {
       // ── Authenticated Routes (Inspector Platform) ──
       for (const [routeMethod, pattern, handler] of ROUTES) {
         if (method !== routeMethod) continue;
-
         const params = matchRoute(pattern, path);
         if (params === null) continue;
 

@@ -701,6 +701,15 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       };
 
       await inspectionItems.create(itemData);
+      // Link pending photos to this inspection item
+      for (const photoId of captureState.photoIds) {
+        await pendingPhotos.linkToItem(photoId, itemId);
+      }
+
+      // Link pending audio to this inspection item
+      if (captureState.audioBlobId) {
+        await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
+      }
 
       // Update the existing items map
       setExistingItems((prev) => {

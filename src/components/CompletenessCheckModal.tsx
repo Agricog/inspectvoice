@@ -19,7 +19,7 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Loader2,
   ShieldCheck,
@@ -432,13 +432,27 @@ export default function CompletenessCheckModal({
   const [isOffline, setIsOffline] = useState(false);
   const online = useOnlineStatus();
 
-  // Run check when modal opens
+  // ── Prevent re-execution loop ──
+  // Props like `items` and `inspection` create new object references on every
+  // parent render. Without this guard the effect re-fires endlessly.
+  const hasRunRef = useRef(false);
+
+  // Reset when modal opens/closes so next open gets a fresh check
+  useEffect(() => {
+    if (isOpen) {
+      hasRunRef.current = false;
+      setResult(null);
+      setError(null);
+      setLoading(true);
+      setIsOffline(false);
+    }
+  }, [isOpen]);
+
+  // Run check once when modal opens
   useEffect(() => {
     if (!isOpen) return;
-
-    setLoading(true);
-    setResult(null);
-    setError(null);
+    if (hasRunRef.current) return;
+    hasRunRef.current = true;
 
     async function runCheck(): Promise<void> {
       try {
@@ -455,15 +469,15 @@ export default function CompletenessCheckModal({
 
         setIsOffline(false);
 
-        // Online: call worker endpoint
-       const json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
+        // Online: call worker endpoint (single attempt, no retries)
+        const json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
           `/api/v1/inspections/${inspection.id}/completeness-check`,
-          { method: 'POST' },
+          { method: 'POST', retries: 0 },
         );
         setResult(json.data);
         setLoading(false);
       } catch {
-        // Fallback to local
+        // Any failure (404 = not synced yet, 500, network) → fall back to local checks
         const localResult = runOfflineChecks(
           inspection, items, inspectorSummary, closureRecommended, closureReason,
         );
@@ -476,7 +490,7 @@ export default function CompletenessCheckModal({
     // Small delay so modal animation completes
     const timer = setTimeout(() => void runCheck(), 300);
     return () => clearTimeout(timer);
-  }, [isOpen, inspection, items, inspectorSummary, closureRecommended, closureReason, online]);
+  }, [isOpen, online, inspection, items, inspectorSummary, closureRecommended, closureReason]);
 
   if (!isOpen) return null;
 

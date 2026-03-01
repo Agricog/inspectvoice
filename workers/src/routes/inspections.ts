@@ -393,10 +393,9 @@ export async function deleteInspection(
     );
   }
 
-  // Delete child records first, then the inspection
-  // Delete child inspection_items via raw query (tenant-isolated through JOIN)
+  // Delete child records first (tenant-isolated via subquery), then the inspection
   await db.rawExecute(
-    `DELETE FROM inspection_items WHERE inspection_id = $1 AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $2)`,
+    `DELETE FROM inspection_items WHERE inspection_id IN (SELECT id FROM inspections WHERE id = $1 AND org_id = $2)`,
     [id, ctx.orgId],
   );
   await db.deleteById('inspections', id);

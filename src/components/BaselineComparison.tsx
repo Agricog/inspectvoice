@@ -21,7 +21,7 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Clock,
   AlertTriangle,
@@ -214,6 +214,21 @@ export default function BaselineComparison({
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
 
+  // FIX: Use ResizeObserver to measure container width asynchronously
+  // instead of reading containerRef.current.offsetWidth during render.
+  // DOM reads during render force synchronous layout and contributed to React error #310.
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setContainerWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [baseline, current]);
+
   // No baseline set
   if (!baseline) {
     return (
@@ -325,7 +340,7 @@ export default function BaselineComparison({
             src={baseline.src}
             alt={`Baseline photo of ${assetCode}`}
             className="absolute inset-0 w-full h-full object-cover"
-            style={{ width: containerRef.current ? `${containerRef.current.offsetWidth}px` : '100%' }}
+            style={{ width: containerWidth > 0 ? `${containerWidth}px` : '100%' }}
             draggable={false}
           />
         </div>

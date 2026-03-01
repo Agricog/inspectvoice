@@ -3,18 +3,25 @@
  * Cloudflare R2 bucket operations for photos and audio files.
  *
  * Handles:
- * - Presigned URL generation for direct client uploads
+ * - Upload URL generation for direct client uploads to Workers
  * - File retrieval for processing (audio transcription, PDF embedding)
  * - Key generation with org-scoped prefixes (tenant isolation in storage)
  * - Content type validation (only allow expected file types)
  * - File existence verification (for upload confirmation)
  *
  * Upload flow:
- *   1. Frontend requests signed URL via API
- *   2. This service generates a time-limited presigned PUT URL
- *   3. Frontend uploads directly to R2 (no Worker payload limit)
- *   4. Frontend calls /confirm endpoint
- *   5. This service verifies the file exists in R2
+ *   1. Frontend requests upload URL via API
+ *   2. This service generates a token-authenticated absolute URL to Workers
+ *   3. Frontend PUTs directly to Workers (bypasses Railway/CDN proxy)
+ *   4. Worker handler writes to R2 using the binding
+ *   5. Frontend calls /confirm endpoint
+ *   6. This service verifies the file exists in R2
+ *
+ * Why absolute URLs:
+ *   The frontend is served by Railway, which proxies /api/v1/* to Workers.
+ *   However, Railway blocks PUT requests (405 Method Not Allowed).
+ *   Binary uploads must go direct to Workers via WORKERS_PUBLIC_URL,
+ *   bypassing Railway entirely. GET/POST API calls continue through Railway.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -61,11 +68,13 @@ export class R2Service {
   private readonly bucket: R2Bucket;
   private readonly logger: Logger;
   private readonly orgId: string;
+  private readonly workersPublicUrl: string;
 
   constructor(ctx: RequestContext) {
     this.bucket = ctx.env.INSPECTVOICE_BUCKET;
     this.logger = Logger.fromContext(ctx);
     this.orgId = ctx.orgId;
+    this.workersPublicUrl = ctx.env.WORKERS_PUBLIC_URL;
   }
 
   // =============================================
@@ -105,11 +114,11 @@ export class R2Service {
   }
 
   // =============================================
-  // PRESIGNED URL GENERATION
+  // UPLOAD URL GENERATION
   // =============================================
 
   /**
-   * Generate a presigned PUT URL for photo upload.
+   * Generate an upload URL for photo upload.
    * The frontend uploads directly to this URL.
    *
    * @returns Object with upload_url, r2_key, and r2_url
@@ -134,11 +143,11 @@ export class R2Service {
     }
 
     const r2Key = this.generatePhotoKey(inspectionItemId, mimeType);
-    return this.createPresignedUrl(r2Key, mimeType);
+    return this.createUploadUrl(r2Key, mimeType);
   }
 
   /**
-   * Generate a presigned PUT URL for audio upload.
+   * Generate an upload URL for audio upload.
    */
   async createAudioUploadUrl(
     inspectionItemId: string,
@@ -153,41 +162,40 @@ export class R2Service {
     }
 
     const r2Key = this.generateAudioKey(inspectionItemId, mimeType);
-    return this.createPresignedUrl(r2Key, mimeType);
+    return this.createUploadUrl(r2Key, mimeType);
   }
 
   /**
-   * Generate a presigned URL using R2's createMultipartUpload or
-   * using a custom signed URL approach.
+   * Generate a token-authenticated upload URL.
    *
-   * Cloudflare R2 supports presigned URLs via the S3-compatible API.
-   * For Workers binding access, we use a different approach:
-   * we return the Worker URL that proxies the upload.
+   * Upload URLs are ABSOLUTE, pointing directly to the Workers domain
+   * (WORKERS_PUBLIC_URL). This is required because:
+   *   - The frontend is served by Railway
+   *   - Railway proxies /api/v1/* but blocks PUT requests (405)
+   *   - Binary uploads must bypass Railway and go direct to Workers
    *
-   * In practice, we'll use a two-step flow:
-   * 1. Client gets the r2Key from this endpoint
-   * 2. Client uploads to /api/v1/uploads/put/:r2Key with the file body
-   * 3. Worker handler writes to R2 using the binding
-   *
-   * This avoids needing S3 credentials while keeping uploads efficient.
+   * The upload endpoint validates the HMAC token before accepting the upload.
+   * Tokens are time-limited (SIGNED_URL_TTL_SECONDS) and key-bound.
    */
-  private async createPresignedUrl(
+  private async createUploadUrl(
     r2Key: string,
     _mimeType: string,
   ): Promise<UploadUrlResult> {
-    // For R2 Worker bindings, we generate a token-based upload URL
-    // The upload endpoint validates the token and writes to R2
+    // Generate a time-limited, key-bound upload token
     const uploadToken = await generateUploadToken(r2Key);
 
-    // The upload URL points to our own Worker upload endpoint
-    const uploadUrl = `/api/v1/uploads/put/${encodeURIComponent(r2Key)}?token=${uploadToken}`;
+    // Build ABSOLUTE upload URL pointing directly to Workers
+    // This bypasses Railway's proxy which blocks PUT requests
+    const baseUrl = this.workersPublicUrl.replace(/\/+$/, '');
+    const uploadPath = `/api/v1/uploads/put/${encodeURIComponent(r2Key)}?token=${uploadToken}`;
+    const uploadUrl = `${baseUrl}${uploadPath}`;
 
-    // The public download URL (after upload completes)
+    // Download URL remains relative (served via Railway proxy on GET)
     const r2Url = `/api/v1/files/${encodeURIComponent(r2Key)}`;
 
     this.logger.debug('Upload URL generated', {
       r2Key,
-      uploadUrl: '[generated]',
+      uploadDomain: baseUrl,
     });
 
     return {
@@ -254,7 +262,6 @@ export class R2Service {
     }
 
     const object = await this.bucket.get(key);
-
     if (!object) {
       throw new NotFoundError('File not found');
     }
@@ -269,7 +276,6 @@ export class R2Service {
     if (!key.startsWith(`${this.orgId}/`)) {
       return null;
     }
-
     return this.bucket.head(key);
   }
 
@@ -299,11 +305,9 @@ export class R2Service {
    */
   async getUnscoped(key: string): Promise<R2ObjectBody> {
     const object = await this.bucket.get(key);
-
     if (!object) {
       throw new NotFoundError('File not found in R2');
     }
-
     return object;
   }
 }
@@ -330,7 +334,6 @@ async function generateUploadToken(r2Key: string): Promise<string> {
   // this provides sufficient protection against URL tampering.
   const encoder = new TextEncoder();
   const data = encoder.encode(payload);
-
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -362,7 +365,6 @@ export async function validateUploadToken(
   const payload = `${r2Key}|${expiry}`;
   const encoder = new TextEncoder();
   const data = encoder.encode(payload);
-
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const expectedHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -377,11 +379,11 @@ export async function validateUploadToken(
 // =============================================
 
 export interface UploadUrlResult {
-  /** URL the client should PUT the file to */
+  /** Absolute URL the client should PUT the file to (points to Workers) */
   readonly upload_url: string;
   /** R2 object key (store this in the database) */
   readonly r2_key: string;
-  /** URL to access the file after upload */
+  /** Relative URL to access the file after upload (via Railway proxy) */
   readonly r2_url: string;
 }
 
@@ -440,10 +442,9 @@ export function createR2(ctx: RequestContext): R2Service {
 export function createR2ForQueue(bucket: R2Bucket, orgId: string): R2Service {
   // Create a minimal context for the service
   const minimalCtx = {
-    env: { INSPECTVOICE_BUCKET: bucket },
+    env: { INSPECTVOICE_BUCKET: bucket, WORKERS_PUBLIC_URL: '' },
     orgId,
     requestId: crypto.randomUUID(),
   } as unknown as RequestContext;
-
   return new R2Service(minimalCtx);
 }

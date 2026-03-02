@@ -611,16 +611,20 @@ export default function InspectionCapture(): JSX.Element {
       };
 
       if (existing) {
-        await inspectionItems.update(itemId, itemData);
-      } else {
-        await inspectionItems.create(itemData);
-        for (const photoId of captureState.photoIds) {
-          await pendingPhotos.linkToItem(photoId, itemId);
-        }
-        if (captureState.audioBlobId) {
-          await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
-        }
-      }
+  await inspectionItems.update(itemId, itemData);
+} else {
+  await inspectionItems.create(itemData);
+}
+
+// Link photos and audio on EVERY save (create or update).
+// linkToItem is idempotent — skips already-synced media.
+// This is the trigger that enqueues photos/audio for upload.
+for (const photoId of captureState.photoIds) {
+  await pendingPhotos.linkToItem(photoId, itemId);
+}
+if (captureState.audioBlobId) {
+  await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
+}
 
       setExistingItems((prev) => {
         const next = new Map(prev);

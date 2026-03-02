@@ -4,6 +4,11 @@
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
+ * FIX: 2 Mar 2026
+ *   - Baseline photo now tracks latest captured photo (not just first)
+ *   - Photo removal properly updates baseline current photo
+ *   - Defect descriptions editable inline (inspectors fill in [LOCATION] etc.)
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
 
@@ -205,7 +210,7 @@ export default function InspectionCapture(): JSX.Element {
   const [recordDuration, setRecordDuration] = useState(0);
   const [browserCaps, setBrowserCaps] = useState<BrowserCapabilities | null>(null);
   const voiceCaptureRef = useRef<VoiceCapture | null>(null);
-  const [photoThumbnails, setPhotoThumbnails] = useState<Array<{ id: string; base64: string }>>([]);
+  const [photoThumbnails, setPhotoThumbnails] = useState<Array<{ id: string; base64: string; fullBase64: string }>>([]);
   const [photoProcessing, setPhotoProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [settingBaseline, setSettingBaseline] = useState(false);
@@ -317,7 +322,6 @@ export default function InspectionCapture(): JSX.Element {
         notes: existing.inspector_notes ?? '',
         condition: existing.overall_condition,
         saved: true,
-        // FIX: sanitise descriptions when loading to strip any stored quote corruption
         manualDefects: (existing.defects ?? []).map((d) => ({
           ...d,
           description: sanitiseDescription(d.description),
@@ -450,9 +454,14 @@ export default function InspectionCapture(): JSX.Element {
       }));
       setPhotoThumbnails((prev) => [
         ...prev,
-        { id: photoRecord.id, base64: result.thumbnailBase64 || result.base64Data.substring(0, 500) },
+        {
+          id: photoRecord.id,
+          base64: result.thumbnailBase64 || result.base64Data.substring(0, 500),
+          fullBase64: result.base64Data,
+        },
       ]);
-      setFirstPhotoBase64((prev) => (prev === null ? result.base64Data : prev));
+      // Always update to latest photo for baseline comparison
+      setFirstPhotoBase64(result.base64Data);
     } catch (error) {
       captureError(error, { module: 'InspectionCapture', operation: 'capturePhoto' });
     } finally {
@@ -470,16 +479,28 @@ export default function InspectionCapture(): JSX.Element {
   );
 
   const handleRemovePhoto = useCallback((photoId: string) => {
+    const remaining = photoThumbnails.filter((p) => p.id !== photoId);
+
     setCaptureState((prev) => ({
       ...prev,
       photoIds: prev.photoIds.filter((id) => id !== photoId),
     }));
-    setPhotoThumbnails((prev) => prev.filter((p) => p.id !== photoId));
-    if (photoThumbnails.length <= 1) setFirstPhotoBase64(null);
+    setPhotoThumbnails(remaining);
+
+    // Update baseline current photo: use last remaining photo, or clear
+    if (remaining.length === 0) {
+      setFirstPhotoBase64(null);
+    } else {
+      const lastPhoto = remaining[remaining.length - 1];
+      if (lastPhoto) {
+        setFirstPhotoBase64(lastPhoto.fullBase64);
+      }
+    }
+
     void pendingPhotos.delete(photoId).catch((error) => {
       captureError(error, { module: 'InspectionCapture', operation: 'deletePhoto' });
     });
-  }, [photoThumbnails.length]);
+  }, [photoThumbnails]);
 
   // =============================================
   // SET AS BASELINE HANDLER
@@ -539,7 +560,6 @@ export default function InspectionCapture(): JSX.Element {
 
   const handleQuickPickSelect = useCallback((selection: QuickPickSelection) => {
     const defect: DefectDetail = {
-      // FIX: sanitise description and remedial_action to strip quote corruption
       description: sanitiseDescription(selection.description),
       bs_en_reference: selection.bs_en_reference,
       risk_rating: selection.risk_rating as RiskRating,
@@ -557,6 +577,15 @@ export default function InspectionCapture(): JSX.Element {
     setCaptureState((prev) => ({
       ...prev,
       manualDefects: prev.manualDefects.filter((_, i) => i !== index),
+    }));
+  }, []);
+
+  const handleUpdateDefectField = useCallback((index: number, field: keyof DefectDetail, value: string) => {
+    setCaptureState((prev) => ({
+      ...prev,
+      manualDefects: prev.manualDefects.map((d, i) =>
+        i === index ? { ...d, [field]: value } : d,
+      ),
     }));
   }, []);
 
@@ -589,7 +618,6 @@ export default function InspectionCapture(): JSX.Element {
         ai_model_version: existing?.ai_model_version ?? '',
         ai_processing_status: existing?.ai_processing_status ?? AIProcessingStatus.PENDING,
         ai_processed_at: existing?.ai_processed_at ?? null,
-        // FIX: sanitise defect descriptions before saving
         defects: captureState.manualDefects.map((d) => ({
           ...d,
           description: sanitiseDescription(d.description),
@@ -611,20 +639,19 @@ export default function InspectionCapture(): JSX.Element {
       };
 
       if (existing) {
-  await inspectionItems.update(itemId, itemData);
-} else {
-  await inspectionItems.create(itemData);
-}
+        await inspectionItems.update(itemId, itemData);
+      } else {
+        await inspectionItems.create(itemData);
+      }
 
-// Link photos and audio on EVERY save (create or update).
-// linkToItem is idempotent — skips already-synced media.
-// This is the trigger that enqueues photos/audio for upload.
-for (const photoId of captureState.photoIds) {
-  await pendingPhotos.linkToItem(photoId, itemId);
-}
-if (captureState.audioBlobId) {
-  await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
-}
+      // Link photos and audio on EVERY save (create or update).
+      // linkToItem is idempotent — skips already-synced media.
+      for (const photoId of captureState.photoIds) {
+        await pendingPhotos.linkToItem(photoId, itemId);
+      }
+      if (captureState.audioBlobId) {
+        await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
+      }
 
       setExistingItems((prev) => {
         const next = new Map(prev);
@@ -983,16 +1010,33 @@ if (captureState.audioBlobId) {
             {captureState.manualDefects.map((defect, idx) => (
               <div key={idx} className="p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2 min-w-0">
-                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1.5 ${
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-2 ${
                       defect.risk_rating === 'very_high' ? 'bg-[#EF4444]' :
                       defect.risk_rating === 'high' ? 'bg-[#F97316]' :
                       defect.risk_rating === 'medium' ? 'bg-[#EAB308]' :
                       'bg-[#22C55E]'
                     }`} />
-                    <div className="min-w-0">
-                      <p className="text-sm iv-text">{defect.description}</p>
-                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      {/* Editable description — fill in [LOCATION], [DEPTH] etc. */}
+                      <textarea
+                        value={defect.description}
+                        onChange={(e) => handleUpdateDefectField(idx, 'description', e.target.value)}
+                        rows={2}
+                        className="iv-input w-full text-sm resize-y"
+                        placeholder="Fill in [LOCATION], [DEPTH] etc."
+                      />
+                      {/* Editable remedial action */}
+                      {defect.remedial_action && (
+                        <textarea
+                          value={defect.remedial_action}
+                          onChange={(e) => handleUpdateDefectField(idx, 'remedial_action', e.target.value)}
+                          rows={2}
+                          className="iv-input w-full text-sm resize-y"
+                          placeholder="Remedial action..."
+                        />
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-2xs iv-muted">
                           {RISK_RATING_LABELS[defect.risk_rating as RiskRating] ?? defect.risk_rating}
                         </span>
@@ -1059,7 +1103,6 @@ if (captureState.audioBlobId) {
 
       {/* ── Save + Navigation ── */}
       <div className="space-y-3 mb-6">
-        {/* Save button — always visible */}
         <button
           type="button"
           onClick={handleSaveAsset}
@@ -1073,7 +1116,6 @@ if (captureState.audioBlobId) {
           )}
         </button>
 
-        {/* Navigation */}
         <div className="flex items-center gap-3">
           <button
             type="button"

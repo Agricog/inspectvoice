@@ -8,9 +8,8 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  */
-
 import { useState, useCallback } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { secureFetch } from '@hooks/useFetch';
 import type { QuickPickItem } from '@components/DefectQuickPick';
 
 interface UseDefectLibraryReturn {
@@ -40,7 +39,6 @@ export interface LibrarySearchResult {
 }
 
 export function useDefectLibrary(): UseDefectLibraryReturn {
-  const { getToken } = useAuth();
   const [items, setItems] = useState<QuickPickItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -48,39 +46,27 @@ export function useDefectLibrary(): UseDefectLibraryReturn {
     if (!assetType) return;
     setLoading(true);
     try {
-      const token = await getToken();
-      const res = await fetch(
+      const json = await secureFetch<{ data: QuickPickItem[] }>(
         `/api/v1/defect-library/quick-pick/${encodeURIComponent(assetType)}?limit=${limit}`,
-        { headers: { Authorization: `Bearer ${token}` } },
       );
-      if (res.ok) {
-        const json = await res.json() as { data: QuickPickItem[] };
-        setItems(json.data);
-      }
+      setItems(json.data);
     } catch {
       // Silent — quick-pick is non-critical
     } finally {
       setLoading(false);
     }
-  }, [getToken]);
+  }, []);
 
   const recordUsage = useCallback((entryId: string) => {
-    void (async () => {
-      try {
-        const token = await getToken();
-        void fetch(`/api/v1/defect-library/${entryId}/record-usage`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch {
-        // Fire-and-forget
-      }
-    })();
-  }, [getToken]);
+    void secureFetch(`/api/v1/defect-library/${entryId}/record-usage`, {
+      method: 'POST',
+    }).catch(() => {
+      // Fire-and-forget
+    });
+  }, []);
 
   const searchLibrary = useCallback(async (params: LibrarySearchParams): Promise<LibrarySearchResult> => {
     try {
-      const token = await getToken();
       const qs = new URLSearchParams();
       if (params.asset_type) qs.set('asset_type', params.asset_type);
       if (params.source) qs.set('source', params.source);
@@ -88,21 +74,16 @@ export function useDefectLibrary(): UseDefectLibraryReturn {
       if (params.limit) qs.set('limit', String(params.limit));
       if (params.offset) qs.set('offset', String(params.offset));
 
-      const res = await fetch(`/api/v1/defect-library?${qs}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) return { entries: [], total: 0 };
-
-      const json = await res.json() as {
+      const json = await secureFetch<{
         data: QuickPickItem[];
         pagination: { total: number };
-      };
+      }>(`/api/v1/defect-library?${qs}`);
+
       return { entries: json.data, total: json.pagination.total };
     } catch {
       return { entries: [], total: 0 };
     }
-  }, [getToken]);
+  }, []);
 
   return { items, loading, fetchQuickPick, recordUsage, searchLibrary };
 }

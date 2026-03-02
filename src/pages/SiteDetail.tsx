@@ -259,7 +259,8 @@ export function SiteDetail(): JSX.Element {
         const is404 = err instanceof Error && err.message.includes('404');
         if (!is404) throw err;
       }
-      // Remove from local state — server soft-delete handles persistence
+      // Update cache with inactive flag so it doesn't reappear on navigation
+      await assetsCache.put({ ...asset.data, is_active: false });
       setAssets((prev) => prev.filter((a) => a.data.id !== asset.data.id));
       setConfirmDeleteAsset(null);
     } catch (err) {
@@ -294,7 +295,7 @@ export function SiteDetail(): JSX.Element {
         }
 
         setSite(cachedSite.data);
-        setAssets(cachedAssets);
+        setAssets(cachedAssets.filter((a) => a.data.is_active !== false));
         setSiteInspections(cachedInspections);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to load site';

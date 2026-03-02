@@ -1251,7 +1251,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       </>
     )}
   </button>
-        )}
 
         {/* Navigation */}
         <div className="flex items-center gap-3">

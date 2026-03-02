@@ -349,7 +349,8 @@ export async function deleteAsset(
   const id = validateUUID(params['id'], 'id');
   const db = createDb(ctx);
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString().split('T')[0]; // date only: 2026-03-02
+  const updatedAt = new Date().toISOString();
 
   const rows = await db.rawQuery<Record<string, unknown>>(
     `UPDATE assets

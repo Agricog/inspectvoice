@@ -250,7 +250,7 @@ export async function updateInspectionItem(
   if ('voice_transcript' in body) data['voice_transcript'] = validateOptionalString(body['voice_transcript'], 'voice_transcript', { maxLength: 50000 });
   if ('transcription_method' in body) data['transcription_method'] = validateOptionalEnum(body['transcription_method'], 'transcription_method', TRANSCRIPTION_METHODS);
   if ('ai_analysis' in body) data['ai_analysis'] = body['ai_analysis'] ? JSON.stringify(body['ai_analysis']) : null;
-  if ('ai_model_version' in body) data['ai_model_version'] = validateOptionalString(body['ai_model_version'], 'ai_model_version', { maxLength: 50 });
+  if ('ai_model_version' in body) data['ai_model_version'] = validateOptionalString(body['ai_model_version'], 'ai_model_version', { maxLength: 50 }) ?? '';
   if ('ai_processing_status' in body) data['ai_processing_status'] = validateOptionalEnum(body['ai_processing_status'], 'ai_processing_status', AI_STATUSES);
   if ('ai_processed_at' in body) data['ai_processed_at'] = body['ai_processed_at'];
   if ('defects' in body) data['defects'] = JSON.stringify(body['defects'] ?? []);

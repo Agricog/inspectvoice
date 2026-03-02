@@ -21,12 +21,11 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  *
- * FIX: 1 Mar 2026
- *   - Added CustomDefectForm so inspectors can manually enter defects
- *     when the defect library API is empty or search returns no results.
- *   - Defined COST_BAND_LABELS locally (not exported from @/types).
+ * FIX: 2 Mar 2026
+ *   - Replaced raw fetch() with secureFetch from useFetch hook
+ *   - Routes through VITE_API_BASE_URL so requests reach Cloudflare Worker
+ *   - Removed useAuth/getToken — secureFetch auto-injects Clerk token
  */
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Loader2,
@@ -37,7 +36,7 @@ import {
   BookOpen,
   Plus,
 } from 'lucide-react';
-import { useAuth } from '@clerk/clerk-react';
+import { secureFetch } from '@hooks/useFetch';
 import {
   RISK_RATING_LABELS,
   RiskRating,
@@ -337,8 +336,6 @@ export default function DefectQuickPick({
   onClose,
   onSelect,
 }: DefectQuickPickProps): JSX.Element | null {
-  const { getToken } = useAuth();
-
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<QuickPickItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -350,20 +347,16 @@ export default function DefectQuickPick({
     if (!assetType) return;
     setLoading(true);
     try {
-      const token = await getToken();
-      const res = await fetch(`/api/v1/defect-library/quick-pick/${encodeURIComponent(assetType)}?limit=12`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const json = await res.json() as { data: QuickPickItem[] };
-        setItems(json.data);
-      }
+      const json = await secureFetch<{ data: QuickPickItem[] }>(
+        `/api/v1/defect-library/quick-pick/${encodeURIComponent(assetType)}?limit=12`,
+      );
+      setItems(json.data);
     } catch {
       // Silent — non-critical feature
     } finally {
       setLoading(false);
     }
-  }, [getToken, assetType]);
+  }, [assetType]);
 
   useEffect(() => {
     if (isOpen) {
@@ -377,15 +370,9 @@ export default function DefectQuickPick({
   // ── Record usage + select ──
   const handleSelect = useCallback(async (item: QuickPickItem) => {
     // Fire-and-forget usage recording
-    try {
-      const token = await getToken();
-      void fetch(`/api/v1/defect-library/${encodeURIComponent(item.entry_id)}/record-usage`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    } catch {
-      // Silent
-    }
+    void secureFetch(`/api/v1/defect-library/${encodeURIComponent(item.entry_id)}/record-usage`, {
+      method: 'POST',
+    }).catch(() => {});
 
     onSelect({
       library_entry_id: item.entry_id,
@@ -397,9 +384,8 @@ export default function DefectQuickPick({
       estimated_cost_band: item.cost_band,
       action_timeframe: item.timeframe_default,
     });
-
     onClose();
-  }, [getToken, onSelect, onClose]);
+  }, [onSelect, onClose]);
 
   // ── Custom defect submitted ──
   const handleCustomSubmit = useCallback(

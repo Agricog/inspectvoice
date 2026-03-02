@@ -662,75 +662,72 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   // SAVE CURRENT ASSET
   // =============================================
 
-  const handleSaveAsset = useCallback(async () => {
-    if (!currentAsset || !inspectionId || !inspection) return;
+ const handleSaveAsset = useCallback(async () => {
+  if (!currentAsset || !inspectionId || !inspection) return;
+  setSaving(true);
+  try {
+    const existing = existingItems.get(currentAsset.id) ?? existingItems.get(currentAsset.asset_code);
+    const itemId = existing?.id ?? uuid();
+    const now = new Date().toISOString();
 
-    setSaving(true);
+    const itemData: InspectionItem = {
+      ...( existing ?? {} ),
+      id: itemId,
+      inspection_id: inspectionId,
+      asset_id: currentAsset.id,
+      asset_code: currentAsset.asset_code,
+      asset_type: currentAsset.asset_type,
+      audio_r2_key: existing?.audio_r2_key ?? null,
+      voice_transcript: captureState.voiceTranscript || null,
+      transcription_method: captureState.hasAudioRecording ? TranscriptionMethod.WEB_SPEECH_API : captureState.voiceTranscript ? TranscriptionMethod.MANUAL : null,
+      ai_analysis: existing?.ai_analysis ?? null,
+      ai_model_version: existing?.ai_model_version ?? '',
+      ai_processing_status: existing?.ai_processing_status ?? AIProcessingStatus.PENDING,
+      ai_processed_at: existing?.ai_processed_at ?? null,
+      defects: captureState.manualDefects,
+      overall_condition: captureState.condition,
+      risk_rating: existing?.risk_rating ?? null,
+      requires_action: captureState.manualDefects.some(
+        (d) => d.risk_rating === RiskRating.VERY_HIGH || d.risk_rating === RiskRating.HIGH,
+      ),
+      action_timeframe: existing?.action_timeframe ?? null,
+      inspector_confirmed: existing?.inspector_confirmed ?? false,
+      inspector_notes: captureState.notes || null,
+      inspector_risk_override: existing?.inspector_risk_override ?? null,
+      latitude: existing?.latitude ?? null,
+      longitude: existing?.longitude ?? null,
+      timestamp: existing?.timestamp ?? now,
+      created_at: existing?.created_at ?? now,
+    };
 
-    try {
-      const itemId = uuid();
-      const now = new Date().toISOString();
-
-      const itemData: InspectionItem = {
-        id: itemId,
-        inspection_id: inspectionId,
-        asset_id: currentAsset.id,
-        asset_code: currentAsset.asset_code,
-        asset_type: currentAsset.asset_type,
-        audio_r2_key: null, // Set after R2 upload
-        voice_transcript: captureState.voiceTranscript || null,
-        transcription_method: captureState.hasAudioRecording ? TranscriptionMethod.WEB_SPEECH_API : captureState.voiceTranscript ? TranscriptionMethod.MANUAL : null,
-        ai_analysis: null,
-        ai_model_version: '',
-        ai_processing_status: AIProcessingStatus.PENDING,
-        ai_processed_at: null,
-        defects: captureState.manualDefects,
-        overall_condition: captureState.condition,
-        risk_rating: null, // Set by AI analysis
-        requires_action: captureState.manualDefects.some(
-          (d) => d.risk_rating === RiskRating.VERY_HIGH || d.risk_rating === RiskRating.HIGH,
-        ),
-        action_timeframe: null,
-        inspector_confirmed: false,
-        inspector_notes: captureState.notes || null,
-        inspector_risk_override: null,
-        latitude: null,
-        longitude: null,
-        timestamp: now,
-        created_at: now,
-      };
-
+    if (existing) {
+      await inspectionItems.update(itemId, itemData);
+    } else {
       await inspectionItems.create(itemData);
-      // Link pending photos to this inspection item
       for (const photoId of captureState.photoIds) {
         await pendingPhotos.linkToItem(photoId, itemId);
       }
-
-      // Link pending audio to this inspection item
       if (captureState.audioBlobId) {
         await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
       }
-
-      // Update the existing items map
-      setExistingItems((prev) => {
-        const next = new Map(prev);
-        next.set(currentAsset.id, itemData);
-        return next;
-      });
-
-      setCaptureState((prev) => ({ ...prev, saved: true }));
-
-      // Auto-advance to next asset if not the last
-      if (currentIndex < totalAssets - 1) {
-        setCurrentIndex((prev) => prev + 1);
-      }
-    } catch (error) {
-      captureError(error, { module: 'InspectionCapture', operation: 'saveItem' });
-    } finally {
-      setSaving(false);
     }
-  }, [currentAsset, inspectionId, inspection, captureState, currentIndex, totalAssets]);
 
+    setExistingItems((prev) => {
+      const next = new Map(prev);
+      next.set(currentAsset.id, itemData);
+      return next;
+    });
+
+    setCaptureState((prev) => ({ ...prev, saved: true }));
+    if (currentIndex < totalAssets - 1) {
+      setCurrentIndex((prev) => prev + 1);
+    }
+  } catch (error) {
+    captureError(error, { module: 'InspectionCapture', operation: 'saveItem' });
+  } finally {
+    setSaving(false);
+  }
+}, [currentAsset, inspectionId, inspection, captureState, currentIndex, totalAssets, existingItems]);
   // =============================================
   // NAVIGATION
   // =============================================
@@ -1234,27 +1231,26 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       </div>
 
       {/* ── Save + Navigation ── */}
-      <div className="space-y-3 mb-6">
-        {/* Save button */}
-        {!isCurrentSaved && (
-          <button
-            type="button"
-            onClick={handleSaveAsset}
-            disabled={saving || (!hasCapture && !captureState.condition)}
-            className="iv-btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="w-4 h-4" />
-                Save &amp; Continue
-              </>
-            )}
-          </button>
+<div className="space-y-3 mb-6">
+  {/* Save button — always visible */}
+  <button
+    type="button"
+    onClick={handleSaveAsset}
+    disabled={saving || (!hasCapture && !captureState.condition)}
+    className="iv-btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
+  >
+    {saving ? (
+      <>
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Saving...
+      </>
+    ) : (
+      <>
+        <CheckCircle2 className="w-4 h-4" />
+        {isCurrentSaved ? 'Update & Continue' : 'Save & Continue'}
+      </>
+    )}
+  </button>
         )}
 
         {/* Navigation */}

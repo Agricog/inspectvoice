@@ -7,13 +7,13 @@
  *   GET    /api/v1/assets/:id            — Get asset detail
  *   POST   /api/v1/assets                — Create asset (including on-site during inspection)
  *   PUT    /api/v1/assets/:id            — Update asset
+ *   DELETE /api/v1/assets/:id            — Soft-delete asset (sets is_active = false)
  *
  * Assets belong to sites. Tenant isolation is enforced by verifying the
  * parent site belongs to the requesting org before any asset operation.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import type { RequestContext, RouteParams } from '../types';
 import { createDb } from '../services/db';
 import { writeAuditLog, buildChanges } from '../services/audit';
@@ -312,6 +312,7 @@ export async function updateAsset(
 
   // Build UPDATE query manually (assets doesn't have org_id column)
   data['updated_at'] = new Date().toISOString();
+
   const setClauses = Object.keys(data).map((col, i) => `${col} = $${i + 1}`);
   const updateSql = `UPDATE assets SET ${setClauses.join(', ')}
     WHERE id = $${Object.keys(data).length + 1}
@@ -331,5 +332,47 @@ export async function updateAsset(
   return jsonResponse({
     success: true,
     data: updatedRows[0] ?? existing,
+  }, ctx.requestId);
+}
+
+// =============================================
+// DELETE ASSET (soft-delete)
+// =============================================
+
+export async function deleteAsset(
+  _request: Request,
+  params: RouteParams,
+  ctx: RequestContext,
+): Promise<Response> {
+  await checkRateLimit(ctx, 'write');
+
+  const id = validateUUID(params['id'], 'id');
+  const db = createDb(ctx);
+
+  const now = new Date().toISOString();
+
+  const rows = await db.rawQuery<Record<string, unknown>>(
+    `UPDATE assets
+     SET is_active = false, decommissioned_date = $1, updated_at = $1
+     WHERE id = $2
+       AND site_id IN (SELECT id FROM sites WHERE org_id = $3)
+       AND is_active = true
+     RETURNING id, asset_code, site_id`,
+    [now, id, ctx.orgId],
+  );
+
+  if (!rows[0]) {
+    throw new NotFoundError('Asset not found or already inactive');
+  }
+
+  void writeAuditLog(ctx, 'asset.deleted', 'assets', id, {
+    asset_code: rows[0]['asset_code'],
+    site_id: rows[0]['site_id'],
+    decommissioned_date: now,
+  }, _request);
+
+  return jsonResponse({
+    success: true,
+    data: { id, deactivated: true },
   }, ctx.requestId);
 }

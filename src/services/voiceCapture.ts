@@ -1,42 +1,60 @@
 /**
  * InspectVoice — Voice Capture Service
- * Batch 12
+ * Rewrite: 2 Mar 2026
  *
  * File: src/services/voiceCapture.ts
  *
- * Dual-mode voice capture:
- *   1. MediaRecorder — captures raw audio blob for Deepgram transcription (primary)
- *   2. Web Speech API — real-time browser-native speech-to-text (fallback / live preview)
+ * Dual-mode voice capture with proper lifecycle management:
  *
- * Both run simultaneously when available:
- *   - MediaRecorder captures the audio file → stored in IndexedDB → synced to R2 → Deepgram
- *   - Web Speech API provides instant on-screen transcript for inspector feedback
- *   - If Web Speech API unavailable, MediaRecorder still captures for async Deepgram processing
+ *   CaptureMode.MANUAL (default for inspections):
+ *     - Inspector taps Record, speaks, taps Stop
+ *     - NO silence auto-stop — inspectors pause to think, move, check things
+ *     - Max duration safety net (5 min) still applies
  *
- * Features:
- *   - Silence detection with configurable threshold and timeout
- *   - Audio compression (webm/opus preferred, mp4/aac fallback)
- *   - Recording duration limits (max 5 min per capture)
- *   - Amplitude monitoring for visual feedback (VU meter)
- *   - Graceful degradation: works with MediaRecorder only, Speech API only, or both
- *   - TypeScript strict, zero any, event-driven architecture
+ *   CaptureMode.AUTO (for future hands-free workflows):
+ *     - Silence detection triggers auto-stop after configurable timeout
+ *     - Suitable for quick dictation where hands-free stop is needed
  *
- * Build Standard: Autaimate v3 — production-ready first time
+ * Architecture:
+ *   - MediaRecorder captures audio blob → IndexedDB → R2 → Whisper/Speechmatics
+ *   - Web Speech API provides live on-screen transcript (Chrome/Edge only)
+ *   - Both run simultaneously when available
+ *   - Each subsystem is isolated — failure in one doesn't kill the other
+ *   - Recording state is the single source of truth (not transcription state)
+ *
+ * Key fixes from previous version:
+ *   1. Silence detection no longer kills manual recordings
+ *   2. Speech API restart has debounce + max retries + double-start guard
+ *   3. Every operation validates MediaRecorder.state before acting
+ *   4. Explicit state transitions prevent phantom recording states
+ *   5. Subsystem errors are logged but don't cascade
+ *
+ * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
 import { captureError } from '@utils/errorTracking';
 
 // =============================================
-// TYPES
+// TYPES & ENUMS
 // =============================================
+
+/** Recording mode determines stop behaviour */
+export enum CaptureMode {
+  /** Inspector controls stop manually. No silence auto-stop. Default for inspections. */
+  MANUAL = 'manual',
+  /** Silence detection triggers auto-stop. For hands-free dictation. */
+  AUTO = 'auto',
+}
 
 /** Voice capture configuration */
 export interface VoiceCaptureConfig {
+  /** Capture mode (default: MANUAL) */
+  mode: CaptureMode;
   /** Language for speech recognition (default: 'en-GB') */
   language: string;
-  /** Silence timeout in ms — auto-stop after this duration of silence (default: 3000) */
+  /** [AUTO mode only] Silence timeout in ms (default: 5000) */
   silenceTimeoutMs: number;
-  /** Silence amplitude threshold (0-1) — below this is "silence" (default: 0.01) */
+  /** [AUTO mode only] Silence amplitude threshold 0-1 (default: 0.02) */
   silenceThreshold: number;
   /** Maximum recording duration in ms (default: 300000 = 5 min) */
   maxDurationMs: number;
@@ -44,19 +62,20 @@ export interface VoiceCaptureConfig {
   preferredMimeType: string | null;
   /** Enable Web Speech API for live transcript (default: true) */
   enableLiveTranscript: boolean;
-  /** Audio sample rate in Hz (default: 16000 for Deepgram compatibility) */
+  /** Audio sample rate in Hz (default: 16000 for Whisper/Speechmatics) */
   sampleRate: number;
 }
 
-/** Default configuration */
+/** Default configuration — MANUAL mode, no silence auto-stop */
 export const DEFAULT_VOICE_CONFIG: VoiceCaptureConfig = {
+  mode: CaptureMode.MANUAL,
   language: 'en-GB',
-  silenceTimeoutMs: 3000,
-  silenceThreshold: 0.01,
+  silenceTimeoutMs: 5_000,
+  silenceThreshold: 0.02,
   maxDurationMs: 300_000,
   preferredMimeType: null,
   enableLiveTranscript: true,
-  sampleRate: 16000,
+  sampleRate: 16_000,
 };
 
 /** Current state of the voice capture */
@@ -81,7 +100,7 @@ export enum StopReason {
 
 /** Result returned when recording completes */
 export interface VoiceCaptureResult {
-  /** Audio blob for storage and Deepgram processing */
+  /** Audio blob for storage and server-side transcription */
   audioBlob: Blob;
   /** MIME type of the audio */
   mimeType: string;
@@ -147,7 +166,7 @@ export interface BrowserCapabilities {
 // CAPABILITY DETECTION
 // =============================================
 
-/** MIME types to try, in preference order (Deepgram supports all) */
+/** MIME types to try, in preference order */
 const MIME_PREFERENCE = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -198,11 +217,11 @@ function selectMimeType(preferred: string | null): string {
     }
   }
 
-  return 'audio/webm'; // Fallback — may not work but let MediaRecorder decide
+  return 'audio/webm';
 }
 
 // =============================================
-// WEB SPEECH API WRAPPER
+// WEB SPEECH API TYPES
 // =============================================
 
 interface SpeechRecognitionInstance extends EventTarget {
@@ -215,6 +234,7 @@ interface SpeechRecognitionInstance extends EventTarget {
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
   onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
+  onstart: (() => void) | null;
 }
 
 interface SpeechRecognitionEvent {
@@ -245,22 +265,192 @@ interface SpeechRecognitionErrorEvent {
   message: string;
 }
 
-/** Create a SpeechRecognition instance if available */
-function createSpeechRecognition(lang: string): SpeechRecognitionInstance | null {
-  const SpeechRecognitionCtor =
-    (window as unknown as Record<string, unknown>)['SpeechRecognition'] ??
-    (window as unknown as Record<string, unknown>)['webkitSpeechRecognition'];
+// =============================================
+// SPEECH API MANAGER
+// =============================================
 
-  if (!SpeechRecognitionCtor || typeof SpeechRecognitionCtor !== 'function') {
-    return null;
+/**
+ * Isolated Speech API lifecycle manager.
+ * Handles the restart dance that Web Speech API requires
+ * without leaking state into the main capture class.
+ */
+class SpeechApiManager {
+  private recognition: SpeechRecognitionInstance | null = null;
+  private isStarting: boolean = false;
+  private isActive: boolean = false;
+  private restartCount: number = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed: boolean = false;
+
+  /** Max consecutive restarts before giving up (prevent infinite loop) */
+  private static readonly MAX_RESTARTS = 15;
+  /** Minimum ms between restart attempts (debounce) */
+  private static readonly RESTART_DEBOUNCE_MS = 300;
+
+  constructor(
+    private readonly lang: string,
+    private readonly onTranscriptUpdate: (finalText: string, interimText: string) => void,
+    private readonly onSpeechError: (error: string) => void,
+  ) {}
+
+  /** Start the Speech API session */
+  start(): void {
+    if (this.destroyed || this.isStarting || this.isActive) return;
+
+    const SpeechRecognitionCtor =
+      (window as unknown as Record<string, unknown>)['SpeechRecognition'] ??
+      (window as unknown as Record<string, unknown>)['webkitSpeechRecognition'];
+
+    if (!SpeechRecognitionCtor || typeof SpeechRecognitionCtor !== 'function') {
+      return;
+    }
+
+    try {
+      this.recognition = new (SpeechRecognitionCtor as new () => SpeechRecognitionInstance)();
+      this.recognition.continuous = true;
+      this.recognition.interimResults = true;
+      this.recognition.lang = this.lang;
+      this.restartCount = 0;
+
+      this.bindEvents();
+      this.doStart();
+    } catch (error) {
+      console.warn('[VoiceCapture] Speech API init failed:', error);
+    }
   }
 
-  const recognition = new (SpeechRecognitionCtor as new () => SpeechRecognitionInstance)();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = lang;
+  /** Stop the Speech API session permanently (until next start() call) */
+  stop(): void {
+    this.clearRestartTimer();
 
-  return recognition;
+    if (this.recognition) {
+      // Detach handlers FIRST to prevent onend from triggering restart
+      this.recognition.onresult = null;
+      this.recognition.onerror = null;
+      this.recognition.onend = null;
+      this.recognition.onstart = null;
+
+      try {
+        this.recognition.abort();
+      } catch {
+        // Already stopped
+      }
+
+      this.recognition = null;
+    }
+
+    this.isStarting = false;
+    this.isActive = false;
+    this.restartCount = 0;
+  }
+
+  /** Permanently destroy — no restart possible */
+  destroy(): void {
+    this.destroyed = true;
+    this.stop();
+  }
+
+  /** Whether the Speech API is currently active */
+  getIsActive(): boolean {
+    return this.isActive;
+  }
+
+  // ── Internal ──
+
+  private bindEvents(): void {
+    if (!this.recognition) return;
+
+    let finalTranscript = '';
+
+    this.recognition.onstart = () => {
+      this.isStarting = false;
+      this.isActive = true;
+      this.restartCount = 0; // Reset on successful start
+    };
+
+    this.recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (!result) continue;
+        const alternative = result[0];
+        if (!alternative) continue;
+
+        if (result.isFinal) {
+          finalTranscript += alternative.transcript + ' ';
+        } else {
+          interim += alternative.transcript;
+        }
+      }
+
+      this.onTranscriptUpdate(finalTranscript, interim);
+    };
+
+    this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      this.isStarting = false;
+
+      // Non-critical errors — Speech API fires these routinely
+      if (event.error === 'no-speech' || event.error === 'aborted') {
+        return;
+      }
+
+      // 'not-allowed' means the browser blocked it — don't retry
+      if (event.error === 'not-allowed') {
+        this.onSpeechError('Speech recognition permission denied');
+        return;
+      }
+
+      console.warn('[VoiceCapture] Speech API error:', event.error);
+    };
+
+    this.recognition.onend = () => {
+      this.isActive = false;
+      this.isStarting = false;
+
+      // Auto-restart if not destroyed and under retry limit
+      if (!this.destroyed && this.restartCount < SpeechApiManager.MAX_RESTARTS) {
+        this.scheduleRestart();
+      }
+    };
+  }
+
+  private doStart(): void {
+    if (this.destroyed || this.isStarting || this.isActive || !this.recognition) return;
+
+    this.isStarting = true;
+
+    try {
+      this.recognition.start();
+    } catch (error) {
+      this.isStarting = false;
+
+      // 'already started' — Speech API sometimes fires this on rapid restart
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('already started')) {
+        this.isActive = true;
+        return;
+      }
+
+      console.warn('[VoiceCapture] Speech API start failed:', error);
+    }
+  }
+
+  private scheduleRestart(): void {
+    this.clearRestartTimer();
+
+    this.restartTimer = setTimeout(() => {
+      this.restartCount++;
+      this.doStart();
+    }, SpeechApiManager.RESTART_DEBOUNCE_MS);
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer !== null) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+  }
 }
 
 // =============================================
@@ -278,18 +468,18 @@ export class VoiceCapture {
   private audioChunks: Blob[] = [];
   private mimeType: string = 'audio/webm';
 
-  // Web Speech API
-  private speechRecognition: SpeechRecognitionInstance | null = null;
+  // Web Speech API (isolated manager)
+  private speechManager: SpeechApiManager | null = null;
   private finalTranscript: string = '';
   private interimTranscript: string = '';
 
-  // Audio analysis (for silence detection + VU meter)
+  // Audio analysis (VU meter + optional silence detection)
   private audioContext: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
   private amplitudeData: Uint8Array<ArrayBuffer> | null = null;
   private amplitudeFrameId: number | null = null;
 
-  // Silence detection
+  // Silence detection (AUTO mode only)
   private silenceStartTime: number | null = null;
   private silenceCheckInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -298,6 +488,9 @@ export class VoiceCapture {
   private maxDurationTimeout: ReturnType<typeof setTimeout> | null = null;
   private durationInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Guards
+  private isStopping: boolean = false;
+
   constructor(
     config: Partial<VoiceCaptureConfig> = {},
     events: Partial<VoiceCaptureEvents> = {},
@@ -305,6 +498,8 @@ export class VoiceCapture {
     this.config = { ...DEFAULT_VOICE_CONFIG, ...config };
     this.events = events;
   }
+
+  // ---- PUBLIC GETTERS ----
 
   /** Current state */
   getState(): VoiceCaptureState {
@@ -327,11 +522,21 @@ export class VoiceCapture {
     return Math.round((Date.now() - this.recordingStartTime) / 1000);
   }
 
+  /** Current capture mode */
+  getMode(): CaptureMode {
+    return this.config.mode;
+  }
+
   // ---- STATE MANAGEMENT ----
 
   private setState(newState: VoiceCaptureState): void {
+    const previous = this.state;
     this.state = newState;
-    this.events.onStateChange?.(newState);
+
+    // Only emit if actually changed (prevents duplicate renders)
+    if (previous !== newState) {
+      this.events.onStateChange?.(newState);
+    }
   }
 
   private emitError(message: string, code: VoiceCaptureErrorCode, original?: unknown): void {
@@ -344,7 +549,8 @@ export class VoiceCapture {
   // ---- START RECORDING ----
 
   async start(): Promise<void> {
-    if (this.state === VoiceCaptureState.RECORDING) {
+    // Guard: already recording
+    if (this.state === VoiceCaptureState.RECORDING || this.state === VoiceCaptureState.REQUESTING_PERMISSION) {
       this.emitError('Already recording', VoiceCaptureErrorCode.ALREADY_RECORDING);
       return;
     }
@@ -396,19 +602,31 @@ export class VoiceCapture {
       return;
     }
 
-    // Start audio analysis (silence detection + VU meter)
+    // Verify MediaRecorder actually started
+    if (!this.mediaRecorder || this.mediaRecorder.state !== 'recording') {
+      this.emitError('MediaRecorder failed to enter recording state', VoiceCaptureErrorCode.RECORDING_FAILED);
+      this.cleanupStream();
+      return;
+    }
+
+    // Start audio analysis (VU meter — always runs)
     this.startAudioAnalysis();
 
-    // Start Web Speech API (if enabled and available)
+    // Start Web Speech API for live transcript (if enabled and available)
     if (this.config.enableLiveTranscript) {
       this.startSpeechRecognition();
     }
 
     // Start timers
     this.recordingStartTime = Date.now();
+    this.isStopping = false;
     this.startDurationTimer();
     this.startMaxDurationTimer();
-    this.startSilenceDetection();
+
+    // Silence detection: AUTO mode only
+    if (this.config.mode === CaptureMode.AUTO) {
+      this.startSilenceDetection();
+    }
 
     this.setState(VoiceCaptureState.RECORDING);
   }
@@ -416,13 +634,20 @@ export class VoiceCapture {
   // ---- STOP RECORDING ----
 
   async stop(reason: StopReason = StopReason.USER): Promise<VoiceCaptureResult | null> {
+    // Guard: not in a stoppable state
     if (this.state !== VoiceCaptureState.RECORDING && this.state !== VoiceCaptureState.PAUSED) {
       return null;
     }
 
+    // Guard: already stopping (prevents double-stop from timer + user tap)
+    if (this.isStopping) {
+      return null;
+    }
+    this.isStopping = true;
+
     this.setState(VoiceCaptureState.STOPPING);
 
-    // Stop all subsystems
+    // Stop all subsystems (order matters)
     this.stopTimers();
     this.stopSilenceDetection();
     this.stopAmplitudeMonitor();
@@ -431,19 +656,19 @@ export class VoiceCapture {
     // Stop MediaRecorder and collect final blob
     const audioBlob = await this.stopMediaRecorder();
 
-    // Clean up audio stream
+    // Clean up hardware resources
     this.cleanupStream();
     this.cleanupAudioContext();
 
     const endedAt = new Date().toISOString();
-    const durationSeconds = Math.round((Date.now() - this.recordingStartTime) / 1000);
-
-    this.setState(VoiceCaptureState.COMPLETED);
+    const durationSeconds = Math.max(1, Math.round((Date.now() - this.recordingStartTime) / 1000));
 
     if (!audioBlob || audioBlob.size === 0) {
       this.emitError('No audio data captured', VoiceCaptureErrorCode.RECORDING_FAILED);
       return null;
     }
+
+    this.setState(VoiceCaptureState.COMPLETED);
 
     const result: VoiceCaptureResult = {
       audioBlob,
@@ -464,6 +689,7 @@ export class VoiceCapture {
   pause(): void {
     if (this.state !== VoiceCaptureState.RECORDING) return;
 
+    // Validate MediaRecorder is actually recording before pausing
     if (this.mediaRecorder?.state === 'recording') {
       this.mediaRecorder.pause();
     }
@@ -478,12 +704,16 @@ export class VoiceCapture {
   resume(): void {
     if (this.state !== VoiceCaptureState.PAUSED) return;
 
+    // Validate MediaRecorder is actually paused before resuming
     if (this.mediaRecorder?.state === 'paused') {
       this.mediaRecorder.resume();
     }
 
     this.startAmplitudeMonitor();
-    this.startSilenceDetection();
+
+    if (this.config.mode === CaptureMode.AUTO) {
+      this.startSilenceDetection();
+    }
 
     if (this.config.enableLiveTranscript) {
       this.startSpeechRecognition();
@@ -495,13 +725,18 @@ export class VoiceCapture {
   // ---- CANCEL ----
 
   cancel(): void {
+    this.isStopping = true;
     this.stopTimers();
     this.stopSilenceDetection();
     this.stopAmplitudeMonitor();
     this.stopSpeechRecognition();
 
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop();
+      try {
+        this.mediaRecorder.stop();
+      } catch {
+        // Already stopped
+      }
     }
 
     this.cleanupStream();
@@ -510,7 +745,7 @@ export class VoiceCapture {
     this.setState(VoiceCaptureState.IDLE);
   }
 
-  // ---- DESTROY (cleanup all resources) ----
+  // ---- DESTROY ----
 
   destroy(): void {
     this.cancel();
@@ -524,9 +759,7 @@ export class VoiceCapture {
   private startMediaRecorder(): void {
     if (!this.audioStream) return;
 
-    const options: MediaRecorderOptions = {
-      mimeType: this.mimeType,
-    };
+    const options: MediaRecorderOptions = { mimeType: this.mimeType };
 
     this.mediaRecorder = new MediaRecorder(this.audioStream, options);
     this.audioChunks = [];
@@ -538,7 +771,10 @@ export class VoiceCapture {
     };
 
     this.mediaRecorder.onerror = () => {
-      this.emitError('MediaRecorder error', VoiceCaptureErrorCode.RECORDING_FAILED);
+      // Only emit error if we're not already stopping
+      if (!this.isStopping) {
+        this.emitError('MediaRecorder error', VoiceCaptureErrorCode.RECORDING_FAILED);
+      }
     };
 
     // Request data every 1 second for progressive capture
@@ -548,93 +784,78 @@ export class VoiceCapture {
   private stopMediaRecorder(): Promise<Blob | null> {
     return new Promise((resolve) => {
       if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
-        resolve(this.audioChunks.length > 0 ? new Blob(this.audioChunks, { type: this.mimeType }) : null);
+        // Already stopped — return whatever chunks we have
+        resolve(
+          this.audioChunks.length > 0
+            ? new Blob(this.audioChunks, { type: this.mimeType })
+            : null,
+        );
         return;
       }
 
+      // Set up handler BEFORE calling stop
       this.mediaRecorder.onstop = () => {
-        const blob = new Blob(this.audioChunks, { type: this.mimeType });
+        const blob = this.audioChunks.length > 0
+          ? new Blob(this.audioChunks, { type: this.mimeType })
+          : null;
         resolve(blob);
       };
 
-      this.mediaRecorder.stop();
+      try {
+        this.mediaRecorder.stop();
+      } catch {
+        // stop() can throw if state is unexpected
+        resolve(
+          this.audioChunks.length > 0
+            ? new Blob(this.audioChunks, { type: this.mimeType })
+            : null,
+        );
+      }
     });
   }
 
   // =============================================
-  // WEB SPEECH API
+  // WEB SPEECH API (via SpeechApiManager)
   // =============================================
 
   private startSpeechRecognition(): void {
+    // Clean up any existing manager first
+    this.stopSpeechRecognition();
+
     try {
-      this.speechRecognition = createSpeechRecognition(this.config.language);
-      if (!this.speechRecognition) return;
+      this.speechManager = new SpeechApiManager(
+        this.config.language,
+        // onTranscriptUpdate
+        (finalText: string, interimText: string) => {
+          this.finalTranscript = finalText;
+          this.interimTranscript = interimText;
 
-      this.speechRecognition.onresult = (event: SpeechRecognitionEvent) => {
-        let interim = '';
+          const combined = (finalText + interimText).trim();
+          const isFinal = interimText === '';
+          this.events.onTranscript?.(combined, isFinal);
+        },
+        // onSpeechError (non-fatal — MediaRecorder still captures audio)
+        (error: string) => {
+          console.warn('[VoiceCapture] Speech API:', error);
+        },
+      );
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (!result) continue;
-
-          const alternative = result[0];
-          if (!alternative) continue;
-
-          if (result.isFinal) {
-            this.finalTranscript += alternative.transcript + ' ';
-            this.events.onTranscript?.(this.finalTranscript.trim(), true);
-          } else {
-            interim += alternative.transcript;
-          }
-        }
-
-        this.interimTranscript = interim;
-        if (interim) {
-          this.events.onTranscript?.((this.finalTranscript + interim).trim(), false);
-        }
-      };
-
-      this.speechRecognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        // 'no-speech' and 'aborted' are non-critical — don't surface to user
-        if (event.error === 'no-speech' || event.error === 'aborted') return;
-
-        console.warn('[VoiceCapture] Speech recognition error:', event.error);
-      };
-
-      this.speechRecognition.onend = () => {
-        // Auto-restart if still recording (Speech API has a tendency to stop)
-        if (this.state === VoiceCaptureState.RECORDING && this.speechRecognition) {
-          try {
-            this.speechRecognition.start();
-          } catch {
-            // Already started or other issue — ignore
-          }
-        }
-      };
-
-      this.speechRecognition.start();
+      this.speechManager.start();
     } catch (error) {
-      // Non-critical — MediaRecorder still captures audio for async Deepgram
+      // Non-critical — MediaRecorder still captures audio for server-side transcription
       console.warn('[VoiceCapture] Speech recognition not available:', error);
     }
   }
 
   private stopSpeechRecognition(): void {
-    if (this.speechRecognition) {
-      try {
-        this.speechRecognition.onend = null;
-        this.speechRecognition.onresult = null;
-        this.speechRecognition.onerror = null;
-        this.speechRecognition.abort();
-      } catch {
-        // Ignore — may already be stopped
-      }
-      this.speechRecognition = null;
+    if (this.speechManager) {
+      this.speechManager.destroy();
+      this.speechManager = null;
     }
   }
 
   // =============================================
-  // AUDIO ANALYSIS (Silence Detection + VU Meter)
+  // AUDIO ANALYSIS (VU Meter)
   // =============================================
 
   private startAudioAnalysis(): void {
@@ -649,12 +870,11 @@ export class VoiceCapture {
       this.analyserNode.smoothingTimeConstant = 0.3;
 
       source.connect(this.analyserNode);
-
       this.amplitudeData = new Uint8Array(this.analyserNode.frequencyBinCount);
 
       this.startAmplitudeMonitor();
     } catch (error) {
-      // Non-critical — recording still works without VU meter / silence detection
+      // Non-critical — recording works without VU meter
       console.warn('[VoiceCapture] Audio analysis setup failed:', error);
     }
   }
@@ -663,6 +883,7 @@ export class VoiceCapture {
     if (!this.analyserNode || !this.amplitudeData) return;
 
     const monitor = (): void => {
+      // Stop monitoring if not recording
       if (this.state !== VoiceCaptureState.RECORDING) return;
 
       this.analyserNode!.getByteTimeDomainData(this.amplitudeData!);
@@ -675,7 +896,8 @@ export class VoiceCapture {
       }
       const rms = Math.sqrt(sum / this.amplitudeData!.length);
 
-      this.events.onAmplitude?.(Math.min(rms * 3, 1)); // Scale up for visual feedback
+      // Scale up for visual feedback (raw RMS is typically 0-0.3)
+      this.events.onAmplitude?.(Math.min(rms * 3, 1));
 
       this.amplitudeFrameId = requestAnimationFrame(monitor);
     };
@@ -691,10 +913,13 @@ export class VoiceCapture {
   }
 
   // =============================================
-  // SILENCE DETECTION
+  // SILENCE DETECTION (AUTO mode only)
   // =============================================
 
   private startSilenceDetection(): void {
+    // Safety: only in AUTO mode
+    if (this.config.mode !== CaptureMode.AUTO) return;
+
     this.silenceStartTime = null;
 
     this.silenceCheckInterval = setInterval(() => {
@@ -712,21 +937,18 @@ export class VoiceCapture {
       const rms = Math.sqrt(sum / this.amplitudeData.length);
 
       if (rms < this.config.silenceThreshold) {
-        // Below threshold — track silence duration
         if (this.silenceStartTime === null) {
           this.silenceStartTime = Date.now();
         } else {
           const silenceDuration = Date.now() - this.silenceStartTime;
           if (silenceDuration >= this.config.silenceTimeoutMs) {
-            // Auto-stop due to silence
             void this.stop(StopReason.SILENCE);
           }
         }
       } else {
-        // Sound detected — reset silence timer
         this.silenceStartTime = null;
       }
-    }, 200); // Check every 200ms
+    }, 200);
   }
 
   private stopSilenceDetection(): void {
@@ -782,9 +1004,7 @@ export class VoiceCapture {
 
   private cleanupAudioContext(): void {
     if (this.audioContext) {
-      void this.audioContext.close().catch(() => {
-        // Ignore — context may already be closed
-      });
+      void this.audioContext.close().catch(() => {});
       this.audioContext = null;
       this.analyserNode = null;
       this.amplitudeData = null;
@@ -797,6 +1017,7 @@ export class VoiceCapture {
     this.interimTranscript = '';
     this.recordingStartTime = 0;
     this.mediaRecorder = null;
+    this.isStopping = false;
   }
 }
 
@@ -807,9 +1028,9 @@ export class VoiceCapture {
 /**
  * Create a new VoiceCapture instance.
  *
- * Usage:
+ * Usage (inspection capture — manual mode):
  *   const capture = createVoiceCapture(
- *     { silenceTimeoutMs: 5000 },
+ *     { mode: CaptureMode.MANUAL },
  *     {
  *       onStateChange: (state) => setRecordingState(state),
  *       onTranscript: (text, isFinal) => setTranscript(text),
@@ -821,9 +1042,9 @@ export class VoiceCapture {
  *   );
  *
  *   await capture.start();
- *   // ... user speaks ...
+ *   // ... inspector speaks, pauses, moves, thinks ...
  *   const result = await capture.stop();
- *   // result.audioBlob → IndexedDB → R2 → Deepgram
+ *   // result.audioBlob → IndexedDB → R2 → Whisper/Speechmatics
  *   // result.liveTranscript → instant on-screen feedback
  */
 export function createVoiceCapture(
@@ -834,7 +1055,7 @@ export function createVoiceCapture(
 }
 
 // =============================================
-// UTILITY: FORMAT DURATION
+// UTILITIES
 // =============================================
 
 /** Format seconds as MM:SS for display */

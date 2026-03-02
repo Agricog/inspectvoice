@@ -259,8 +259,7 @@ export function SiteDetail(): JSX.Element {
         const is404 = err instanceof Error && err.message.includes('404');
         if (!is404) throw err;
       }
-      // Remove from local cache
-      await assetsCache.delete(asset.data.id);
+      // Remove from local state — server soft-delete handles persistence
       setAssets((prev) => prev.filter((a) => a.data.id !== asset.data.id));
       setConfirmDeleteAsset(null);
     } catch (err) {

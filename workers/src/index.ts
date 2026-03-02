@@ -12,6 +12,7 @@ import type { Env, QueueMessageBody, RouteHandler, RouteParams, WebhookHandler, 
 import { guard, createWebhookContext } from './middleware/guard';
 import { portalGuard, verifyMagicLink } from './middleware/portalGuard';
 import { handlePreflight, addCorsHeaders } from './middleware/cors';
+import { listAssetsBySite, getAsset, createAsset, updateAsset, deleteAsset } from './routes/assets';
 import { formatErrorResponse } from './shared/errors';
 import { Logger } from './shared/logger';
 
@@ -157,6 +158,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET', '/api/v1/assets/:id', getAsset],
   ['POST', '/api/v1/assets', createAsset],
   ['PUT', '/api/v1/assets/:id', updateAsset],
+  ['DELETE', '/api/v1/assets/:id', deleteAsset],
 
   // ── Inspections ──
   ['GET', '/api/v1/inspections', listInspections],

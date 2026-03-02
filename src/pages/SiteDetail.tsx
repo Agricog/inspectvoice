@@ -2,8 +2,11 @@
  * InspectVoice — Site Detail Page
  * Displays site information, asset register, and inspection history.
  * Entry point for starting new inspections against this site.
+ *
+ * FIX: 2 Mar 2026
+ *   - Installation date formatted to UK readable (e.g. "14 Mar 2026")
+ *   - Added delete button on each asset with confirmation dialog
  */
-
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -48,6 +51,25 @@ import type { Site, CachedAsset, LocalInspection } from '@/types';
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
 
 // =============================================
+// HELPERS
+// =============================================
+
+/** Format an ISO date string to UK readable format: "14 Mar 2026" */
+function formatDate(isoString: string): string {
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return isoString;
+    return date.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return isoString;
+  }
+}
+
+// =============================================
 // SUB-COMPONENTS
 // =============================================
 
@@ -70,7 +92,6 @@ function StatusBadge({ status }: { status: SiteStatus }): JSX.Element {
     [SiteStatus.ARCHIVED]: 'bg-iv-muted-2/20 text-iv-muted-2',
     [SiteStatus.TEMPORARY_CLOSURE]: 'bg-risk-medium/15 text-risk-medium',
   };
-
   return (
     <span className={`iv-badge ${styles[status]}`}>
       {SITE_STATUS_LABELS[status]}
@@ -134,9 +155,9 @@ function SiteLocationMap({ latitude, longitude }: { latitude: number; longitude:
     <div>
       <div className="rounded-lg overflow-hidden border border-iv-border" style={{ height: 200 }}>
         <MapGL
-  key={`${latitude}-${longitude}`}
-  mapboxAccessToken={MAPBOX_TOKEN}
-  initialViewState={{ longitude, latitude, zoom: 15 }}
+          key={`${latitude}-${longitude}`}
+          mapboxAccessToken={MAPBOX_TOKEN}
+          initialViewState={{ longitude, latitude, zoom: 15 }}
           style={{ width: '100%', height: '100%' }}
           mapStyle="mapbox://styles/mapbox/dark-v11"
           attributionControl={false}
@@ -171,15 +192,24 @@ export function SiteDetail(): JSX.Element {
   const [siteInspections, setSiteInspections] = useState<LocalInspection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Site delete
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Inspection delete
   const [confirmDeleteInspection, setConfirmDeleteInspection] = useState<string | null>(null);
   const [deletingInspection, setDeletingInspection] = useState(false);
+
+  // Asset delete
+  const [confirmDeleteAsset, setConfirmDeleteAsset] = useState<CachedAsset | null>(null);
+  const [deletingAsset, setDeletingAsset] = useState(false);
 
   useEffect(() => {
     if (id) trackPageView(`/sites/${id}`);
   }, [id]);
 
+  // ── Site delete handler ──
   const handleDelete = useCallback(async () => {
     if (!id) return;
     setDeleting(true);
@@ -199,6 +229,7 @@ export function SiteDetail(): JSX.Element {
     }
   }, [id, navigate]);
 
+  // ── Inspection delete handler ──
   const handleDeleteInspection = useCallback(async (inspectionId: string) => {
     setDeletingInspection(true);
     try {
@@ -208,7 +239,6 @@ export function SiteDetail(): JSX.Element {
         const is404 = err instanceof Error && err.message.includes('404');
         if (!is404) throw err;
       }
-      // Clean up IndexedDB (deleteDraft handles draft; for review, fall through)
       await inspectionsStore.deleteDraft(inspectionId);
       setSiteInspections((prev) => prev.filter((i) => i.id !== inspectionId));
       setConfirmDeleteInspection(null);
@@ -219,6 +249,28 @@ export function SiteDetail(): JSX.Element {
     }
   }, []);
 
+  // ── Asset delete handler ──
+  const handleDeleteAsset = useCallback(async (asset: CachedAsset) => {
+    setDeletingAsset(true);
+    try {
+      try {
+        await secureFetch(`/api/v1/assets/${asset.data.id}`, { method: 'DELETE' });
+      } catch (err) {
+        const is404 = err instanceof Error && err.message.includes('404');
+        if (!is404) throw err;
+      }
+      // Remove from local cache
+      await assetsCache.delete(asset.data.id);
+      setAssets((prev) => prev.filter((a) => a.data.id !== asset.data.id));
+      setConfirmDeleteAsset(null);
+    } catch (err) {
+      captureError(err, { module: 'SiteDetail', operation: 'deleteAsset' });
+    } finally {
+      setDeletingAsset(false);
+    }
+  }, []);
+
+  // ── Load site data ──
   useEffect(() => {
     if (!id) {
       setError('No site ID provided.');
@@ -303,7 +355,6 @@ export function SiteDetail(): JSX.Element {
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-
           <div>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-iv-accent/10 flex items-center justify-center text-iv-accent">
@@ -330,12 +381,10 @@ export function SiteDetail(): JSX.Element {
           >
             <Trash2 className="w-4 h-4" />
           </button>
-
           <Link to={`/sites/${site.id}/edit`} className="iv-btn-secondary">
             <Edit className="w-4 h-4" />
             <span className="hidden sm:inline">Edit</span>
           </Link>
-
           <Link to={`/sites/${site.id}/inspect/new`} className="iv-btn-primary">
             <ClipboardCheck className="w-4 h-4" />
             <span className="hidden sm:inline">New Inspection</span>
@@ -421,13 +470,51 @@ export function SiteDetail(): JSX.Element {
         </div>
       )}
 
+      {/* Asset delete confirmation */}
+      {confirmDeleteAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="bg-iv-surface border border-iv-border rounded-xl p-6 max-w-sm w-full shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-risk-high/15 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-risk-high" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-iv-text">Delete Asset</h3>
+                <p className="text-2xs text-iv-muted mt-0.5">This cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-iv-muted mb-5">
+              Are you sure you want to delete <strong className="text-iv-text">{confirmDeleteAsset.data.asset_code}</strong>? Past inspection data referencing this asset will be preserved but the asset will no longer appear in future inspections.
+            </p>
+            <div className="flex items-center gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteAsset(null)}
+                className="iv-btn-secondary"
+                disabled={deletingAsset}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteAsset(confirmDeleteAsset)}
+                disabled={deletingAsset}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-risk-high text-white rounded-lg text-sm font-medium hover:bg-risk-high/90 disabled:opacity-50 transition-colors"
+              >
+                {deletingAsset ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deletingAsset ? 'Deleting…' : 'Delete Asset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left column — Site info */}
         <div className="lg:col-span-2 space-y-6">
           {/* Details panel */}
           <div className="iv-panel p-5">
             <h2 className="text-sm font-semibold text-iv-text mb-3">Site Details</h2>
-
             <div className="space-y-1 divide-y divide-iv-border/50">
               <InfoRow label="Address" value={site.address} icon={<MapPin className="w-4 h-4" />} />
               <InfoRow label="Postcode" value={site.postcode} />
@@ -435,7 +522,9 @@ export function SiteDetail(): JSX.Element {
               {site.contact_name && <InfoRow label="Contact" value={site.contact_name} icon={<Info className="w-4 h-4" />} />}
               {site.contact_phone && <InfoRow label="Phone" value={site.contact_phone} icon={<Phone className="w-4 h-4" />} />}
               {site.contact_email && <InfoRow label="Email" value={site.contact_email} icon={<Mail className="w-4 h-4" />} />}
-              {site.install_date && <InfoRow label="Installation Date" value={site.install_date} icon={<Calendar className="w-4 h-4" />} />}
+              {site.install_date && (
+                <InfoRow label="Installation Date" value={formatDate(site.install_date)} icon={<Calendar className="w-4 h-4" />} />
+              )}
               {site.access_notes && <InfoRow label="Access Notes" value={site.access_notes} />}
               {site.parking_notes && <InfoRow label="Parking" value={site.parking_notes} />}
               {site.notes && <InfoRow label="Notes" value={site.notes} />}
@@ -452,7 +541,6 @@ export function SiteDetail(): JSX.Element {
                   {assets.length}
                 </span>
               </h2>
-
               <Link to={`/sites/${site.id}/assets/new`} className="iv-btn-secondary text-sm">
                 <Plus className="w-3.5 h-3.5" />
                 Add Asset
@@ -476,34 +564,48 @@ export function SiteDetail(): JSX.Element {
                 {assets.map((cached) => {
                   const asset = cached.data;
                   return (
-                    <Link
-                      key={asset.id}
-                      to={`/sites/${site.id}/assets/${asset.id}`}
-                      className="iv-card-interactive flex items-center gap-3 py-2.5 px-3"
-                    >
-                      <div className="w-8 h-8 rounded-md bg-iv-surface-2 flex items-center justify-center shrink-0">
-                        <Package className="w-4 h-4 text-iv-muted" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-iv-text truncate">
-                          {asset.asset_code}
-                        </p>
-                        <p className="text-2xs text-iv-muted truncate">
-                          {asset.asset_type} {asset.manufacturer ? `— ${asset.manufacturer}` : ''}
-                        </p>
-                      </div>
-                      {asset.last_inspection_condition && (
-                        <span className={`iv-badge text-2xs ${
-                          asset.last_inspection_condition === 'good' ? 'bg-risk-low/15 text-risk-low' :
-                          asset.last_inspection_condition === 'fair' ? 'bg-risk-medium/15 text-risk-medium' :
-                          asset.last_inspection_condition === 'poor' ? 'bg-risk-high/15 text-risk-high' :
-                          'bg-risk-very-high/15 text-risk-very-high'
-                        }`}>
-                          {asset.last_inspection_condition}
-                        </span>
-                      )}
-                      <ChevronRight className="w-4 h-4 text-iv-muted-2 shrink-0" />
-                    </Link>
+                    <div key={asset.id} className="iv-card-interactive flex items-center gap-3 py-2.5 px-3">
+                      <Link
+                        to={`/sites/${site.id}/assets/${asset.id}`}
+                        className="flex items-center gap-3 min-w-0 flex-1"
+                      >
+                        <div className="w-8 h-8 rounded-md bg-iv-surface-2 flex items-center justify-center shrink-0">
+                          <Package className="w-4 h-4 text-iv-muted" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-iv-text truncate">
+                            {asset.asset_code}
+                          </p>
+                          <p className="text-2xs text-iv-muted truncate">
+                            {asset.asset_type} {asset.manufacturer ? `— ${asset.manufacturer}` : ''}
+                          </p>
+                        </div>
+                        {asset.last_inspection_condition && (
+                          <span className={`iv-badge text-2xs ${
+                            asset.last_inspection_condition === 'good' ? 'bg-risk-low/15 text-risk-low' :
+                            asset.last_inspection_condition === 'fair' ? 'bg-risk-medium/15 text-risk-medium' :
+                            asset.last_inspection_condition === 'poor' ? 'bg-risk-high/15 text-risk-high' :
+                            'bg-risk-very-high/15 text-risk-very-high'
+                          }`}>
+                            {asset.last_inspection_condition}
+                          </span>
+                        )}
+                        <ChevronRight className="w-4 h-4 text-iv-muted-2 shrink-0" />
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setConfirmDeleteAsset(cached);
+                        }}
+                        className="iv-btn-icon text-risk-high hover:bg-risk-high/10 shrink-0"
+                        aria-label={`Delete asset ${asset.asset_code}`}
+                        title={`Delete ${asset.asset_code}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -592,7 +694,6 @@ export function SiteDetail(): JSX.Element {
               <Clock className="w-4 h-4 text-iv-accent" />
               Inspection Schedule
             </h2>
-
             <div className="space-y-3">
               <FrequencyCard
                 label="Routine Visual"
@@ -609,10 +710,9 @@ export function SiteDetail(): JSX.Element {
             </div>
           </div>
 
-          {/* Quick actions — ?type= pre-selects on InspectionStart */}
+          {/* Quick actions */}
           <div className="iv-panel p-5">
             <h2 className="text-sm font-semibold text-iv-text mb-3">Quick Actions</h2>
-
             <div className="space-y-2">
               <Link
                 to={`/sites/${site.id}/inspect/new?type=routine_visual`}
@@ -638,7 +738,7 @@ export function SiteDetail(): JSX.Element {
             </div>
           </div>
 
-          {/* Location — Mapbox mini-map */}
+          {/* Location */}
           {(site.latitude !== 0 || site.longitude !== 0) && (
             <div className="iv-panel p-5">
               <h2 className="text-sm font-semibold text-iv-text mb-3 flex items-center gap-2">

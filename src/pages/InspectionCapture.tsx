@@ -4,30 +4,6 @@
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
- * The core product page. Inspector works through assets one by one:
- *   1. See asset info + checklist for this inspection type
- *   2. Voice capture → live transcript + audio blob stored
- *   3. Photo capture → compressed JPEG stored
- *   4. Baseline comparison (if baseline exists for this asset)
- *   5. Manual text entry (fallback / additional notes)
- *   6. Condition rating per asset
- *   7. Save inspection item to IndexedDB
- *   8. Navigate to next asset
- *   9. When all assets done → navigate to Review
- *
- * Features:
- *   - Asset-by-asset stepper with progress bar
- *   - Voice recording with VU meter + live transcript
- *   - Photo capture via camera or file input
- *   - Baseline vs current photo comparison slider
- *   - Checklist driven by assetTypes.ts config per inspection cadence
- *   - Per-asset condition rating (Good/Fair/Poor/Dangerous)
- *   - Inspector notes (manual text)
- *   - Auto-save to IndexedDB on asset completion
- *   - Resume: loads existing items if partially completed
- *   - Offline-first: zero network required
- *   - Dark theme, mobile-first, accessible
- *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
 
@@ -91,28 +67,27 @@ import DefectQuickPick from '@components/DefectQuickPick';
 import type { QuickPickSelection } from '@components/DefectQuickPick';
 
 // =============================================
+// HELPERS
+// =============================================
+
+/** Strip surrounding quote characters from defect descriptions */
+function sanitiseDescription(value: string): string {
+  return value.replace(/^["']|["']$/g, '').trim();
+}
+
+// =============================================
 // TYPES
 // =============================================
 
-/** Working state for the current asset being inspected */
 interface AssetCaptureState {
-  /** Checklist completion per point */
   checklistCompleted: Record<number, boolean>;
-  /** Voice transcript (from Web Speech API live preview) */
   voiceTranscript: string;
-  /** Whether audio has been recorded for this asset */
   hasAudioRecording: boolean;
-  /** Audio blob stored locally */
   audioBlobId: string | null;
-  /** Photos captured */
   photoIds: string[];
-  /** Manual notes */
   notes: string;
-  /** Condition rating */
   condition: ConditionRating | null;
-  /** Whether this asset's data has been saved */
   saved: boolean;
-  /** Feature 15: manually selected defects from library */
   manualDefects: DefectDetail[];
 }
 
@@ -218,50 +193,29 @@ export default function InspectionCapture(): JSX.Element {
   const { siteId, inspectionId } = useParams<{ siteId: string; inspectionId: string }>();
   const navigate = useNavigate();
 
-  // ---- Loading ----
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  // ---- Data ----
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [existingItems, setExistingItems] = useState<Map<string, InspectionItem>>(new Map());
-
-  // ---- Navigation ----
   const [currentIndex, setCurrentIndex] = useState(0);
-
-  // ---- Capture state per asset ----
   const [captureState, setCaptureState] = useState<AssetCaptureState>(createEmptyCaptureState());
-
-  // ---- Voice capture ----
   const [voiceState, setVoiceState] = useState<VoiceCaptureState>(VoiceCaptureState.IDLE);
   const [vuLevel, setVuLevel] = useState(0);
   const [recordDuration, setRecordDuration] = useState(0);
   const [browserCaps, setBrowserCaps] = useState<BrowserCapabilities | null>(null);
   const voiceCaptureRef = useRef<VoiceCapture | null>(null);
-
-  // ---- Photo state ----
   const [photoThumbnails, setPhotoThumbnails] = useState<Array<{ id: string; base64: string }>>([]);
   const [photoProcessing, setPhotoProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // ---- Baseline comparison ----
   const [settingBaseline, setSettingBaseline] = useState(false);
-/** The first captured photo's full base64 for comparison display */
-const [firstPhotoBase64, setFirstPhotoBase64] = useState<string | null>(null);
-/** Locally-set baseline (avoids mutating assets array which causes re-render crash) */
-const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
-
-  // ---- Feature 15: Defect Quick-Pick ----
+  const [firstPhotoBase64, setFirstPhotoBase64] = useState<string | null>(null);
+  const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   const [showQuickPick, setShowQuickPick] = useState(false);
-
-  // ---- Saving ----
   const [saving, setSaving] = useState(false);
 
-  // ---- Derived ----
   const currentAsset = assets[currentIndex] ?? null;
   const totalAssets = assets.length;
-
   const inspectionType = inspection?.inspection_type ?? InspectionType.ROUTINE_VISUAL;
   const checklistPoints: InspectionPoint[] = currentAsset
     ? getInspectionPointsForType(
@@ -270,8 +224,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       )
     : [];
 
-  // ---- Baseline data for current asset ----
-  // These fields come from migration 003 — cast needed until Asset type is updated
   const assetRecord = currentAsset ? (currentAsset as unknown as Record<string, unknown>) : null;
   const serverBaseline: BaselinePhoto | null = assetRecord?.['baseline_photo_url']
     ? {
@@ -282,9 +234,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       }
     : null;
 
-  // Local baseline takes priority (set via "Set as Baseline" button)
   const baselinePhoto = localBaseline ?? serverBaseline;
-
   const currentPhoto: CurrentPhoto | null = firstPhotoBase64
     ? {
         src: `data:image/jpeg;base64,${firstPhotoBase64}`,
@@ -292,15 +242,12 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       }
     : null;
 
-  // ---- Check browser capabilities ----
   useEffect(() => {
     setBrowserCaps(checkBrowserCapabilities());
   }, []);
 
-  // ---- Load inspection + assets ----
   useEffect(() => {
     if (!siteId || !inspectionId) return;
-
     let cancelled = false;
 
     async function loadData(): Promise<void> {
@@ -309,30 +256,23 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
           inspections.get(inspectionId!),
           assetsCache.getBySite(siteId!),
         ]);
-
         if (cancelled) return;
-
         if (!localInspection) {
           setLoadError('Inspection not found. It may not have been created correctly.');
           setLoading(false);
           return;
         }
-
         const activeAssets = cachedAssets
           .map((ca) => ca.data)
           .filter((a) => a.is_active)
           .sort((a, b) => a.asset_code.localeCompare(b.asset_code));
-
         if (activeAssets.length === 0) {
           setLoadError('No active assets found for this site.');
           setLoading(false);
           return;
         }
-
         setInspection(localInspection.data);
         setAssets(activeAssets);
-
-        // Load existing inspection items (for resume)
         try {
           const items = await inspectionItems.getByInspection(inspectionId!);
           const itemMap = new Map<string, InspectionItem>();
@@ -341,8 +281,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
             itemMap.set(key, item.data);
           }
           setExistingItems(itemMap);
-
-          // Find first uncompleted asset
           const firstIncomplete = activeAssets.findIndex(
             (a) => !itemMap.has(a.id) && !itemMap.has(a.asset_code),
           );
@@ -352,7 +290,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         } catch (itemError) {
           captureError(itemError, { module: 'InspectionCapture', operation: 'loadItems' });
         }
-
         setLoading(false);
       } catch (error) {
         if (cancelled) return;
@@ -363,19 +300,12 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
     }
 
     void loadData();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [siteId, inspectionId]);
 
   // ---- Load existing data when asset changes ----
-  // FIX: Depend on currentAsset?.id (stable string) instead of currentAsset (object reference)
-  // This prevents handleSetBaseline → setAssets → Object.assign from triggering this effect
-  // and wiping firstPhotoBase64, which caused the React error #310 black screen crash.
   useEffect(() => {
     if (!currentAsset) return;
-
     const existing = existingItems.get(currentAsset.id) ?? existingItems.get(currentAsset.asset_code);
     if (existing) {
       setCaptureState({
@@ -387,12 +317,16 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         notes: existing.inspector_notes ?? '',
         condition: existing.overall_condition,
         saved: true,
-        manualDefects: existing.defects ?? [],
+        // FIX: sanitise descriptions when loading to strip any stored quote corruption
+        manualDefects: (existing.defects ?? []).map((d) => ({
+          ...d,
+          description: sanitiseDescription(d.description),
+          remedial_action: sanitiseDescription(d.remedial_action),
+        })),
       });
     } else {
       setCaptureState(createEmptyCaptureState());
     }
-
     setPhotoThumbnails([]);
     setFirstPhotoBase64(null);
     setLocalBaseline(null);
@@ -400,15 +334,12 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
     setRecordDuration(0);
     setVoiceState(VoiceCaptureState.IDLE);
     setShowQuickPick(false);
-
-    // Cleanup any active voice capture
     if (voiceCaptureRef.current) {
       voiceCaptureRef.current.cancel();
       voiceCaptureRef.current = null;
     }
   }, [currentIndex, currentAsset?.id, existingItems]);
 
-  // ---- Cleanup on unmount ----
   useEffect(() => {
     return () => {
       if (voiceCaptureRef.current) {
@@ -423,7 +354,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
 
   const handleStartRecording = useCallback(async () => {
     if (!currentAsset) return;
-
     const capture = createVoiceCapture(
       { silenceTimeoutMs: 5000, language: 'en-GB' },
       {
@@ -441,7 +371,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         },
       },
     );
-
     voiceCaptureRef.current = capture;
     await capture.start();
   }, [currentAsset]);
@@ -461,11 +390,10 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
 
   const handleRecordingComplete = useCallback(async (result: VoiceCaptureResult) => {
     if (!currentAsset || !inspectionId) return;
-
     try {
       const audioRecord = await pendingAudio.add({
-        inspection_item_id: '', // Set when inspection item is created
-        asset_id: currentAsset.id, 
+        inspection_item_id: '',
+        asset_id: currentAsset.id,
         audioBlob: result.audioBlob,
         duration_seconds: result.durationSeconds,
         mime_type: result.mimeType,
@@ -473,7 +401,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         asset_type: currentAsset.asset_type,
         timestamp: result.startedAt,
       });
-
       setCaptureState((prev) => ({
         ...prev,
         hasAudioRecording: true,
@@ -500,18 +427,13 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   // PHOTO CAPTURE HANDLERS
   // =============================================
 
-  // FIX: Use functional updater for setFirstPhotoBase64 to avoid stale closure.
-  // Previously depended on captureState.photoIds.length which could be stale
-  // on rapid photo captures, causing firstPhotoBase64 to be overwritten.
   const handlePhotoCapture = useCallback(async (file: File) => {
     if (!currentAsset) return;
-
     setPhotoProcessing(true);
     try {
       const result: PhotoCaptureResult = await processPhotoFile(file);
-
       const photoRecord = await pendingPhotos.add({
-        inspection_item_id: '', // Set when inspection item is created
+        inspection_item_id: '',
         asset_id: currentAsset.id,
         base64Data: result.base64Data,
         mime_type: result.mimeType,
@@ -522,19 +444,14 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         is_reference_photo: false,
         caption: null,
       });
-
       setCaptureState((prev) => ({
         ...prev,
         photoIds: [...prev.photoIds, photoRecord.id],
       }));
-
       setPhotoThumbnails((prev) => [
         ...prev,
         { id: photoRecord.id, base64: result.thumbnailBase64 || result.base64Data.substring(0, 500) },
       ]);
-
-      // Store first photo's full base64 for baseline comparison display
-      // Functional updater: only set if no photo stored yet (prev === null)
       setFirstPhotoBase64((prev) => (prev === null ? result.base64Data : prev));
     } catch (error) {
       captureError(error, { module: 'InspectionCapture', operation: 'capturePhoto' });
@@ -546,10 +463,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) {
-        void handlePhotoCapture(file);
-      }
-      // Reset input so same file can be re-selected
+      if (file) void handlePhotoCapture(file);
       e.target.value = '';
     },
     [handlePhotoCapture],
@@ -561,13 +475,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       photoIds: prev.photoIds.filter((id) => id !== photoId),
     }));
     setPhotoThumbnails((prev) => prev.filter((p) => p.id !== photoId));
-
-    // If removing the first photo, clear the comparison
-    if (photoThumbnails.length <= 1) {
-      setFirstPhotoBase64(null);
-    }
-
-    // Delete from IndexedDB
+    if (photoThumbnails.length <= 1) setFirstPhotoBase64(null);
     void pendingPhotos.delete(photoId).catch((error) => {
       captureError(error, { module: 'InspectionCapture', operation: 'deletePhoto' });
     });
@@ -579,21 +487,15 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
 
   const handleSetBaseline = useCallback(async () => {
     if (!currentAsset || !firstPhotoBase64 || !inspectionId) return;
-
     setSettingBaseline(true);
     try {
       const now = new Date().toISOString();
-
-      // Store baseline in local state — avoids mutating assets array
-      // which previously caused a re-render cascade and React error #310
       setLocalBaseline({
         src: `data:image/jpeg;base64,${firstPhotoBase64}`,
         takenAt: now,
         takenBy: 'Inspector',
         condition: captureState.condition,
       });
-
-      // Persist baseline photo to IndexedDB pending queue for sync
       try {
         await pendingPhotos.add({
           inspection_item_id: '',
@@ -637,14 +539,14 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
 
   const handleQuickPickSelect = useCallback((selection: QuickPickSelection) => {
     const defect: DefectDetail = {
-      description: selection.description,
+      // FIX: sanitise description and remedial_action to strip quote corruption
+      description: sanitiseDescription(selection.description),
       bs_en_reference: selection.bs_en_reference,
       risk_rating: selection.risk_rating as RiskRating,
-      remedial_action: selection.remedial_action,
+      remedial_action: sanitiseDescription(selection.remedial_action),
       action_timeframe: (selection.action_timeframe ?? 'routine') as ActionTimeframe,
       estimated_cost_band: (selection.estimated_cost_band ?? 'low') as CostBand,
     };
-
     setCaptureState((prev) => ({
       ...prev,
       manualDefects: [...prev.manualDefects, defect],
@@ -662,79 +564,88 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   // SAVE CURRENT ASSET
   // =============================================
 
- const handleSaveAsset = useCallback(async () => {
-  if (!currentAsset || !inspectionId || !inspection) return;
-  setSaving(true);
-  try {
-    const existing = existingItems.get(currentAsset.id) ?? existingItems.get(currentAsset.asset_code);
-    const itemId = existing?.id ?? uuid();
-    const now = new Date().toISOString();
+  const handleSaveAsset = useCallback(async () => {
+    if (!currentAsset || !inspectionId || !inspection) return;
+    setSaving(true);
+    try {
+      const existing = existingItems.get(currentAsset.id) ?? existingItems.get(currentAsset.asset_code);
+      const itemId = existing?.id ?? uuid();
+      const now = new Date().toISOString();
 
-    const itemData: InspectionItem = {
-      ...( existing ?? {} ),
-      id: itemId,
-      inspection_id: inspectionId,
-      asset_id: currentAsset.id,
-      asset_code: currentAsset.asset_code,
-      asset_type: currentAsset.asset_type,
-      audio_r2_key: existing?.audio_r2_key ?? null,
-      voice_transcript: captureState.voiceTranscript || null,
-      transcription_method: captureState.hasAudioRecording ? TranscriptionMethod.WEB_SPEECH_API : captureState.voiceTranscript ? TranscriptionMethod.MANUAL : null,
-      ai_analysis: existing?.ai_analysis ?? null,
-      ai_model_version: existing?.ai_model_version ?? '',
-      ai_processing_status: existing?.ai_processing_status ?? AIProcessingStatus.PENDING,
-      ai_processed_at: existing?.ai_processed_at ?? null,
-      defects: captureState.manualDefects,
-      overall_condition: captureState.condition,
-      risk_rating: existing?.risk_rating ?? null,
-      requires_action: captureState.manualDefects.some(
-        (d) => d.risk_rating === RiskRating.VERY_HIGH || d.risk_rating === RiskRating.HIGH,
-      ),
-      action_timeframe: existing?.action_timeframe ?? null,
-      inspector_confirmed: existing?.inspector_confirmed ?? false,
-      inspector_notes: captureState.notes || null,
-      inspector_risk_override: existing?.inspector_risk_override ?? null,
-      latitude: existing?.latitude ?? null,
-      longitude: existing?.longitude ?? null,
-      timestamp: existing?.timestamp ?? now,
-      created_at: existing?.created_at ?? now,
-    };
+      const itemData: InspectionItem = {
+        id: itemId,
+        inspection_id: inspectionId,
+        asset_id: currentAsset.id,
+        asset_code: currentAsset.asset_code,
+        asset_type: currentAsset.asset_type,
+        audio_r2_key: existing?.audio_r2_key ?? null,
+        voice_transcript: captureState.voiceTranscript || null,
+        transcription_method: captureState.hasAudioRecording
+          ? TranscriptionMethod.WEB_SPEECH_API
+          : captureState.voiceTranscript
+            ? TranscriptionMethod.MANUAL
+            : null,
+        ai_analysis: existing?.ai_analysis ?? null,
+        ai_model_version: existing?.ai_model_version ?? '',
+        ai_processing_status: existing?.ai_processing_status ?? AIProcessingStatus.PENDING,
+        ai_processed_at: existing?.ai_processed_at ?? null,
+        // FIX: sanitise defect descriptions before saving
+        defects: captureState.manualDefects.map((d) => ({
+          ...d,
+          description: sanitiseDescription(d.description),
+          remedial_action: sanitiseDescription(d.remedial_action),
+        })),
+        overall_condition: captureState.condition,
+        risk_rating: existing?.risk_rating ?? null,
+        requires_action: captureState.manualDefects.some(
+          (d) => d.risk_rating === RiskRating.VERY_HIGH || d.risk_rating === RiskRating.HIGH,
+        ),
+        action_timeframe: existing?.action_timeframe ?? null,
+        inspector_confirmed: existing?.inspector_confirmed ?? false,
+        inspector_notes: captureState.notes || null,
+        inspector_risk_override: existing?.inspector_risk_override ?? null,
+        latitude: existing?.latitude ?? null,
+        longitude: existing?.longitude ?? null,
+        timestamp: existing?.timestamp ?? now,
+        created_at: existing?.created_at ?? now,
+      };
 
-    if (existing) {
-      await inspectionItems.update(itemId, itemData);
-    } else {
-      await inspectionItems.create(itemData);
-      for (const photoId of captureState.photoIds) {
-        await pendingPhotos.linkToItem(photoId, itemId);
+      if (existing) {
+        await inspectionItems.update(itemId, itemData);
+      } else {
+        await inspectionItems.create(itemData);
+        for (const photoId of captureState.photoIds) {
+          await pendingPhotos.linkToItem(photoId, itemId);
+        }
+        if (captureState.audioBlobId) {
+          await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
+        }
       }
-      if (captureState.audioBlobId) {
-        await pendingAudio.linkToItem(captureState.audioBlobId, itemId);
+
+      setExistingItems((prev) => {
+        const next = new Map(prev);
+        next.set(currentAsset.id, itemData);
+        return next;
+      });
+
+      setCaptureState((prev) => ({ ...prev, saved: true }));
+
+      if (currentIndex < totalAssets - 1) {
+        setCurrentIndex((prev) => prev + 1);
       }
+    } catch (error) {
+      captureError(error, { module: 'InspectionCapture', operation: 'saveItem' });
+    } finally {
+      setSaving(false);
     }
+  }, [currentAsset, inspectionId, inspection, captureState, currentIndex, totalAssets, existingItems]);
 
-    setExistingItems((prev) => {
-      const next = new Map(prev);
-      next.set(currentAsset.id, itemData);
-      return next;
-    });
-
-    setCaptureState((prev) => ({ ...prev, saved: true }));
-    if (currentIndex < totalAssets - 1) {
-      setCurrentIndex((prev) => prev + 1);
-    }
-  } catch (error) {
-    captureError(error, { module: 'InspectionCapture', operation: 'saveItem' });
-  } finally {
-    setSaving(false);
-  }
-}, [currentAsset, inspectionId, inspection, captureState, currentIndex, totalAssets, existingItems]);
   // =============================================
   // NAVIGATION
   // =============================================
 
   const handlePrevious = useCallback(() => {
     if (currentIndex > 0) {
-      // Cancel active recording
       voiceCaptureRef.current?.cancel();
       setCurrentIndex((prev) => prev - 1);
     }
@@ -752,7 +663,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
     navigate(`/sites/${siteId}/inspections/${inspectionId}/review`, { replace: true });
   }, [navigate, siteId, inspectionId]);
 
-  // ---- Count saved assets ----
   const savedCount = assets.filter(
     (a) => existingItems.has(a.id) || existingItems.has(a.asset_code),
   ).length;
@@ -765,9 +675,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <Helmet>
-          <title>Loading Inspection... | InspectVoice</title>
-        </Helmet>
+        <Helmet><title>Loading Inspection... | InspectVoice</title></Helmet>
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 iv-muted animate-spin" />
           <p className="iv-muted text-sm">Loading inspection...</p>
@@ -779,19 +687,13 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   if (loadError || !inspection || !siteId || !inspectionId) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
-        <Helmet>
-          <title>Error | InspectVoice</title>
-        </Helmet>
+        <Helmet><title>Error | InspectVoice</title></Helmet>
         <div className="iv-panel p-6 text-center">
           <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-3" />
           <h2 className="text-lg font-semibold iv-text mb-2">Cannot Load Inspection</h2>
           <p className="iv-muted text-sm mb-4">{loadError ?? 'Data missing.'}</p>
-          <Link
-            to={siteId ? `/sites/${siteId}` : '/sites'}
-            className="iv-btn-secondary inline-flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
+          <Link to={siteId ? `/sites/${siteId}` : '/sites'} className="iv-btn-secondary inline-flex items-center gap-2">
+            <ArrowLeft className="w-4 h-4" />Back
           </Link>
         </div>
       </div>
@@ -804,12 +706,8 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         <div className="iv-panel p-6 text-center">
           <CheckCircle2 className="w-12 h-12 text-[#22C55E] mx-auto mb-3" />
           <h2 className="text-lg font-semibold iv-text mb-2">No Assets to Inspect</h2>
-          <Link
-            to={`/sites/${siteId}`}
-            className="iv-btn-secondary inline-flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Site
+          <Link to={`/sites/${siteId}`} className="iv-btn-secondary inline-flex items-center gap-2">
+            <ArrowLeft className="w-4 h-4" />Back to Site
           </Link>
         </div>
       </div>
@@ -836,7 +734,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
         <title>Inspecting {currentAsset.asset_code} | InspectVoice</title>
       </Helmet>
 
-      {/* Hidden file input for photos */}
       <input
         ref={fileInputRef}
         type="file"
@@ -850,20 +747,12 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       {/* ── Header ── */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Link
-            to={`/sites/${siteId}`}
-            className="iv-btn-icon"
-            aria-label="Exit inspection"
-          >
+          <Link to={`/sites/${siteId}`} className="iv-btn-icon" aria-label="Exit inspection">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <p className="text-xs iv-muted">
-              {INSPECTION_TYPE_LABELS[inspection.inspection_type]} Inspection
-            </p>
-            <p className="text-sm font-semibold iv-text">
-              Asset {currentIndex + 1} of {totalAssets}
-            </p>
+            <p className="text-xs iv-muted">{INSPECTION_TYPE_LABELS[inspection.inspection_type]} Inspection</p>
+            <p className="text-sm font-semibold iv-text">Asset {currentIndex + 1} of {totalAssets}</p>
           </div>
         </div>
         <div className="text-right">
@@ -888,10 +777,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
             <button
               key={a.id}
               type="button"
-              onClick={() => {
-                voiceCaptureRef.current?.cancel();
-                setCurrentIndex(idx);
-              }}
+              onClick={() => { voiceCaptureRef.current?.cancel(); setCurrentIndex(idx); }}
               className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs transition-all ${
                 isCurrent
                   ? 'bg-[#22C55E] text-white ring-2 ring-[#22C55E]/30'
@@ -917,8 +803,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
           </div>
           {isCurrentSaved && (
             <span className="flex items-center gap-1 text-xs text-[#22C55E] font-medium">
-              <CheckCircle2 className="w-4 h-4" />
-              Saved
+              <CheckCircle2 className="w-4 h-4" />Saved
             </span>
           )}
         </div>
@@ -931,15 +816,11 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       {checklistPoints.length > 0 && (
         <div className="iv-panel p-4 mb-4">
           <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
-            <Eye className="w-4 h-4 text-[#22C55E]" />
-            Inspection Checklist
+            <Eye className="w-4 h-4 text-[#22C55E]" />Inspection Checklist
           </h3>
           <div className="space-y-2">
             {checklistPoints.map((point, idx) => (
-              <label
-                key={idx}
-                className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] cursor-pointer transition-colors"
-              >
+              <label key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] cursor-pointer transition-colors">
                 <input
                   type="checkbox"
                   checked={Boolean(captureState.checklistCompleted[idx])}
@@ -966,7 +847,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
           )}
         </h3>
 
-        {/* Recording controls */}
         <div className="flex items-center gap-3 mb-3">
           {!isRecording && !isPaused && (
             <button
@@ -975,66 +855,36 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
               disabled={!browserCaps?.mediaRecorder}
               className="iv-btn-primary flex items-center gap-2 disabled:opacity-50"
             >
-              <Mic className="w-4 h-4" />
-              Record
+              <Mic className="w-4 h-4" />Record
             </button>
           )}
-
           {isRecording && (
             <>
-              <button
-                type="button"
-                onClick={handlePauseRecording}
-                className="iv-btn-secondary flex items-center gap-2"
-              >
-                <Pause className="w-4 h-4" />
-                Pause
+              <button type="button" onClick={handlePauseRecording} className="iv-btn-secondary flex items-center gap-2">
+                <Pause className="w-4 h-4" />Pause
               </button>
-              <button
-                type="button"
-                onClick={handleStopRecording}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-medium hover:bg-[#DC2626] transition-colors"
-              >
-                <Square className="w-4 h-4" />
-                Stop
+              <button type="button" onClick={handleStopRecording} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-medium hover:bg-[#DC2626] transition-colors">
+                <Square className="w-4 h-4" />Stop
               </button>
             </>
           )}
-
           {isPaused && (
             <>
-              <button
-                type="button"
-                onClick={handleResumeRecording}
-                className="iv-btn-primary flex items-center gap-2"
-              >
-                <Mic className="w-4 h-4" />
-                Resume
+              <button type="button" onClick={handleResumeRecording} className="iv-btn-primary flex items-center gap-2">
+                <Mic className="w-4 h-4" />Resume
               </button>
-              <button
-                type="button"
-                onClick={handleStopRecording}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-medium hover:bg-[#DC2626] transition-colors"
-              >
-                <Square className="w-4 h-4" />
-                Stop
+              <button type="button" onClick={handleStopRecording} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#EF4444] text-white text-sm font-medium hover:bg-[#DC2626] transition-colors">
+                <Square className="w-4 h-4" />Stop
               </button>
             </>
           )}
-
           {captureState.hasAudioRecording && !isRecording && !isPaused && (
-            <button
-              type="button"
-              onClick={handleClearRecording}
-              className="iv-btn-icon text-red-400"
-              aria-label="Clear recording"
-            >
+            <button type="button" onClick={handleClearRecording} className="iv-btn-icon text-red-400" aria-label="Clear recording">
               <Trash2 className="w-4 h-4" />
             </button>
           )}
         </div>
 
-        {/* VU meter + duration */}
         {(isRecording || isPaused) && (
           <div className="flex items-center gap-3 mb-3">
             <VuMeter level={vuLevel} />
@@ -1046,7 +896,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
           </div>
         )}
 
-        {/* Recording complete indicator */}
         {captureState.hasAudioRecording && !isRecording && !isPaused && (
           <div className="flex items-center gap-2 mb-3 text-xs text-[#22C55E]">
             <CheckCircle2 className="w-4 h-4" />
@@ -1054,7 +903,6 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
           </div>
         )}
 
-        {/* Live transcript */}
         {captureState.voiceTranscript && (
           <div className="p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]">
             <p className="text-xs iv-muted mb-1">Transcript</p>
@@ -1062,13 +910,10 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
           </div>
         )}
 
-        {/* No mic info */}
         {browserCaps && !browserCaps.mediaRecorder && (
           <div className="flex items-start gap-2 p-3 rounded-lg bg-[#EAB308]/10 border border-[#EAB308]/30">
             <Info className="w-4 h-4 text-[#EAB308] flex-shrink-0 mt-0.5" />
-            <p className="text-xs iv-muted">
-              Microphone recording is not supported in this browser. Use manual notes below instead.
-            </p>
+            <p className="text-xs iv-muted">Microphone recording is not supported in this browser. Use manual notes below instead.</p>
           </div>
         )}
       </div>
@@ -1076,10 +921,8 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       {/* ── Photo Capture ── */}
       <div className="iv-panel p-4 mb-4">
         <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
-          <Camera className="w-4 h-4 text-[#22C55E]" />
-          Photos
+          <Camera className="w-4 h-4 text-[#22C55E]" />Photos
         </h3>
-
         <div className="flex items-center gap-2 mb-3">
           <button
             type="button"
@@ -1087,25 +930,15 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
             disabled={photoProcessing}
             className="iv-btn-secondary flex items-center gap-2 text-sm disabled:opacity-50"
           >
-            {photoProcessing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <ImagePlus className="w-4 h-4" />
-            )}
+            {photoProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
             {photoProcessing ? 'Processing...' : 'Take Photo'}
           </button>
           <span className="text-xs iv-muted">{photoThumbnails.length} photo{photoThumbnails.length !== 1 ? 's' : ''}</span>
         </div>
-
-        {/* Thumbnails */}
         {photoThumbnails.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {photoThumbnails.map((photo) => (
-              <PhotoThumbnail
-                key={photo.id}
-                base64={photo.base64}
-                onRemove={() => handleRemovePhoto(photo.id)}
-              />
+              <PhotoThumbnail key={photo.id} base64={photo.base64} onRemove={() => handleRemovePhoto(photo.id)} />
             ))}
           </div>
         )}
@@ -1134,17 +967,13 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
             <span className="text-xs text-[#F97316]">({captureState.manualDefects.length})</span>
           )}
         </h3>
-
         <button
           type="button"
           onClick={() => setShowQuickPick(true)}
           className="iv-btn-secondary flex items-center gap-2 text-sm mb-3"
         >
-          <BookOpen className="w-4 h-4" />
-          Common Defects
+          <BookOpen className="w-4 h-4" />Common Defects
         </button>
-
-        {/* Manual defects list */}
         {captureState.manualDefects.length > 0 && (
           <div className="space-y-2">
             {captureState.manualDefects.map((defect, idx) => (
@@ -1192,8 +1021,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       {/* ── Manual Notes ── */}
       <div className="iv-panel p-4 mb-4">
         <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-[#22C55E]" />
-          Inspector Notes
+          <FileText className="w-4 h-4 text-[#22C55E]" />Inspector Notes
         </h3>
         <textarea
           value={captureState.notes}
@@ -1211,12 +1039,7 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       <div className="iv-panel p-4 mb-4">
         <h3 className="text-sm font-semibold iv-text mb-3">Condition Rating</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {([
-            ConditionRating.GOOD,
-            ConditionRating.FAIR,
-            ConditionRating.POOR,
-            ConditionRating.DANGEROUS,
-          ] as const).map((rating) => (
+          {([ConditionRating.GOOD, ConditionRating.FAIR, ConditionRating.POOR, ConditionRating.DANGEROUS] as const).map((rating) => (
             <button
               key={rating}
               type="button"
@@ -1231,26 +1054,20 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
       </div>
 
       {/* ── Save + Navigation ── */}
-<div className="space-y-3 mb-6">
-  {/* Save button — always visible */}
-  <button
-    type="button"
-    onClick={handleSaveAsset}
-    disabled={saving || (!hasCapture && !captureState.condition)}
-    className="iv-btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
-  >
-    {saving ? (
-      <>
-        <Loader2 className="w-4 h-4 animate-spin" />
-        Saving...
-      </>
-    ) : (
-      <>
-        <CheckCircle2 className="w-4 h-4" />
-        {isCurrentSaved ? 'Update & Continue' : 'Save & Continue'}
-      </>
-    )}
-  </button>
+      <div className="space-y-3 mb-6">
+        {/* Save button — always visible */}
+        <button
+          type="button"
+          onClick={handleSaveAsset}
+          disabled={saving || (!hasCapture && !captureState.condition)}
+          className="iv-btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {saving ? (
+            <><Loader2 className="w-4 h-4 animate-spin" />Saving...</>
+          ) : (
+            <><CheckCircle2 className="w-4 h-4" />{isCurrentSaved ? 'Update & Continue' : 'Save & Continue'}</>
+          )}
+        </button>
 
         {/* Navigation */}
         <div className="flex items-center gap-3">
@@ -1260,18 +1077,15 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
             disabled={currentIndex === 0}
             className="iv-btn-secondary flex items-center gap-1 flex-1 justify-center disabled:opacity-30"
           >
-            <ChevronLeft className="w-4 h-4" />
-            Previous
+            <ChevronLeft className="w-4 h-4" />Previous
           </button>
-
           {currentIndex < totalAssets - 1 ? (
             <button
               type="button"
               onClick={handleNext}
               className="iv-btn-secondary flex items-center gap-1 flex-1 justify-center"
             >
-              Next
-              <ChevronRight className="w-4 h-4" />
+              Next<ChevronRight className="w-4 h-4" />
             </button>
           ) : (
             <button
@@ -1279,18 +1093,14 @@ const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
               onClick={handleFinish}
               disabled={!allDone}
               className={`flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                allDone
-                  ? 'bg-[#22C55E] text-white hover:bg-[#16A34A]'
-                  : 'bg-[#2A2F3A] iv-muted cursor-not-allowed'
+                allDone ? 'bg-[#22C55E] text-white hover:bg-[#16A34A]' : 'bg-[#2A2F3A] iv-muted cursor-not-allowed'
               }`}
             >
-              <ArrowRight className="w-4 h-4" />
-              Finish &amp; Review
+              <ArrowRight className="w-4 h-4" />Finish &amp; Review
             </button>
           )}
         </div>
 
-        {/* Skip hint */}
         {isCurrentSaved && currentIndex < totalAssets - 1 && (
           <p className="text-xs iv-muted text-center">
             Already saved — tap Next to continue or update and re-save

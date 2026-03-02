@@ -2,11 +2,20 @@
  * InspectVoice — Audio Processing Queue Consumer
  * Cloudflare Queue consumer that orchestrates the AI pipeline.
  *
- * Pipeline:
+ * Tiered Transcription Pipeline:
+ *   Tier 1 (default): Cloudflare Workers AI Whisper — fast, free
+ *   Tier 2 (escalation): Speechmatics — enhanced accuracy, custom dictionary
+ *
+ * Escalation triggers:
+ *   - Inspector sets high_accuracy flag (manual override from UI)
+ *   - Annual inspection with long audio (>60s)
+ *   - Post-processor detects standards vocabulary but garbled Whisper output
+ *
+ * Full pipeline:
  *   1. Receive message from AUDIO_PROCESSING_QUEUE
  *   2. Fetch audio file from R2
- *   3. Send to Speechmatics for transcription
- *   4. Send transcript + asset type context to Claude for structured analysis
+ *   3. Transcribe: Whisper first, escalate to Speechmatics if needed
+ *   4. Send transcript + asset context to Claude for structured analysis
  *   5. Store results in DB (inspection_items, defects)
  *   6. Update parent inspection risk counts
  *
@@ -15,19 +24,13 @@
  *   - Permanent failures → mark inspection_item as 'failed'
  *   - Each step is logged for tracing
  *
- * Hardened:
- *   - Single DB connection per batch (not per function)
- *   - Batch defect INSERT (single statement, not N+1)
- *   - Defects include org_id, site_id, inspection_id, asset_id for filtering
- *   - Token usage tracked for cost monitoring
- *   - BadRequestError from services handled as permanent failures (no retry)
- *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
 import type { Env, QueueMessageBody } from '../types';
-import { transcribeAudio } from '../services/speechmatics';
+import { transcribeWithWhisper, shouldEscalateToSpeechmatics } from '../services/whisper';
+import { transcribeAudio as transcribeWithSpeechmatics } from '../services/speechmatics';
 import { analyseTranscript, type AIAnalysisResult } from '../services/ai';
 import { Logger } from '../shared/logger';
 import { BadRequestError } from '../shared/errors';
@@ -44,9 +47,22 @@ interface AudioProcessingPayload {
   readonly assetType: string;
   readonly mimeType: string;
   readonly durationSeconds: number;
+  /** Inspector-requested high accuracy transcription */
+  readonly highAccuracy?: boolean;
 }
 
 type InspectionType = 'routine_visual' | 'operational' | 'annual_main';
+
+/** Unified transcription result from either tier */
+interface TranscriptionOutput {
+  readonly transcript: string;
+  readonly confidence: number;
+  readonly durationSeconds: number;
+  readonly model: string;
+  readonly method: 'whisper' | 'speechmatics' | 'whisper+speechmatics';
+  /** If escalation occurred, why */
+  readonly escalationReasons?: string[];
+}
 
 // =============================================
 // QUEUE CONSUMER ENTRY POINT
@@ -60,7 +76,6 @@ export async function handleAudioQueue(
   batch: MessageBatch<QueueMessageBody>,
   env: Env,
 ): Promise<void> {
-  // Single DB connection for the entire batch
   const sql = neon(env.DATABASE_URL);
 
   for (const message of batch.messages) {
@@ -78,8 +93,6 @@ export async function handleAudioQueue(
       await processAudioMessage(msg, payload, env, sql, logger);
       message.ack();
     } catch (error) {
-      // BadRequestError = permanent failure (bad audio, too short transcript)
-      // Don't waste retries on these
       if (error instanceof BadRequestError) {
         logger.warn('Permanent failure — not retrying', {
           inspectionItemId: payload.inspectionItemId,
@@ -96,7 +109,6 @@ export async function handleAudioQueue(
       });
 
       if (message.attempts >= 3) {
-        // Exhausted retries — mark as failed and ack to stop redelivery
         await markItemFailed(
           sql,
           msg.orgId,
@@ -127,16 +139,16 @@ async function processAudioMessage(
 
   logger.info('Processing audio', {
     inspectionItemId,
-    assetId,
     assetCode,
     assetType,
     r2Key,
+    highAccuracy: payload.highAccuracy ?? false,
   });
 
   // ── Step 1: Mark as 'processing' ──
   await updateItemStatus(sql, msg.orgId, inspectionItemId, 'processing', logger);
 
-  // ── Step 1b: Look up inspection context (type, site_id) ──
+  // ── Step 1b: Look up inspection context ──
   const context = await getInspectionContext(sql, msg.orgId, inspectionItemId, logger);
 
   // ── Step 2: Fetch audio from R2 ──
@@ -150,12 +162,15 @@ async function processAudioMessage(
   const audioData = await audioObject.arrayBuffer();
   logger.info('Audio fetched', { sizeBytes: audioData.byteLength });
 
-  // ── Step 3: Speechmatics transcription ──
-  const transcription = await transcribeAudio(
+  // ── Step 3: Tiered transcription ──
+  const transcription = await tieredTranscribe(
     audioData,
     mimeType,
-    env.SPEECHMATICS_API_KEY,
+    payload,
+    context.inspectionType,
+    env,
     msg.requestId,
+    logger,
   );
 
   if (!transcription.transcript || transcription.transcript.trim().length === 0) {
@@ -181,7 +196,7 @@ async function processAudioMessage(
     sql, msg.orgId, inspectionItemId, transcription, analysisResult, logger,
   );
 
-  // ── Step 6: Create defect records (batch insert) ──
+  // ── Step 6: Create defect records ──
   if (analysisResult.defects.length > 0) {
     await createDefectRecords(
       sql,
@@ -200,12 +215,131 @@ async function processAudioMessage(
 
   logger.info('Audio processing complete', {
     inspectionItemId,
+    transcriptionMethod: transcription.method,
+    escalationReasons: transcription.escalationReasons,
     overallCondition: analysisResult.overallCondition,
     riskRating: analysisResult.riskRating,
     defectCount: analysisResult.defects.length,
-    closureRecommended: analysisResult.closureRecommended,
     tokenUsage: analysisResult.tokenUsage,
   });
+}
+
+// =============================================
+// TIERED TRANSCRIPTION
+// =============================================
+
+/**
+ * Tiered transcription: Whisper first, escalate to Speechmatics if needed.
+ *
+ * Direct Speechmatics (skip Whisper) when:
+ *   - Inspector explicitly requests high accuracy
+ *
+ * Whisper → Speechmatics escalation when:
+ *   - Post-processor detects standards vocabulary in garbled output
+ *   - Annual inspection with long audio
+ */
+async function tieredTranscribe(
+  audioData: ArrayBuffer,
+  mimeType: string,
+  payload: AudioProcessingPayload,
+  inspectionType: InspectionType,
+  env: Env,
+  requestId: string,
+  logger: Logger,
+): Promise<TranscriptionOutput> {
+
+  // ── Direct to Speechmatics: inspector override ──
+  if (payload.highAccuracy) {
+    logger.info('High accuracy requested — using Speechmatics directly', {
+      inspectionItemId: payload.inspectionItemId,
+    });
+
+    const smResult = await transcribeWithSpeechmatics(
+      audioData,
+      mimeType,
+      env.SPEECHMATICS_API_KEY,
+      requestId,
+    );
+
+    return {
+      transcript: smResult.transcript,
+      confidence: smResult.confidence,
+      durationSeconds: smResult.durationSeconds,
+      model: smResult.model,
+      method: 'speechmatics',
+      escalationReasons: ['inspector_high_accuracy_override'],
+    };
+  }
+
+  // ── Tier 1: Whisper ──
+  logger.info('Tier 1: Transcribing with Whisper', {
+    inspectionItemId: payload.inspectionItemId,
+  });
+
+  const whisperResult = await transcribeWithWhisper(audioData, env.AI, requestId);
+
+  // ── Check escalation rules ──
+  const escalation = shouldEscalateToSpeechmatics(
+    whisperResult.transcript,
+    whisperResult.durationSeconds,
+    inspectionType,
+  );
+
+  if (!escalation.escalate) {
+    // Whisper result is good enough — use it
+    logger.info('Tier 1 sufficient — no escalation needed', {
+      inspectionItemId: payload.inspectionItemId,
+      wordCount: whisperResult.wordCount,
+    });
+
+    return {
+      transcript: whisperResult.transcript,
+      confidence: whisperResult.confidence,
+      durationSeconds: whisperResult.durationSeconds,
+      model: whisperResult.model,
+      method: 'whisper',
+    };
+  }
+
+  // ── Tier 2: Escalate to Speechmatics ──
+  logger.info('Escalating to Speechmatics', {
+    inspectionItemId: payload.inspectionItemId,
+    reasons: escalation.reasons,
+    whisperTranscriptPreview: whisperResult.transcript.slice(0, 100),
+  });
+
+  try {
+    const smResult = await transcribeWithSpeechmatics(
+      audioData,
+      mimeType,
+      env.SPEECHMATICS_API_KEY,
+      requestId,
+    );
+
+    return {
+      transcript: smResult.transcript,
+      confidence: smResult.confidence,
+      durationSeconds: smResult.durationSeconds,
+      model: smResult.model,
+      method: 'whisper+speechmatics',
+      escalationReasons: escalation.reasons,
+    };
+  } catch (smError) {
+    // Speechmatics failed — fall back to Whisper result (better than nothing)
+    logger.warn('Speechmatics escalation failed — using Whisper result as fallback', {
+      inspectionItemId: payload.inspectionItemId,
+      error: smError instanceof Error ? smError.message : 'Unknown error',
+    });
+
+    return {
+      transcript: whisperResult.transcript,
+      confidence: whisperResult.confidence,
+      durationSeconds: whisperResult.durationSeconds,
+      model: `${whisperResult.model} (speechmatics-fallback)`,
+      method: 'whisper',
+      escalationReasons: [...escalation.reasons, 'speechmatics_failed_used_whisper'],
+    };
+  }
 }
 
 // =============================================
@@ -218,10 +352,6 @@ interface InspectionContext {
   readonly siteId: string;
 }
 
-/**
- * Look up inspection type and site_id from the parent inspection record.
- * Both are needed for defect records (site_id for filtering) and AI analysis (type for depth).
- */
 async function getInspectionContext(
   sql: NeonQueryFunction<false, false>,
   orgId: string,
@@ -244,11 +374,6 @@ async function getInspectionContext(
     const siteId = row?.['site_id'] as string | undefined;
 
     if (!inspectionId || !siteId) {
-      logger.error('Could not resolve inspection context', null, {
-        inspectionItemId,
-        foundInspectionId: inspectionId,
-        foundSiteId: siteId,
-      });
       throw new Error(`Cannot resolve parent inspection for item ${inspectionItemId}`);
     }
 
@@ -257,20 +382,9 @@ async function getInspectionContext(
         ? type
         : 'routine_visual';
 
-    if (type && type !== inspectionType) {
-      logger.warn('Unknown inspection type, defaulting to routine_visual', {
-        inspectionItemId,
-        foundType: type,
-      });
-    }
-
     return { inspectionId, inspectionType, siteId };
   } catch (error) {
     if (error instanceof Error && error.message.includes('Cannot resolve')) throw error;
-    logger.warn('Failed to look up inspection context', {
-      inspectionItemId,
-    });
-    // This is a bad state — we don't have siteId. Throw rather than silently corrupt data.
     throw new Error(`Database error resolving inspection context for item ${inspectionItemId}`);
   }
 }
@@ -299,22 +413,23 @@ async function storeTranscriptOnly(
   sql: NeonQueryFunction<false, false>,
   orgId: string,
   inspectionItemId: string,
-  transcription: Awaited<ReturnType<typeof transcribeAudio>>,
+  transcription: TranscriptionOutput,
   logger: Logger,
 ): Promise<void> {
   try {
     await sql(
       `UPDATE inspection_items SET
         voice_transcript = $1,
-        transcription_method = 'speechmatics',
+        transcription_method = $2,
         ai_processing_status = 'completed',
         ai_processed_at = NOW(),
-        ai_model_version = $2
-       WHERE id = $3
-       AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $4)`,
+        ai_model_version = $3
+       WHERE id = $4
+       AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $5)`,
       [
         transcription.transcript,
-        `speechmatics:${transcription.model}`,
+        transcription.method,
+        transcription.model,
         inspectionItemId,
         orgId,
       ],
@@ -329,31 +444,36 @@ async function storeAnalysisResults(
   sql: NeonQueryFunction<false, false>,
   orgId: string,
   inspectionItemId: string,
-  transcription: Awaited<ReturnType<typeof transcribeAudio>>,
+  transcription: TranscriptionOutput,
   analysis: AIAnalysisResult,
   logger: Logger,
 ): Promise<void> {
   try {
-    const modelVersion = `speechmatics:${transcription.model}|claude:claude-sonnet-4-20250514`;
+    const modelVersion = `${transcription.model}|claude:claude-sonnet-4-20250514`;
 
     await sql(
       `UPDATE inspection_items SET
         voice_transcript = $1,
-        transcription_method = 'speechmatics',
-        ai_analysis = $2,
-        ai_model_version = $3,
+        transcription_method = $2,
+        ai_analysis = $3,
+        ai_model_version = $4,
         ai_processing_status = 'completed',
         ai_processed_at = NOW(),
-        overall_condition = $4,
-        risk_rating = $5,
-        requires_action = $6,
-        action_timeframe = $7,
-        defects = $8
-       WHERE id = $9
-       AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $10)`,
+        overall_condition = $5,
+        risk_rating = $6,
+        requires_action = $7,
+        action_timeframe = $8,
+        defects = $9
+       WHERE id = $10
+       AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $11)`,
       [
         transcription.transcript,
-        JSON.stringify(analysis),
+        transcription.method,
+        JSON.stringify({
+          ...analysis,
+          transcription_confidence: transcription.confidence,
+          escalation_reasons: transcription.escalationReasons ?? [],
+        }),
         modelVersion,
         analysis.overallCondition,
         analysis.riskRating,
@@ -376,11 +496,6 @@ async function storeAnalysisResults(
   }
 }
 
-/**
- * Create defect records in a single batch INSERT.
- * Includes org_id, site_id, inspection_id, and asset_id so defect queries
- * can filter efficiently without joining through inspection_items → inspections.
- */
 async function createDefectRecords(
   sql: NeonQueryFunction<false, false>,
   orgId: string,
@@ -394,7 +509,6 @@ async function createDefectRecords(
   try {
     const now = new Date().toISOString();
 
-    // Build VALUES clause and params for batch INSERT
     const valuePlaceholders: string[] = [];
     const params: (string | null)[] = [];
     let paramIndex = 1;
@@ -410,20 +524,20 @@ async function createDefectRecords(
       );
 
       params.push(
-        defectId,                         // id
-        orgId,                            // org_id
-        siteId,                           // site_id
-        inspectionId,                     // inspection_id
-        assetId,                          // asset_id
-        inspectionItemId,                 // inspection_item_id
-        defect.description,               // description
-        defect.severity,                  // severity
-        defect.defectCategory,            // defect_category
-        defect.bsEnReference,             // bs_en_reference
-        defect.actionRequired,            // action_required
-        defect.actionTimeframe,           // action_timeframe
-        defect.estimatedRepairCost,       // estimated_cost_gbp
-        now,                              // created_at, updated_at
+        defectId,
+        orgId,
+        siteId,
+        inspectionId,
+        assetId,
+        inspectionItemId,
+        defect.description,
+        defect.severity,
+        defect.defectCategory,
+        defect.bsEnReference,
+        defect.actionRequired,
+        defect.actionTimeframe,
+        defect.estimatedRepairCost,
+        now,
       );
 
       paramIndex += 13;
@@ -445,8 +559,7 @@ async function createDefectRecords(
     });
   } catch (error) {
     logger.error('Failed to create defect records', error, { inspectionItemId });
-    // Non-fatal: AI analysis is already stored on the inspection item.
-    // Defects can be recreated from the stored ai_analysis JSON if needed.
+    // Non-fatal: AI analysis already stored on inspection item
   }
 }
 
@@ -507,7 +620,6 @@ async function updateInspectionRiskCounts(
     logger.info('Inspection risk counts updated', { inspectionItemId });
   } catch (error) {
     logger.error('Failed to update inspection risk counts', error, { inspectionItemId });
-    // Non-critical — counts can be recalculated
   }
 }
 

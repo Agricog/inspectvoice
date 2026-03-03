@@ -14,26 +14,16 @@
  *   7. Digital sign-off → marks inspection as COMPLETED
  *   8. Navigates to site page (PDF generation happens async via sync)
  *
- * Features:
- *   - Loads all inspection items from IndexedDB
- *   - Calculates risk/defect tallies
- *   - Per-asset expandable cards with full detail
- *   - Per-field "Normalise" button on defect descriptions + inspector summary
- *   - Batch normalise all normalisable fields before sign-off
- *   - Normalisation review panel with diff view + accept/reject
- *   - Inspector summary textarea
- *   - Closure recommendation toggle (visible if dangerous/very high risk found)
- *   - AI completeness check modal before sign-off
- *   - Sign-off confirmation with name + timestamp
- *   - Updates inspection status to COMPLETED in IndexedDB
- *   - Sync-before-check: forces sync to Postgres before opening completeness modal
- *   - Dark theme, mobile-first, accessible
- *
- * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
- *
- * FIX: 1 Mar 2026
+ * FIX: 3 Mar 2026
+ *   - Signed inspections now show full read-only detail view instead of
+ *     a minimal completion stub. Inspectors and managers can review all
+ *     captured data: summary stats, per-asset cards with defects/notes/
+ *     transcripts, inspector summary, closure recommendation, and
+ *     signature details.
  *   - Custom type display: loads assets from cache to resolve custom_type_name
  *     from metadata, so review page shows "Roundabout" instead of "custom_playground".
+ *
+ * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -53,6 +43,11 @@ import {
   Edit,
   ShieldCheck,
   Sparkles,
+  Calendar,
+  Cloud,
+  Thermometer,
+  User,
+  Clock,
 } from 'lucide-react';
 import { inspections, inspectionItems, assetsCache } from '@services/offlineStore';
 import { syncService } from '@services/syncService';
@@ -64,6 +59,8 @@ import {
   CONDITION_LABELS,
   RiskRating,
   RISK_RATING_LABELS,
+  ACTION_TIMEFRAME_LABELS,
+  ActionTimeframe,
 } from '@/types';
 import type { Inspection, InspectionItem, DefectDetail } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
@@ -135,6 +132,19 @@ function formatDate(dateStr: string | null): string {
   }
 }
 
+function formatDateShort(dateStr: string | null): string {
+  if (!dateStr) return '\u2014';
+  try {
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 function conditionColour(condition: ConditionRating | null): string {
   switch (condition) {
     case ConditionRating.GOOD:
@@ -180,6 +190,21 @@ function riskColour(risk: RiskRating | null): string {
   }
 }
 
+function riskDotColour(risk: string | null): string {
+  switch (risk) {
+    case 'very_high':
+      return 'bg-[#EF4444]';
+    case 'high':
+      return 'bg-[#F97316]';
+    case 'medium':
+      return 'bg-[#EAB308]';
+    case 'low':
+      return 'bg-[#22C55E]';
+    default:
+      return 'bg-[#2A2F3A]';
+  }
+}
+
 // =============================================
 // RISK SUMMARY CARD
 // =============================================
@@ -206,7 +231,7 @@ function RiskSummaryCard({
 }
 
 // =============================================
-// ASSET RESULT CARD (expandable, with normalisation)
+// ASSET RESULT CARD (expandable, with optional normalisation)
 // =============================================
 function AssetResultCard({
   item,
@@ -214,12 +239,14 @@ function AssetResultCard({
   inspectionId,
   customTypeNames,
   onFieldNormalised,
+  readOnly,
 }: {
   item: InspectionItem;
   siteId: string;
   inspectionId: string;
   customTypeNames: CustomTypeNameMap;
   onFieldNormalised: (itemId: string, fieldName: string, normalisedText: string) => void;
+  readOnly?: boolean;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const typeName = resolveAssetTypeName(item.asset_type, item.asset_id ?? '', customTypeNames);
@@ -297,7 +324,7 @@ function AssetResultCard({
             )}
           </div>
 
-          {/* Transcript (read-only — not a NormalisableField) */}
+          {/* Transcript */}
           {hasTranscript && (
             <div>
               <p className="text-xs iv-muted flex items-center gap-1 mb-1">
@@ -310,7 +337,7 @@ function AssetResultCard({
             </div>
           )}
 
-          {/* Inspector notes (read-only — not a NormalisableField) */}
+          {/* Inspector notes */}
           {hasNotes && (
             <div>
               <p className="text-xs iv-muted flex items-center gap-1 mb-1">
@@ -323,28 +350,53 @@ function AssetResultCard({
             </div>
           )}
 
-          {/* Defects — normalise button on each description */}
+          {/* Defects */}
           {defectCount > 0 && (
             <div>
-              <p className="text-xs iv-muted mb-1">
+              <p className="text-xs iv-muted mb-2">
                 Defects ({defectCount})
               </p>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {item.defects.map((defect: DefectDetail, idx: number) => (
-                  <div key={idx} className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg">
+                  <div key={idx} className="text-sm iv-text bg-[#1C2029] p-3 rounded-lg">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2 min-w-0">
-                        <AlertCircle className="w-3.5 h-3.5 text-[#F97316] flex-shrink-0 mt-0.5" />
-                        <span>{defect.description}</span>
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${riskDotColour(defect.risk_rating)}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm iv-text">{defect.description}</p>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            {defect.risk_rating && (
+                              <span className="text-2xs iv-muted">
+                                {RISK_RATING_LABELS[defect.risk_rating as RiskRating] ?? defect.risk_rating}
+                              </span>
+                            )}
+                            {defect.bs_en_reference && (
+                              <span className="text-2xs text-[#22C55E]">{defect.bs_en_reference}</span>
+                            )}
+                            {defect.action_timeframe && (
+                              <span className="text-2xs iv-muted">
+                                {ACTION_TIMEFRAME_LABELS[defect.action_timeframe as ActionTimeframe] ?? defect.action_timeframe}
+                              </span>
+                            )}
+                          </div>
+                          {defect.remedial_action && (
+                            <div className="mt-2 pt-2 border-t border-[#2A2F3A]">
+                              <p className="text-2xs iv-muted uppercase tracking-wider mb-0.5">Remedial Action</p>
+                              <p className="text-sm iv-text">{defect.remedial_action}</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <NormaliseButton
-                        fieldName="defect_description"
-                        originalText={defect.description}
-                        inspectionItemId={item.id}
-                        onAccept={(normalisedText: string) =>
-                          handleDefectNormalised(idx, normalisedText)
-                        }
-                      />
+                      {!readOnly && (
+                        <NormaliseButton
+                          fieldName="defect_description"
+                          originalText={defect.description}
+                          inspectionItemId={item.id}
+                          onAccept={(normalisedText: string) =>
+                            handleDefectNormalised(idx, normalisedText)
+                          }
+                        />
+                      )}
                     </div>
                   </div>
                 ))}
@@ -352,14 +404,16 @@ function AssetResultCard({
             </div>
           )}
 
-          {/* Edit link */}
-          <Link
-            to={`/sites/${siteId}/inspections/${inspectionId}/capture`}
-            className="inline-flex items-center gap-1 text-xs text-[#22C55E] hover:underline"
-          >
-            <Edit className="w-3 h-3" />
-            Re-inspect this asset
-          </Link>
+          {/* Edit link (only in editable mode) */}
+          {!readOnly && (
+            <Link
+              to={`/sites/${siteId}/inspections/${inspectionId}/capture`}
+              className="inline-flex items-center gap-1 text-xs text-[#22C55E] hover:underline"
+            >
+              <Edit className="w-3 h-3" />
+              Re-inspect this asset
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -430,7 +484,6 @@ export default function InspectionReview(): JSX.Element {
         setItems(itemList);
 
         // ── Build custom type name lookup from cached assets ──
-        // Assets store custom_type_name in metadata when inspector picks "Custom"
         try {
           const cachedAssets = await assetsCache.getBySite(siteId!);
           const nameMap: CustomTypeNameMap = new Map();
@@ -443,7 +496,6 @@ export default function InspectionReview(): JSX.Element {
           }
           setCustomTypeNames(nameMap);
         } catch (assetError) {
-          // Non-blocking — worst case shows humanised key instead of custom name
           captureError(assetError, { module: 'InspectionReview', operation: 'loadAssetCustomNames' });
         }
 
@@ -493,7 +545,6 @@ export default function InspectionReview(): JSX.Element {
       setItems((prev) =>
         prev.map((item) => {
           if (item.id !== itemId) return item;
-          // Defect fields are named defect_0, defect_1, etc.
           if (fieldName.startsWith('defect_')) {
             const indexStr = fieldName.split('_')[1];
             if (indexStr === undefined) return item;
@@ -526,7 +577,6 @@ export default function InspectionReview(): JSX.Element {
       const fields: NormaliseFieldRequest[] = [];
       const mappings: BatchFieldMapping[] = [];
 
-      // Inspector summary → NormalisableField 'inspector_summary'
       if (summary.trim()) {
         fields.push({
           field_name: 'inspector_summary',
@@ -540,7 +590,6 @@ export default function InspectionReview(): JSX.Element {
         });
       }
 
-      // Per-item defect descriptions → NormalisableField 'defect_description'
       for (const item of items) {
         for (let i = 0; i < item.defects.length; i++) {
           const defect = item.defects[i];
@@ -603,7 +652,6 @@ export default function InspectionReview(): JSX.Element {
     }
   }, [batchResults, batchMappings, handleFieldNormalised]);
 
-  // ---- Normalisation review complete → apply accepted results ----
   const handleNormalisationComplete = useCallback(() => {
     applyBatchResults();
     setShowNormalisationReview(false);
@@ -611,7 +659,6 @@ export default function InspectionReview(): JSX.Element {
     setBatchMappings([]);
   }, [applyBatchResults]);
 
-  // ---- Normalisation review cancelled → discard all ----
   const handleNormalisationCancel = useCallback(() => {
     setShowNormalisationReview(false);
     setBatchResults([]);
@@ -624,14 +671,11 @@ export default function InspectionReview(): JSX.Element {
   const handleRequestSignOff = useCallback(async () => {
     if (!canSubmit) return;
 
-    // Force-sync inspection data to Postgres before opening modal.
-    // This ensures the server completeness check has real data.
-    // If sync fails (offline, auth), the modal falls back to local checks.
     setSyncing(true);
     try {
       await syncService.syncNow();
     } catch {
-      // Sync failure is non-blocking — modal handles offline fallback
+      // Sync failure is non-blocking
     } finally {
       setSyncing(false);
     }
@@ -730,59 +774,245 @@ export default function InspectionReview(): JSX.Element {
   }
 
   // =============================================
-  // RENDER: COMPLETED STATE
+  // RENDER: COMPLETED STATE (full read-only detail view)
   // =============================================
   if (completed) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-2xl mx-auto px-4 py-6">
         <Helmet>
-          <title>Inspection Complete | InspectVoice</title>
+          <title>Inspection Report — {inspection.inspection_type} | InspectVoice</title>
         </Helmet>
-        <div className="iv-panel p-8 text-center">
-          <CheckCircle2 className="w-16 h-16 text-[#22C55E] mx-auto mb-4" />
-          <h1 className="text-2xl font-bold iv-text mb-2">Inspection Complete</h1>
-          <p className="iv-muted text-sm mb-1">
-            {INSPECTION_TYPE_LABELS[inspection.inspection_type]} inspection signed off
-          </p>
-          <p className="iv-muted text-sm mb-6">
-            {items.length} asset{items.length !== 1 ? 's' : ''} inspected · {totalDefects} defect{totalDefects !== 1 ? 's' : ''} recorded
-          </p>
 
-          {hasDangerous && (
-            <div className="mb-6 p-4 rounded-lg bg-[#EF4444]/10 border border-[#EF4444]/30 text-left">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-5 h-5 text-[#EF4444] flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-[#EF4444]">Immediate Action Required</p>
-                  <p className="text-xs iv-muted mt-1">
-                    Dangerous conditions or very high risk items were identified.
-                    {closureRecommended && ' Site closure has been recommended.'}
-                  </p>
-                </div>
-              </div>
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6">
+          <button
+            type="button"
+            onClick={handleBackToSite}
+            className="iv-btn-icon"
+            aria-label="Back to site"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold iv-text">Inspection Report</h1>
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#22C55E] border border-[#22C55E]/30">
+                Signed
+              </span>
             </div>
-          )}
-
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={handleBackToSite}
-              className="iv-btn-primary w-full flex items-center justify-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              Back to Site
-            </button>
-            <p className="text-xs iv-muted">
-              PDF report will be generated when data syncs to the server.
+            <p className="text-sm iv-muted">
+              {INSPECTION_TYPE_LABELS[inspection.inspection_type]} · {formatDateShort(inspection.inspection_date)}
             </p>
           </div>
+        </div>
+
+        {/* Dangerous warning banner */}
+        {hasDangerous && (
+          <div className="mb-4 p-4 rounded-lg bg-[#EF4444]/10 border border-[#EF4444]/30">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 text-[#EF4444] flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-[#EF4444]">Immediate Action Required</p>
+                <p className="text-xs iv-muted mt-1">
+                  Dangerous conditions or very high risk items were identified.
+                  {inspection.closure_recommended && ' Site closure has been recommended.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Inspection metadata */}
+        <div className="iv-panel p-4 mb-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 iv-muted flex-shrink-0" />
+              <div>
+                <p className="text-2xs iv-muted uppercase tracking-wider">Date</p>
+                <p className="text-sm iv-text">{formatDateShort(inspection.inspection_date)}</p>
+              </div>
+            </div>
+            {inspection.weather_conditions && (
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4 iv-muted flex-shrink-0" />
+                <div>
+                  <p className="text-2xs iv-muted uppercase tracking-wider">Weather</p>
+                  <p className="text-sm iv-text capitalize">{inspection.weather_conditions}</p>
+                </div>
+              </div>
+            )}
+            {inspection.temperature_c !== null && inspection.temperature_c !== undefined && (
+              <div className="flex items-center gap-2">
+                <Thermometer className="w-4 h-4 iv-muted flex-shrink-0" />
+                <div>
+                  <p className="text-2xs iv-muted uppercase tracking-wider">Temperature</p>
+                  <p className="text-sm iv-text">{inspection.temperature_c}°C</p>
+                </div>
+              </div>
+            )}
+            {inspection.surface_conditions && (
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 iv-muted flex-shrink-0" />
+                <div>
+                  <p className="text-2xs iv-muted uppercase tracking-wider">Surface</p>
+                  <p className="text-sm iv-text capitalize">{inspection.surface_conditions}</p>
+                </div>
+              </div>
+            )}
+            {inspection.duration_minutes !== null && inspection.duration_minutes !== undefined && (
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 iv-muted flex-shrink-0" />
+                <div>
+                  <p className="text-2xs iv-muted uppercase tracking-wider">Duration</p>
+                  <p className="text-sm iv-text">{inspection.duration_minutes} min</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Summary Stats */}
+        <div className="mb-4">
+          <h2 className="text-base font-semibold iv-text mb-3">Summary</h2>
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            <RiskSummaryCard
+              label="Good"
+              count={conditionCounts.good}
+              colour="text-[#22C55E]"
+              icon={<CheckCircle2 className="w-4 h-4" />}
+            />
+            <RiskSummaryCard
+              label="Fair"
+              count={conditionCounts.fair}
+              colour="text-[#EAB308]"
+              icon={<AlertCircle className="w-4 h-4" />}
+            />
+            <RiskSummaryCard
+              label="Poor"
+              count={conditionCounts.poor}
+              colour="text-[#F97316]"
+              icon={<AlertTriangle className="w-4 h-4" />}
+            />
+            <RiskSummaryCard
+              label="Dangerous"
+              count={conditionCounts.dangerous}
+              colour="text-[#EF4444]"
+              icon={<XCircle className="w-4 h-4" />}
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="iv-panel p-3 text-center">
+              <p className="text-xl font-bold iv-text">{items.length}</p>
+              <p className="text-xs iv-muted">Assets</p>
+            </div>
+            <div className="iv-panel p-3 text-center">
+              <p className={`text-xl font-bold ${totalDefects > 0 ? 'text-[#F97316]' : 'text-[#22C55E]'}`}>
+                {totalDefects}
+              </p>
+              <p className="text-xs iv-muted">Defects</p>
+            </div>
+            <div className="iv-panel p-3 text-center">
+              <p className={`text-xl font-bold ${hasDangerous ? 'text-[#EF4444]' : 'text-[#22C55E]'}`}>
+                {hasDangerous ? 'Yes' : 'No'}
+              </p>
+              <p className="text-xs iv-muted">Action Required</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Per-Asset Results */}
+        <div className="mb-4">
+          <h2 className="text-base font-semibold iv-text mb-3">
+            Asset Results ({items.length})
+          </h2>
+          <div className="space-y-2">
+            {items
+              .sort((a, b) => a.asset_code.localeCompare(b.asset_code))
+              .map((item) => (
+                <AssetResultCard
+                  key={item.id}
+                  item={item}
+                  siteId={siteId}
+                  inspectionId={inspectionId}
+                  customTypeNames={customTypeNames}
+                  onFieldNormalised={handleFieldNormalised}
+                  readOnly
+                />
+              ))}
+          </div>
+        </div>
+
+        {/* Inspector Summary */}
+        {inspection.inspector_summary && (
+          <div className="iv-panel p-4 mb-4">
+            <h2 className="text-sm font-semibold iv-text mb-2 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-[#22C55E]" />
+              Inspector Summary
+            </h2>
+            <p className="text-sm iv-text whitespace-pre-wrap">{inspection.inspector_summary}</p>
+          </div>
+        )}
+
+        {/* Closure Recommendation */}
+        {inspection.closure_recommended && (
+          <div className="iv-panel p-4 mb-4 border-l-4 border-l-[#EF4444]">
+            <h2 className="text-sm font-semibold iv-text mb-2 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-[#EF4444]" />
+              Closure Recommended
+            </h2>
+            {inspection.closure_reason && (
+              <p className="text-sm iv-text whitespace-pre-wrap">{inspection.closure_reason}</p>
+            )}
+          </div>
+        )}
+
+        {/* Signature Block */}
+        <div className="iv-panel p-4 mb-6">
+          <h2 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
+            <PenTool className="w-4 h-4 text-[#22C55E]" />
+            Digital Signature
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex items-center gap-2">
+              <User className="w-4 h-4 iv-muted flex-shrink-0" />
+              <div>
+                <p className="text-2xs iv-muted uppercase tracking-wider">Signed By</p>
+                <p className="text-sm iv-text font-medium">{inspection.signed_by ?? '—'}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 iv-muted flex-shrink-0" />
+              <div>
+                <p className="text-2xs iv-muted uppercase tracking-wider">Signed At</p>
+                <p className="text-sm iv-text">{formatDate(inspection.signed_at ?? null)}</p>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs iv-muted mt-3">
+            This inspection was conducted in accordance with BS EN 1176-7 and all findings are accurately recorded.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="space-y-3 mb-6">
+          <button
+            type="button"
+            onClick={handleBackToSite}
+            className="iv-btn-primary w-full flex items-center justify-center gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Site
+          </button>
+          <p className="text-xs iv-muted text-center">
+            PDF report will be generated when data syncs to the server.
+          </p>
         </div>
       </div>
     );
   }
 
   // =============================================
-  // RENDER: REVIEW FORM
+  // RENDER: REVIEW FORM (pre-sign-off)
   // =============================================
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
@@ -819,7 +1049,6 @@ export default function InspectionReview(): JSX.Element {
       {/* ── Summary Stats ── */}
       <div className="mb-4">
         <h2 className="text-base font-semibold iv-text mb-3">Inspection Summary</h2>
-        {/* Condition overview */}
         <div className="grid grid-cols-4 gap-2 mb-3">
           <RiskSummaryCard
             label="Good"
@@ -846,7 +1075,6 @@ export default function InspectionReview(): JSX.Element {
             icon={<XCircle className="w-4 h-4" />}
           />
         </div>
-        {/* Key figures */}
         <div className="grid grid-cols-3 gap-2">
           <div className="iv-panel p-3 text-center">
             <p className="text-xl font-bold iv-text">{items.length}</p>
@@ -1011,7 +1239,6 @@ export default function InspectionReview(): JSX.Element {
           )}
         </div>
 
-        {/* Button: sync data → open completeness check modal */}
         <button
           type="button"
           onClick={() => void handleRequestSignOff()}

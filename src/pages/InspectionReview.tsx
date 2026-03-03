@@ -17,6 +17,9 @@
  * FIX: 3 Mar 2026
  *   - orgName pulled from Clerk useOrganization() instead of hardcoded 'InspectVoice'
  *   - Photo counts loaded from pendingPhotos and passed to PDF generator
+ *   - API fallback: if inspection not in IndexedDB, fetches from server
+ *     so signed inspections from previous sessions are always viewable
+ *   - Site data also falls back to API when not cached locally
  *   - Signed inspections now show full read-only detail view instead of
  *     a minimal completion stub. Inspectors and managers can review all
  *     captured data: summary stats, per-asset cards with defects/notes/
@@ -487,22 +490,55 @@ export default function InspectionReview(): JSX.Element {
 
         if (cancelled) return;
 
-        if (!localInspection) {
-          setLoadError('Inspection not found.');
-          setLoading(false);
-          return;
+        let insp: Inspection;
+        let itemList: InspectionItem[];
+
+        if (localInspection) {
+          // ── Found in IndexedDB (current session / offline cache) ──
+          insp = localInspection.data;
+          itemList = localItems.map((li) => li.data);
+        } else {
+          // ── Not in IndexedDB — fetch from API (signed inspections from earlier sessions) ──
+          try {
+            const { secureFetch } = await import('@hooks/useFetch');
+            const response = await secureFetch<{
+              data: Inspection & { items: InspectionItem[] };
+            }>(`/api/v1/inspections/${inspectionId}`);
+
+            if (cancelled) return;
+
+            if (!response.data) {
+              setLoadError('Inspection not found.');
+              setLoading(false);
+              return;
+            }
+
+            const { items: apiItems, ...inspData } = response.data;
+            insp = inspData as Inspection;
+            itemList = apiItems ?? [];
+          } catch (apiError) {
+            if (cancelled) return;
+            captureError(apiError, { module: 'InspectionReview', operation: 'loadDataApiFallback' });
+            setLoadError('Inspection not found.');
+            setLoading(false);
+            return;
+          }
         }
 
-        const insp = localInspection.data;
         setInspection(insp);
-
-        const itemList = localItems.map((li) => li.data);
         setItems(itemList);
 
         // ── Load site for PDF generation ──
         try {
           const cachedSite = await sitesCache.get(siteId!);
-          if (cachedSite) setSite(cachedSite.data);
+          if (cachedSite) {
+            setSite(cachedSite.data);
+          } else {
+            // API fallback for site (needed for PDF report)
+            const { secureFetch } = await import('@hooks/useFetch');
+            const siteResp = await secureFetch<{ data: Site }>(`/api/v1/sites/${siteId}`);
+            if (siteResp.data) setSite(siteResp.data);
+          }
         } catch (siteError) {
           captureError(siteError, { module: 'InspectionReview', operation: 'loadSite' });
         }

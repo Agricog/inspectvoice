@@ -1,5 +1,5 @@
 /**
- * InspectVoice — Inspection List Page
+ * InspectVoice -- Inspection List Page
  * All inspections across all sites with filtering, sorting, and pagination.
  *
  * Route: /inspections
@@ -11,9 +11,16 @@
  * - Sort by date, status, risk rating
  * - Paginated results (server-side)
  * - Risk rating and status badges
+ * - Delete draft/review inspections (with confirmation)
  * - Responsive: cards on mobile, table on desktop
  * - Loading, error, and empty states
  * - Links to inspection review/capture
+ *
+ * FIX: 3 Mar 2026
+ *   - Added delete button for draft/review inspections
+ *   - Calls DELETE /api/v1/inspections/:id (server guards signed/exported)
+ *   - Trash icon on desktop row, red button on mobile card
+ *   - Confirmation dialog before delete, auto-refreshes list
  *
  * API: GET /api/inspections?page=1&limit=20&status=...&type=...&search=...&sort=...&order=...
  */
@@ -41,6 +48,7 @@ import {
   Loader2,
   Inbox,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
 import type { Inspection } from '@/types/entities';
@@ -81,6 +89,11 @@ type SortOrder = 'asc' | 'desc';
 // =============================================
 
 const PAGE_SIZE = 20;
+
+/** Drafts and reviews can be deleted; signed/exported are permanent BS EN 1176-7 records */
+function isDeletable(status: InspectionStatus): boolean {
+  return status === InspectionStatus.DRAFT || status === InspectionStatus.REVIEW;
+}
 
 const STATUS_STYLES: Record<InspectionStatus, { bg: string; text: string }> = {
   [InspectionStatus.DRAFT]: { bg: 'bg-iv-muted/15', text: 'text-iv-muted' },
@@ -200,6 +213,7 @@ function SortButton({
   );
 }
 
+
 // =============================================
 // FILTER BAR
 // =============================================
@@ -237,20 +251,17 @@ function FilterBar({
     <div className="bg-iv-surface border border-iv-border rounded-xl">
       {/* Search + toggle row */}
       <div className="p-3 flex items-center gap-3">
-        {/* Search input */}
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-iv-muted" />
           <input
             type="search"
             value={filters.search}
             onChange={(e) => onFilterChange('search', e.target.value)}
-            placeholder="Search by site name or inspector…"
+            placeholder="Search by site name or inspector\u2026"
             className="w-full pl-9 pr-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text placeholder:text-iv-muted-2 focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors"
             aria-label="Search inspections"
           />
         </div>
-
-        {/* Filter toggle */}
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
@@ -267,88 +278,40 @@ function FilterBar({
         </button>
       </div>
 
-      {/* Expandable filter panel */}
       {expanded && (
         <div
           id="inspection-filters"
           className="px-3 pb-3 border-t border-iv-border pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"
         >
-          {/* Status filter */}
           <div>
-            <label htmlFor="filter-status" className="block text-2xs font-medium text-iv-muted mb-1">
-              Status
-            </label>
-            <select
-              id="filter-status"
-              value={filters.status}
-              onChange={(e) => onFilterChange('status', e.target.value)}
-              className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors"
-            >
+            <label htmlFor="filter-status" className="block text-2xs font-medium text-iv-muted mb-1">Status</label>
+            <select id="filter-status" value={filters.status} onChange={(e) => onFilterChange('status', e.target.value)} className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors">
               <option value="">All statuses</option>
               {Object.values(InspectionStatus).map((status) => (
-                <option key={status} value={status}>
-                  {INSPECTION_STATUS_LABELS[status]}
-                </option>
+                <option key={status} value={status}>{INSPECTION_STATUS_LABELS[status]}</option>
               ))}
             </select>
           </div>
-
-          {/* Type filter */}
           <div>
-            <label htmlFor="filter-type" className="block text-2xs font-medium text-iv-muted mb-1">
-              Inspection Type
-            </label>
-            <select
-              id="filter-type"
-              value={filters.type}
-              onChange={(e) => onFilterChange('type', e.target.value)}
-              className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors"
-            >
+            <label htmlFor="filter-type" className="block text-2xs font-medium text-iv-muted mb-1">Inspection Type</label>
+            <select id="filter-type" value={filters.type} onChange={(e) => onFilterChange('type', e.target.value)} className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors">
               <option value="">All types</option>
               {Object.values(InspectionType).map((type) => (
-                <option key={type} value={type}>
-                  {INSPECTION_TYPE_LABELS[type]}
-                </option>
+                <option key={type} value={type}>{INSPECTION_TYPE_LABELS[type]}</option>
               ))}
             </select>
           </div>
-
-          {/* Date from */}
           <div>
-            <label htmlFor="filter-date-from" className="block text-2xs font-medium text-iv-muted mb-1">
-              From Date
-            </label>
-            <input
-              id="filter-date-from"
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => onFilterChange('dateFrom', e.target.value)}
-              className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors"
-            />
+            <label htmlFor="filter-date-from" className="block text-2xs font-medium text-iv-muted mb-1">From Date</label>
+            <input id="filter-date-from" type="date" value={filters.dateFrom} onChange={(e) => onFilterChange('dateFrom', e.target.value)} className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors" />
           </div>
-
-          {/* Date to */}
           <div>
-            <label htmlFor="filter-date-to" className="block text-2xs font-medium text-iv-muted mb-1">
-              To Date
-            </label>
-            <input
-              id="filter-date-to"
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => onFilterChange('dateTo', e.target.value)}
-              className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors"
-            />
+            <label htmlFor="filter-date-to" className="block text-2xs font-medium text-iv-muted mb-1">To Date</label>
+            <input id="filter-date-to" type="date" value={filters.dateTo} onChange={(e) => onFilterChange('dateTo', e.target.value)} className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text focus:outline-none focus:ring-2 focus:ring-iv-accent/40 focus:border-iv-accent/40 transition-colors" />
           </div>
-
-          {/* Clear filters */}
           {hasActiveFilters && (
             <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
-              <button
-                type="button"
-                onClick={onClearFilters}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-iv-muted hover:text-iv-text transition-colors"
-              >
+              <button type="button" onClick={onClearFilters} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-iv-muted hover:text-iv-text transition-colors">
                 <X className="w-3 h-3" />
                 Clear all filters
               </button>
@@ -383,28 +346,14 @@ function Pagination({
   return (
     <div className="flex items-center justify-between pt-4 border-t border-iv-border">
       <p className="text-xs text-iv-muted">
-        {startItem}–{endItem} of {total} inspections
+        {startItem}&ndash;{endItem} of {total} inspections
       </p>
       <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => onPageChange(page - 1)}
-          disabled={page <= 1}
-          className="iv-btn-icon disabled:opacity-30 disabled:cursor-not-allowed"
-          aria-label="Previous page"
-        >
+        <button type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} className="iv-btn-icon disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Previous page">
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <span className="px-3 py-1 text-xs font-medium text-iv-text">
-          {page} / {totalPages}
-        </span>
-        <button
-          type="button"
-          onClick={() => onPageChange(page + 1)}
-          disabled={page >= totalPages}
-          className="iv-btn-icon disabled:opacity-30 disabled:cursor-not-allowed"
-          aria-label="Next page"
-        >
+        <span className="px-3 py-1 text-xs font-medium text-iv-text">{page} / {totalPages}</span>
+        <button type="button" onClick={() => onPageChange(page + 1)} disabled={page >= totalPages} className="iv-btn-icon disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Next page">
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
@@ -412,16 +361,25 @@ function Pagination({
   );
 }
 
+
 // =============================================
 // INSPECTION CARD (Mobile)
 // =============================================
 
-function InspectionCard({ inspection }: { inspection: InspectionListItem }): JSX.Element {
+function InspectionCard({
+  inspection,
+  onDelete,
+}: {
+  inspection: InspectionListItem;
+  onDelete: (id: string) => void;
+}): JSX.Element {
   const inspectionDate = new Date(inspection.inspection_date).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   });
+
+  const canDelete = isDeletable(inspection.status);
 
   const actionUrl = inspection.status === InspectionStatus.DRAFT
     ? `/sites/${inspection.site_id}/inspections/${inspection.id}/capture`
@@ -499,6 +457,16 @@ function InspectionCard({ inspection }: { inspection: InspectionListItem }): JSX
             PDF
           </a>
         )}
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(inspection.id)}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-red-500/10 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-colors"
+            title="Delete draft"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -508,12 +476,20 @@ function InspectionCard({ inspection }: { inspection: InspectionListItem }): JSX
 // INSPECTION TABLE ROW (Desktop)
 // =============================================
 
-function InspectionRow({ inspection }: { inspection: InspectionListItem }): JSX.Element {
+function InspectionRow({
+  inspection,
+  onDelete,
+}: {
+  inspection: InspectionListItem;
+  onDelete: (id: string) => void;
+}): JSX.Element {
   const inspectionDate = new Date(inspection.inspection_date).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   });
+
+  const canDelete = isDeletable(inspection.status);
 
   const actionUrl = inspection.status === InspectionStatus.DRAFT
     ? `/sites/${inspection.site_id}/inspections/${inspection.id}/capture`
@@ -521,12 +497,9 @@ function InspectionRow({ inspection }: { inspection: InspectionListItem }): JSX.
 
   return (
     <tr className="border-b border-iv-border last:border-b-0 hover:bg-iv-surface-2/50 transition-colors">
-      {/* Date */}
       <td className="py-3 px-4">
         <span className="text-sm text-iv-text whitespace-nowrap">{inspectionDate}</span>
       </td>
-
-      {/* Site */}
       <td className="py-3 px-4">
         <Link
           to={`/sites/${inspection.site_id}`}
@@ -535,37 +508,25 @@ function InspectionRow({ inspection }: { inspection: InspectionListItem }): JSX.
           {inspection.site_name}
         </Link>
       </td>
-
-      {/* Type */}
       <td className="py-3 px-4">
         <span className="text-sm text-iv-muted whitespace-nowrap">
           {INSPECTION_TYPE_LABELS[inspection.inspection_type]}
         </span>
       </td>
-
-      {/* Inspector */}
       <td className="py-3 px-4">
         <span className="text-sm text-iv-muted line-clamp-1">
           {inspection.inspector_name}
         </span>
       </td>
-
-      {/* Status */}
       <td className="py-3 px-4">
         <StatusBadge status={inspection.status} />
       </td>
-
-      {/* Risk */}
       <td className="py-3 px-4">
         <RiskBadge rating={inspection.overall_risk_rating} />
       </td>
-
-      {/* Defects */}
       <td className="py-3 px-4">
         <DefectSummary inspection={inspection} />
       </td>
-
-      {/* Actions */}
       <td className="py-3 px-4">
         <div className="flex items-center gap-1.5 justify-end">
           <Link
@@ -590,11 +551,22 @@ function InspectionRow({ inspection }: { inspection: InspectionListItem }): JSX.
               <FileText className="w-4 h-4" />
             </a>
           )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => onDelete(inspection.id)}
+              className="iv-btn-icon text-red-400 hover:text-red-300 hover:bg-red-500/15"
+              title="Delete draft"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </td>
     </tr>
   );
 }
+
 
 // =============================================
 // MAIN PAGE COMPONENT
@@ -603,7 +575,6 @@ function InspectionRow({ inspection }: { inspection: InspectionListItem }): JSX.
 export function InspectionList(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // ── State ──────────────────────────────────
   const [filters, setFilters] = useState<FilterState>(() => ({
     search: searchParams.get('search') ?? '',
     status: (searchParams.get('status') as InspectionStatus) ?? '',
@@ -622,13 +593,11 @@ export function InspectionList(): JSX.Element {
     Math.max(1, Number(searchParams.get('page')) || 1),
   );
 
-  // ── Derived: are any filters active? ───────
   const hasActiveFilters = useMemo(
     () => Boolean(filters.status || filters.type || filters.dateFrom || filters.dateTo || filters.search),
     [filters],
   );
 
-  // ── Build API URL from state ───────────────
   const apiUrl = useMemo(() => {
     const params = new URLSearchParams();
     params.set('page', String(page));
@@ -645,10 +614,8 @@ export function InspectionList(): JSX.Element {
     return `/api/v1/inspections?${params.toString()}`;
   }, [page, sortField, sortOrder, filters]);
 
-  // ── Fetch data ─────────────────────────────
   const { data, loading, error, refetch } = useFetch<InspectionListResponse>(apiUrl);
 
-  // ── Sync state → URL search params ─────────
   useEffect(() => {
     const params = new URLSearchParams();
     if (page > 1) params.set('page', String(page));
@@ -659,14 +626,12 @@ export function InspectionList(): JSX.Element {
     if (filters.type) params.set('type', filters.type);
     if (filters.dateFrom) params.set('from', filters.dateFrom);
     if (filters.dateTo) params.set('to', filters.dateTo);
-
     setSearchParams(params, { replace: true });
   }, [page, sortField, sortOrder, filters, setSearchParams]);
 
-  // ── Handlers ───────────────────────────────
   const handleFilterChange = useCallback((key: keyof FilterState, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
-    setPage(1); // Reset to page 1 on filter change
+    setPage(1);
   }, []);
 
   const handleClearFilters = useCallback(() => {
@@ -692,15 +657,27 @@ export function InspectionList(): JSX.Element {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  // ── Derived data ───────────────────────────
+  // -- Delete draft inspection --
+  const handleDeleteDraft = useCallback(async (inspectionId: string) => {
+    if (!window.confirm('Delete this draft inspection? This cannot be undone.')) return;
+
+    try {
+      const { secureFetch } = await import('@hooks/useFetch');
+      await secureFetch(`/api/v1/inspections/${inspectionId}`, { method: 'DELETE' });
+      refetch();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete inspection';
+      window.alert(message);
+    }
+  }, [refetch]);
+
   const inspections = data?.data ?? [];
   const pagination = data?.pagination ?? { page: 1, limit: PAGE_SIZE, total: 0, total_pages: 0 };
 
-  // ── Render ─────────────────────────────────
   return (
     <>
       <Helmet>
-        <title>Inspections — InspectVoice</title>
+        <title>Inspections - InspectVoice</title>
         <meta name="description" content="View and manage all playground inspections across your sites." />
       </Helmet>
 
@@ -715,13 +692,12 @@ export function InspectionList(): JSX.Element {
               <h1 className="text-lg font-semibold text-iv-text">Inspections</h1>
               <p className="text-xs text-iv-muted mt-0.5">
                 {loading
-                  ? 'Loading…'
+                  ? 'Loading...'
                   : `${pagination.total} inspection${pagination.total !== 1 ? 's' : ''}`}
               </p>
             </div>
           </div>
 
-          {/* Refresh */}
           <button
             type="button"
             onClick={refetch}
@@ -734,7 +710,6 @@ export function InspectionList(): JSX.Element {
           </button>
         </div>
 
-        {/* Filters */}
         <FilterBar
           filters={filters}
           onFilterChange={handleFilterChange}
@@ -742,32 +717,25 @@ export function InspectionList(): JSX.Element {
           hasActiveFilters={hasActiveFilters}
         />
 
-        {/* Loading state */}
         {loading && !data && (
           <div className="flex flex-col items-center justify-center py-16 text-iv-muted">
             <Loader2 className="w-8 h-8 animate-spin mb-3" />
-            <p className="text-sm">Loading inspections…</p>
+            <p className="text-sm">Loading inspections...</p>
           </div>
         )}
 
-        {/* Error state */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 text-center">
             <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
             <p className="text-sm font-medium text-red-400 mb-1">Failed to load inspections</p>
             <p className="text-xs text-iv-muted mb-4">{error.message}</p>
-            <button
-              type="button"
-              onClick={refetch}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-iv-surface border border-iv-border rounded-lg text-sm font-medium text-iv-text hover:bg-iv-surface-2 transition-colors"
-            >
+            <button type="button" onClick={refetch} className="inline-flex items-center gap-1.5 px-4 py-2 bg-iv-surface border border-iv-border rounded-lg text-sm font-medium text-iv-text hover:bg-iv-surface-2 transition-colors">
               <RefreshCw className="w-4 h-4" />
               Retry
             </button>
           </div>
         )}
 
-        {/* Empty state */}
         {!loading && !error && inspections.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-iv-muted">
             <Inbox className="w-10 h-10 mb-3 text-iv-muted-2" />
@@ -780,11 +748,7 @@ export function InspectionList(): JSX.Element {
                 : 'Start by navigating to a site and creating an inspection.'}
             </p>
             {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={handleClearFilters}
-                className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-iv-surface border border-iv-border rounded-lg text-sm font-medium text-iv-text hover:bg-iv-surface-2 transition-colors"
-              >
+              <button type="button" onClick={handleClearFilters} className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-iv-surface border border-iv-border rounded-lg text-sm font-medium text-iv-text hover:bg-iv-surface-2 transition-colors">
                 <X className="w-4 h-4" />
                 Clear filters
               </button>
@@ -792,58 +756,38 @@ export function InspectionList(): JSX.Element {
           </div>
         )}
 
-        {/* Results */}
         {!error && inspections.length > 0 && (
           <>
-            {/* Desktop table (hidden on mobile) */}
             <div className="hidden lg:block bg-iv-surface border border-iv-border rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full" role="table">
                   <thead>
                     <tr className="border-b border-iv-border bg-iv-surface-2/50">
-                      <th className="py-3 px-4 text-left">
-                        <SortButton field="inspection_date" label="Date" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} />
-                      </th>
-                      <th className="py-3 px-4 text-left">
-                        <span className="text-xs font-medium text-iv-muted">Site</span>
-                      </th>
-                      <th className="py-3 px-4 text-left">
-                        <SortButton field="inspection_type" label="Type" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} />
-                      </th>
-                      <th className="py-3 px-4 text-left">
-                        <span className="text-xs font-medium text-iv-muted">Inspector</span>
-                      </th>
-                      <th className="py-3 px-4 text-left">
-                        <SortButton field="status" label="Status" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} />
-                      </th>
-                      <th className="py-3 px-4 text-left">
-                        <SortButton field="overall_risk_rating" label="Risk" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} />
-                      </th>
-                      <th className="py-3 px-4 text-left">
-                        <span className="text-xs font-medium text-iv-muted">Defects</span>
-                      </th>
-                      <th className="py-3 px-4 text-right">
-                        <span className="sr-only">Actions</span>
-                      </th>
+                      <th className="py-3 px-4 text-left"><SortButton field="inspection_date" label="Date" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} /></th>
+                      <th className="py-3 px-4 text-left"><span className="text-xs font-medium text-iv-muted">Site</span></th>
+                      <th className="py-3 px-4 text-left"><SortButton field="inspection_type" label="Type" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} /></th>
+                      <th className="py-3 px-4 text-left"><span className="text-xs font-medium text-iv-muted">Inspector</span></th>
+                      <th className="py-3 px-4 text-left"><SortButton field="status" label="Status" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} /></th>
+                      <th className="py-3 px-4 text-left"><SortButton field="overall_risk_rating" label="Risk" currentSort={sortField} currentOrder={sortOrder} onSort={handleSort} /></th>
+                      <th className="py-3 px-4 text-left"><span className="text-xs font-medium text-iv-muted">Defects</span></th>
+                      <th className="py-3 px-4 text-right"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {inspections.map((inspection) => (
-                      <InspectionRow key={inspection.id} inspection={inspection} />
+                      <InspectionRow key={inspection.id} inspection={inspection} onDelete={handleDeleteDraft} />
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
 
-            {/* Mobile cards (hidden on desktop) */}
             <div className="lg:hidden space-y-3">
               {inspections.map((inspection) => (
-                <InspectionCard key={inspection.id} inspection={inspection} />
+                <InspectionCard key={inspection.id} inspection={inspection} onDelete={handleDeleteDraft} />
               ))}
             </div>
 
-            {/* Pagination */}
             <Pagination
               page={pagination.page}
               totalPages={pagination.total_pages}

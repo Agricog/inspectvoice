@@ -432,6 +432,7 @@ export default function InspectionCapture(): JSX.Element {
     if (existing) {
       setCaptureState({
         checklistCompleted: {},
+        checklistDismissed: [],
         customChecklist: [],
         voiceTranscript: existing.voice_transcript ?? '',
         hasAudioRecording: Boolean(existing.audio_r2_key),

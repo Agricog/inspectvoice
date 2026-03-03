@@ -11,6 +11,12 @@
  * Tenant isolation: inspection_items → inspections → org_id
  * Items for signed inspections are immutable (except AI processing updates).
  *
+ * FIX: 3 Mar 2026
+ *   - Defensive asset auto-creation: if the FK constraint on asset_id fails
+ *     because the asset hasn't synced yet, the server creates a minimal asset
+ *     record using asset_code, asset_type, and the inspection's site_id.
+ *     This prevents cascading sync failures in the offline-first workflow.
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
@@ -20,6 +26,7 @@ import { writeAuditLog } from '../services/audit';
 import { checkRateLimit } from '../middleware/rateLimit';
 import { validateCsrf } from '../middleware/csrf';
 import { ConflictError, NotFoundError } from '../shared/errors';
+import { Logger } from '../shared/logger';
 import {
   parseJsonBody,
   validateUUID,
@@ -101,6 +108,57 @@ async function verifyItemOwnership(
   };
 }
 
+/**
+ * Ensure an asset exists on the server. If the FK constraint would fail
+ * because the asset was created locally but never synced, auto-create a
+ * minimal asset record using data from the inspection item payload.
+ *
+ * This is a defensive measure for offline-first sync ordering issues.
+ * The asset record will be updated with full details when the asset
+ * sync eventually succeeds (upsert pattern).
+ */
+async function ensureAssetExists(
+  db: ReturnType<typeof createDb>,
+  assetId: string,
+  assetCode: string,
+  assetType: string,
+  siteId: string,
+  logger: Logger,
+): Promise<void> {
+  // Check if asset already exists (fast path)
+  const existing = await db.rawQuery<Record<string, unknown>>(
+    `SELECT id FROM assets WHERE id = $1 LIMIT 1`,
+    [assetId],
+  );
+
+  if (existing.length > 0) return;
+
+  // Asset doesn't exist — create a minimal record
+  const now = new Date().toISOString();
+  try {
+    await db.rawQuery(
+      `INSERT INTO assets (id, site_id, asset_code, asset_type, asset_category, is_active, metadata, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'other', true, '{}'::jsonb, $5, $5)
+       ON CONFLICT (id) DO NOTHING`,
+      [assetId, siteId, assetCode, assetType, now],
+    );
+
+    logger.info('Auto-created missing asset for sync', {
+      assetId,
+      assetCode,
+      assetType,
+      siteId,
+    });
+  } catch (insertError) {
+    // If this also fails (e.g. site doesn't exist), let the original
+    // FK violation bubble up — it's a deeper data integrity issue
+    logger.error('Failed to auto-create asset', {
+      assetId,
+      error: insertError instanceof Error ? insertError.message : String(insertError),
+    });
+  }
+}
+
 // =============================================
 // LIST ITEMS FOR INSPECTION
 // =============================================
@@ -147,6 +205,7 @@ export async function createInspectionItem(
 
   const body = await parseJsonBody(request);
   const db = createDb(ctx);
+  const logger = Logger.fromContext(ctx);
 
   // Validate and verify inspection ownership
   const inspectionId = validateUUID(body['inspection_id'], 'inspection_id');
@@ -164,14 +223,26 @@ export async function createInspectionItem(
     defects = validateArray(body['defects'], 'defects', { maxLength: 100 });
   }
 
+  const assetId = body['asset_id'] ? validateUUID(body['asset_id'], 'asset_id') : null;
+  const assetCode = validateString(body['asset_code'], 'asset_code', { maxLength: 50 });
+  const assetType = validateString(body['asset_type'], 'asset_type', { maxLength: 50 });
+  const siteId = inspection['site_id'] as string;
+
+  // Defensive: ensure asset exists before inserting the item.
+  // If the offline client created the asset locally but sync hasn't
+  // reached the server yet, auto-create a minimal asset record.
+  if (assetId) {
+    await ensureAssetExists(db, assetId, assetCode, assetType, siteId, logger);
+  }
+
   const data: Record<string, unknown> = {
     id: typeof body['id'] === 'string' && body['id'].length > 0
       ? validateUUID(body['id'], 'id')
       : crypto.randomUUID(),
     inspection_id: inspectionId,
-    asset_id: body['asset_id'] ? validateUUID(body['asset_id'], 'asset_id') : null,
-    asset_code: validateString(body['asset_code'], 'asset_code', { maxLength: 50 }),
-    asset_type: validateString(body['asset_type'], 'asset_type', { maxLength: 50 }),
+    asset_id: assetId,
+    asset_code: assetCode,
+    asset_type: assetType,
     audio_r2_key: null,
     voice_transcript: validateOptionalString(body['voice_transcript'], 'voice_transcript', { maxLength: 50000 }),
     transcription_method: validateOptionalEnum(body['transcription_method'], 'transcription_method', TRANSCRIPTION_METHODS),

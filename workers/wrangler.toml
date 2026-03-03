@@ -22,6 +22,12 @@ compatibility_flags = ["nodejs_compat"]
 command = "echo 'Typecheck skipped — wrangler handles bundling'"
 
 # =============================================
+# Workers AI (Whisper transcription — Tier 1)
+# =============================================
+[ai]
+binding = "AI"
+
+# =============================================
 # Environment Variables (non-secret)
 # =============================================
 [vars]
@@ -46,6 +52,7 @@ WORKERS_PUBLIC_URL = "https://inspectvoice-api.micks43.workers.dev"
 # STRIPE_WEBHOOK_SECRET
 # ANTHROPIC_API_KEY
 # DEEPGRAM_API_KEY
+# SPEECHMATICS_API_KEY
 # DATABASE_URL
 # UPSTASH_REDIS_URL
 # UPSTASH_REDIS_TOKEN
@@ -112,6 +119,9 @@ READ_ONLY_MODE = "false"
 WEBHOOKS_PAUSED = "false"
 MAX_PAGE_SIZE = "100"
 ALLOWED_ORIGIN = "https://staging.inspectvoice.co.uk"
+
+[env.staging.ai]
+binding = "AI"
 
 [[env.staging.r2_buckets]]
 binding = "INSPECTVOICE_BUCKET"

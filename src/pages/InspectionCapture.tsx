@@ -475,42 +475,6 @@ export default function InspectionCapture(): JSX.Element {
   // VOICE CAPTURE HANDLERS
   // =============================================
 
-  const handleStartRecording = useCallback(async () => {
-    if (!currentAsset) return;
-    const capture = createVoiceCapture(
-      { silenceTimeoutMs: 5000, language: 'en-GB' },
-      {
-        onStateChange: (state) => setVoiceState(state),
-        onTranscript: (text) => {
-          setCaptureState((prev) => ({ ...prev, voiceTranscript: text }));
-        },
-        onAmplitude: (level) => setVuLevel(level),
-        onDurationTick: (seconds) => setRecordDuration(seconds),
-        onComplete: (result: VoiceCaptureResult) => {
-          void handleRecordingComplete(result);
-        },
-        onError: () => {
-          setVoiceState(VoiceCaptureState.ERROR);
-        },
-      },
-    );
-    voiceCaptureRef.current = capture;
-    await capture.start();
-  }, [currentAsset]);
-
-  const handleStopRecording = useCallback(async () => {
-    if (!voiceCaptureRef.current) return;
-    await voiceCaptureRef.current.stop(StopReason.USER);
-  }, []);
-
-  const handlePauseRecording = useCallback(() => {
-    voiceCaptureRef.current?.pause();
-  }, []);
-
-  const handleResumeRecording = useCallback(() => {
-    voiceCaptureRef.current?.resume();
-  }, []);
-
   const handleRecordingComplete = useCallback(async (result: VoiceCaptureResult) => {
     if (!currentAsset || !inspectionId) return;
     try {
@@ -535,7 +499,62 @@ export default function InspectionCapture(): JSX.Element {
     }
   }, [currentAsset, inspectionId]);
 
+  const handleStartRecording = useCallback(async () => {
+    if (!currentAsset) return;
+
+    // ── FIX: Destroy any existing instance BEFORE creating a new one ──
+    // Without this, orphaned VoiceCapture instances keep their setInterval
+    // timers running, causing multiple competing duration ticks (e.g. 10→123→13→120).
+    if (voiceCaptureRef.current) {
+      voiceCaptureRef.current.destroy();
+      voiceCaptureRef.current = null;
+    }
+
+    // Reset UI state to clean baseline before new recording
+    setVuLevel(0);
+    setRecordDuration(0);
+    setVoiceState(VoiceCaptureState.IDLE);
+
+    const capture = createVoiceCapture(
+      { silenceTimeoutMs: 5000, language: 'en-GB' },
+      {
+        onStateChange: (state) => setVoiceState(state),
+        onTranscript: (text) => {
+          setCaptureState((prev) => ({ ...prev, voiceTranscript: text }));
+        },
+        onAmplitude: (level) => setVuLevel(level),
+        onDurationTick: (seconds) => setRecordDuration(seconds),
+        onComplete: (result: VoiceCaptureResult) => {
+          void handleRecordingComplete(result);
+        },
+        onError: () => {
+          setVoiceState(VoiceCaptureState.ERROR);
+        },
+      },
+    );
+    voiceCaptureRef.current = capture;
+    await capture.start();
+  }, [currentAsset, handleRecordingComplete]);
+
+  const handleStopRecording = useCallback(async () => {
+    if (!voiceCaptureRef.current) return;
+    await voiceCaptureRef.current.stop(StopReason.USER);
+  }, []);
+
+  const handlePauseRecording = useCallback(() => {
+    voiceCaptureRef.current?.pause();
+  }, []);
+
+  const handleResumeRecording = useCallback(() => {
+    voiceCaptureRef.current?.resume();
+  }, []);
+
   const handleClearRecording = useCallback(() => {
+    // Destroy any lingering instance to prevent ghost timers
+    if (voiceCaptureRef.current) {
+      voiceCaptureRef.current.destroy();
+      voiceCaptureRef.current = null;
+    }
     setCaptureState((prev) => ({
       ...prev,
       voiceTranscript: '',
@@ -544,6 +563,7 @@ export default function InspectionCapture(): JSX.Element {
     }));
     setRecordDuration(0);
     setVuLevel(0);
+    setVoiceState(VoiceCaptureState.IDLE);
   }, []);
 
   // =============================================

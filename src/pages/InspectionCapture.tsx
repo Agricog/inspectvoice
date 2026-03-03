@@ -1,6 +1,7 @@
 /**
  * InspectVoice — Inspection Capture Workflow
  * Batch 14 + Feature 5 (Baseline photo comparison) + Feature 15 (Defect Quick-Pick)
+ * + Custom Checklist Items
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
@@ -11,6 +12,9 @@
  *     asset cache so it survives navigation and page reloads
  *   - Photo baseline tracks latest captured photo
  *   - Photo removal properly updates baseline current photo
+ *   - Custom checklist: inspectors can add ad-hoc inspection points beyond
+ *     the standard BS EN checklist. Rendered below standard items with
+ *     separate completion tracking and inline add/delete controls.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
@@ -38,6 +42,7 @@ import {
   Eye,
   Info,
   BookOpen,
+  Plus,
 } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 
@@ -88,8 +93,15 @@ function sanitiseDescription(value: string): string {
 // TYPES
 // =============================================
 
+interface CustomChecklistItem {
+  id: string;
+  label: string;
+  completed: boolean;
+}
+
 interface AssetCaptureState {
   checklistCompleted: Record<number, boolean>;
+  customChecklist: CustomChecklistItem[];
   voiceTranscript: string;
   hasAudioRecording: boolean;
   audioBlobId: string | null;
@@ -103,6 +115,7 @@ interface AssetCaptureState {
 function createEmptyCaptureState(): AssetCaptureState {
   return {
     checklistCompleted: {},
+    customChecklist: [],
     voiceTranscript: '',
     hasAudioRecording: false,
     audioBlobId: null,
@@ -195,6 +208,94 @@ function PhotoThumbnail({
 }
 
 // =============================================
+// ADD CHECKLIST INPUT COMPONENT
+// =============================================
+
+function AddChecklistInput({
+  onAdd,
+}: {
+  onAdd: (label: string) => void;
+}): JSX.Element {
+  const [isAdding, setIsAdding] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isAdding && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isAdding]);
+
+  const handleSubmit = (): void => {
+    const trimmed = inputValue.trim();
+    if (trimmed.length >= 3) {
+      onAdd(trimmed);
+      setInputValue('');
+      setIsAdding(false);
+    }
+  };
+
+  const handleCancel = (): void => {
+    setInputValue('');
+    setIsAdding(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit();
+    } else if (e.key === 'Escape') {
+      handleCancel();
+    }
+  };
+
+  if (!isAdding) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsAdding(true)}
+        className="flex items-center gap-1.5 text-xs text-[#22C55E] hover:text-[#16A34A] transition-colors mt-2"
+      >
+        <Plus className="w-3.5 h-3.5" />
+        Add Custom Check
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <input
+        ref={inputRef}
+        type="text"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="e.g. Check drainage around footings"
+        maxLength={200}
+        className="iv-input flex-1 text-sm py-1.5"
+        aria-label="Custom checklist item"
+      />
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={inputValue.trim().length < 3}
+        className="iv-btn-primary py-1.5 px-3 text-xs disabled:opacity-40"
+      >
+        Add
+      </button>
+      <button
+        type="button"
+        onClick={handleCancel}
+        className="iv-btn-icon text-sm"
+        aria-label="Cancel"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+// =============================================
 // MAIN COMPONENT
 // =============================================
 
@@ -232,6 +333,12 @@ export default function InspectionCapture(): JSX.Element {
         inspectionType as 'routine_visual' | 'operational' | 'annual_main',
       )
     : [];
+
+  // Checklist completion counts
+  const standardCompleted = Object.values(captureState.checklistCompleted).filter(Boolean).length;
+  const customCompleted = captureState.customChecklist.filter((c) => c.completed).length;
+  const totalChecks = checklistPoints.length + captureState.customChecklist.length;
+  const completedChecks = standardCompleted + customCompleted;
 
   const assetRecord = currentAsset ? (currentAsset as unknown as Record<string, unknown>) : null;
   const serverBaseline: BaselinePhoto | null = assetRecord?.['baseline_photo_url']
@@ -319,6 +426,7 @@ export default function InspectionCapture(): JSX.Element {
     if (existing) {
       setCaptureState({
         checklistCompleted: {},
+        customChecklist: [],
         voiceTranscript: existing.voice_transcript ?? '',
         hasAudioRecording: Boolean(existing.audio_r2_key),
         audioBlobId: null,
@@ -526,9 +634,6 @@ export default function InspectionCapture(): JSX.Element {
       });
 
       // 2. Persist baseline to local IndexedDB asset cache
-      //    This survives navigation and page reloads.
-      //    Extra fields beyond the Asset type are stored by IndexedDB and
-      //    read back via the Record<string, unknown> cast in the baseline reader.
       await assetsCache.put({
         ...currentAsset,
         baseline_photo_url: baselineSrc,
@@ -578,7 +683,7 @@ export default function InspectionCapture(): JSX.Element {
   }, [currentAsset, firstPhotoBase64, inspectionId, captureState.condition]);
 
   // =============================================
-  // CHECKLIST HANDLER
+  // CHECKLIST HANDLERS
   // =============================================
 
   const handleChecklistToggle = useCallback((index: number) => {
@@ -588,6 +693,36 @@ export default function InspectionCapture(): JSX.Element {
         ...prev.checklistCompleted,
         [index]: !prev.checklistCompleted[index],
       },
+    }));
+  }, []);
+
+  // =============================================
+  // CUSTOM CHECKLIST HANDLERS
+  // =============================================
+
+  const handleAddCustomCheck = useCallback((label: string) => {
+    setCaptureState((prev) => ({
+      ...prev,
+      customChecklist: [
+        ...prev.customChecklist,
+        { id: uuid(), label, completed: false },
+      ],
+    }));
+  }, []);
+
+  const handleToggleCustomCheck = useCallback((id: string) => {
+    setCaptureState((prev) => ({
+      ...prev,
+      customChecklist: prev.customChecklist.map((c) =>
+        c.id === id ? { ...c, completed: !c.completed } : c,
+      ),
+    }));
+  }, []);
+
+  const handleRemoveCustomCheck = useCallback((id: string) => {
+    setCaptureState((prev) => ({
+      ...prev,
+      customChecklist: prev.customChecklist.filter((c) => c.id !== id),
     }));
   }, []);
 
@@ -880,28 +1015,88 @@ export default function InspectionCapture(): JSX.Element {
         )}
       </div>
 
-      {/* ── Checklist ── */}
-      {checklistPoints.length > 0 && (
+      {/* ── Checklist (Standard + Custom) ── */}
+      {(checklistPoints.length > 0 || captureState.customChecklist.length > 0) && (
         <div className="iv-panel p-4 mb-4">
           <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
-            <Eye className="w-4 h-4 text-[#22C55E]" />Inspection Checklist
+            <Eye className="w-4 h-4 text-[#22C55E]" />
+            Inspection Checklist
+            {totalChecks > 0 && (
+              <span className={`text-xs font-normal ${
+                completedChecks === totalChecks && totalChecks > 0
+                  ? 'text-[#22C55E]'
+                  : 'iv-muted'
+              }`}>
+                ({completedChecks}/{totalChecks})
+              </span>
+            )}
           </h3>
-          <div className="space-y-2">
-            {checklistPoints.map((point, idx) => (
-              <label key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] cursor-pointer transition-colors">
-                <input
-                  type="checkbox"
-                  checked={Boolean(captureState.checklistCompleted[idx])}
-                  onChange={() => handleChecklistToggle(idx)}
-                  className="mt-0.5 w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0"
-                />
-                <div>
-                  <p className="text-sm iv-text">{point.label}</p>
-                  <p className="text-xs iv-muted mt-0.5">{point.description}</p>
-                </div>
-              </label>
-            ))}
-          </div>
+
+          {/* Standard BS EN checklist points */}
+          {checklistPoints.length > 0 && (
+            <div className="space-y-2">
+              {checklistPoints.map((point, idx) => (
+                <label key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(captureState.checklistCompleted[idx])}
+                    onChange={() => handleChecklistToggle(idx)}
+                    className="mt-0.5 w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0"
+                  />
+                  <div>
+                    <p className="text-sm iv-text">{point.label}</p>
+                    <p className="text-xs iv-muted mt-0.5">{point.description}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {/* Custom checklist items */}
+          {captureState.customChecklist.length > 0 && (
+            <>
+              <div className="border-t border-[#2A2F3A] my-3" />
+              <p className="text-xs iv-muted uppercase tracking-wider mb-2">Custom Checks</p>
+              <div className="space-y-2">
+                {captureState.customChecklist.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#1C2029] group transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={item.completed}
+                      onChange={() => handleToggleCustomCheck(item.id)}
+                      className="w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0 cursor-pointer"
+                    />
+                    <p className={`text-sm flex-1 ${item.completed ? 'line-through iv-muted' : 'iv-text'}`}>
+                      {item.label}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomCheck(item.id)}
+                      className="iv-btn-icon text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                      aria-label={`Remove: ${item.label}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Add custom check button/input */}
+          <AddChecklistInput onAdd={handleAddCustomCheck} />
+        </div>
+      )}
+
+      {/* Show Add Custom Check even when no standard checklist points exist */}
+      {checklistPoints.length === 0 && captureState.customChecklist.length === 0 && (
+        <div className="iv-panel p-4 mb-4">
+          <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
+            <Eye className="w-4 h-4 text-[#22C55E]" />
+            Inspection Checklist
+          </h3>
+          <p className="text-xs iv-muted mb-2">No standard checklist for this asset type.</p>
+          <AddChecklistInput onAdd={handleAddCustomCheck} />
         </div>
       )}
 

@@ -15,6 +15,8 @@
  *   8. Navigates to site page (PDF generation happens async via sync)
  *
  * FIX: 3 Mar 2026
+ *   - orgName pulled from Clerk useOrganization() instead of hardcoded 'InspectVoice'
+ *   - Photo counts loaded from pendingPhotos and passed to PDF generator
  *   - Signed inspections now show full read-only detail view instead of
  *     a minimal completion stub. Inspectors and managers can review all
  *     captured data: summary stats, per-asset cards with defects/notes/
@@ -27,6 +29,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useOrganization } from '@clerk/clerk-react';
 import { Helmet } from 'react-helmet-async';
 import {
   ArrowLeft,
@@ -50,7 +53,7 @@ import {
   Clock,
   Download,
 } from 'lucide-react';
-import { inspections, inspectionItems, assetsCache, sitesCache } from '@services/offlineStore';
+import { inspections, inspectionItems, assetsCache, sitesCache, pendingPhotos } from '@services/offlineStore';
 import { syncService } from '@services/syncService';
 import { captureError } from '@utils/errorTracking';
 import {
@@ -465,6 +468,10 @@ export default function InspectionReview(): JSX.Element {
   // ---- PDF generation ----
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [photoCountsByItem, setPhotoCountsByItem] = useState<Record<string, number>>({});
+
+  // ---- Clerk org (for PDF branding) ----
+  const { organization } = useOrganization();
 
   // ---- Load data ----
   useEffect(() => {
@@ -515,6 +522,16 @@ export default function InspectionReview(): JSX.Element {
           }
           setCustomTypeNames(nameMap);
           setSiteAssets(assetList);
+
+          // Load photo counts per item for PDF report
+          const photoCounts: Record<string, number> = {};
+          await Promise.all(
+            localItems.map(async (li) => {
+              const photos = await pendingPhotos.getByItem(li.id);
+              if (photos.length > 0) photoCounts[li.id] = photos.length;
+            }),
+          );
+          setPhotoCountsByItem(photoCounts);
         } catch (assetError) {
           captureError(assetError, { module: 'InspectionReview', operation: 'loadAssetCustomNames' });
         }
@@ -766,7 +783,8 @@ export default function InspectionReview(): JSX.Element {
         items,
         site,
         assets: siteAssets,
-        orgName: 'InspectVoice', // TODO: pull from org settings
+        orgName: organization?.name || 'InspectVoice',
+        photoCountsByItem,
       };
 
       await downloadReport(reportData);
@@ -776,7 +794,7 @@ export default function InspectionReview(): JSX.Element {
     } finally {
       setGeneratingPdf(false);
     }
-  }, [inspection, items, site, siteAssets]);
+  }, [inspection, items, site, siteAssets, organization, photoCountsByItem]);
 
   // =============================================
   // RENDER: LOADING / ERROR

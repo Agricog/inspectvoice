@@ -7,12 +7,16 @@
  *   1. Cover page — site name, inspection type, date, inspector, org branding
  *   2. Executive summary — risk counts, condition breakdown, closure warnings
  *   3. Site details — location, contact, compliance info
- *   4. Asset inspection results — per-asset condition, defects, notes, voice transcripts
+ *   4. Asset inspection results — per-asset condition, defects, notes, voice transcripts, photo counts
  *   5. Defect register — all defects in tabular format
  *   6. Sign-off — inspector declaration, name, signature timestamp
  *   7. Footer — page numbers, report ID, confidentiality notice
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
+ *
+ * FIX: 3 Mar 2026
+ *   - Added photoCountsByItem to ReportData for photo cross-referencing per asset
+ *   - Renders "Photos: N captured" in accent green per asset when photos exist
  */
 
 import {
@@ -108,6 +112,8 @@ export interface ReportData {
   assets: Asset[];
   orgName: string;
   orgLogoBase64?: string;
+  /** Photo counts per inspection_item ID (from pendingPhotos in offlineStore) */
+  photoCountsByItem?: Record<string, number>;
 }
 
 export interface GeneratedReport {
@@ -504,6 +510,20 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
     if (asset?.manufacturer) {
       const mfgText = [asset.manufacturer, asset.model, asset.serial_number].filter(Boolean).join(' \u00B7 ');
       cursor.page.drawText(mfgText, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_MID_GREY });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+    }
+
+    // Photo count (from local capture via pendingPhotos)
+    const photoCount = data.photoCountsByItem?.[item.id] ?? 0;
+    if (photoCount > 0) {
+      const photoText = `Photos: ${String(photoCount)} captured`;
+      cursor.page.drawText(photoText, {
+        x: MARGIN_LEFT + 6,
+        y: cursor.y - FONT_SIZE_SMALL,
+        size: FONT_SIZE_SMALL,
+        font: fonts.regular,
+        color: COLOUR_ACCENT,
+      });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
     }
 

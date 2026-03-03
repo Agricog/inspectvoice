@@ -54,7 +54,7 @@ function parseTemplate(template: string): Segment[] {
     if (match.index > lastIndex) {
       segments.push({ type: 'text', value: template.slice(lastIndex, match.index) });
     }
-    segments.push({ type: 'placeholder', value: match[1] });
+    segments.push({ type: 'placeholder', value: match[1] ?? '' });
     lastIndex = regex.lastIndex;
   }
 

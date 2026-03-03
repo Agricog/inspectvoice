@@ -30,10 +30,13 @@
  *     This solves the offline-first timing issue where the sign-off extraction
  *     ran before items existed on the server. Self-contained — no cross-file
  *     imports from inspections.ts.
+ *   - All async calls changed from void to await. Cloudflare Workers terminate
+ *     pending void promises when the response is sent, so fire-and-forget
+ *     patterns silently fail. All functions use try-catch internally so
+ *     awaiting them cannot crash the response.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import type { RequestContext, RouteParams } from '../types';
 import { createDb } from '../services/db';
 import { writeAuditLog } from '../services/audit';
@@ -55,11 +58,9 @@ import {
   validateArray,
 } from '../shared/validation';
 import { jsonResponse } from './helpers';
-
 // =============================================
 // ALLOWED VALUES
 // =============================================
-
 const CONDITION_RATINGS = ['good', 'fair', 'poor', 'dangerous'] as const;
 const RISK_RATINGS = ['very_high', 'high', 'medium', 'low'] as const;
 const ACTION_TIMEFRAMES = [
@@ -67,14 +68,11 @@ const ACTION_TIMEFRAMES = [
 ] as const;
 const AI_STATUSES = ['pending', 'processing', 'completed', 'failed'] as const;
 const TRANSCRIPTION_METHODS = ['deepgram', 'web_speech_api', 'manual'] as const;
-
 /** Columns that require explicit ::jsonb casting in parameterised queries */
 const JSONB_COLUMNS = new Set(['defects', 'ai_analysis']);
-
 // =============================================
 // HELPER: Verify inspection belongs to org
 // =============================================
-
 async function verifyInspectionOwnership(
   db: ReturnType<typeof createDb>,
   inspectionId: string,
@@ -89,7 +87,6 @@ async function verifyInspectionOwnership(
   }
   return rows[0];
 }
-
 /**
  * Verify an inspection item belongs to this org via the inspection chain.
  */
@@ -106,13 +103,10 @@ async function verifyItemOwnership(
      LIMIT 1`,
     [orgId, itemId],
   );
-
   if (!rows[0]) {
     throw new NotFoundError('Inspection item not found');
   }
-
   const row = rows[0];
-
   return {
     item: row,
     inspection: {
@@ -121,7 +115,6 @@ async function verifyItemOwnership(
     },
   };
 }
-
 /**
  * Ensure an asset exists on the server. If the FK constraint would fail
  * because the asset was created locally but never synced, auto-create a
@@ -149,9 +142,7 @@ async function ensureAssetExists(
     `SELECT id FROM assets WHERE id = $1 LIMIT 1`,
     [assetId],
   );
-
   if (existing.length > 0) return;
-
   // Asset doesn't exist — create a minimal record including org_id
   const now = new Date().toISOString();
   try {
@@ -161,7 +152,6 @@ async function ensureAssetExists(
        ON CONFLICT (id) DO NOTHING`,
       [assetId, orgId, siteId, assetCode, assetType, now],
     );
-
     logger.info('Auto-created missing asset for sync', {
       assetId,
       assetCode,
@@ -178,11 +168,9 @@ async function ensureAssetExists(
     });
   }
 }
-
 // =============================================
 // HELPER: Calculate due date from timeframe
 // =============================================
-
 /** Map action_timeframe to a concrete due date relative to now. */
 function calculateDueDate(timeframe: string | undefined): string | null {
   if (!timeframe) return null;
@@ -203,11 +191,9 @@ function calculateDueDate(timeframe: string | undefined): string | null {
       return null; // next_inspection, routine — no fixed date
   }
 }
-
 // =============================================
 // HELPER: Extract defects from a single item
 // =============================================
-
 /**
  * Extract defects from a newly-synced inspection item into the standalone
  * defects table. Called when an item with defects arrives for an
@@ -221,8 +207,9 @@ function calculateDueDate(timeframe: string | undefined): string | null {
  * regardless of sync ordering.
  *
  * SAFETY:
- *   - Fire-and-forget: wrapped in try-catch so extraction failure never
- *     blocks the item creation response.
+ *   - MUST be awaited (not void). Cloudflare Workers terminate pending
+ *     promises when the response is sent.
+ *   - Wrapped in try-catch so extraction failure never crashes the response.
  *   - Idempotent: checks for existing defects with the same
  *     inspection_item_id + description before inserting.
  *   - Self-contained: no cross-file imports. Duplicates the
@@ -242,14 +229,11 @@ async function extractItemDefects(
   try {
     const now = new Date().toISOString();
     let extractedCount = 0;
-
     for (const raw of defects) {
       const defect = raw as Record<string, unknown>;
       const description = (defect['description'] as string) ?? '';
       if (!description) continue;
-
       const dueDate = calculateDueDate(defect['action_timeframe'] as string | undefined);
-
       // Idempotency guard: skip if this exact defect was already extracted
       // (e.g. by the sign-off extraction in inspections.ts on a retry)
       const exists = await db.rawQuery<{ count: number }>(
@@ -257,9 +241,7 @@ async function extractItemDefects(
          WHERE inspection_item_id = $1 AND description = $2`,
         [itemId, description],
       );
-
       if ((exists[0]?.count ?? 0) > 0) continue;
-
       await db.rawExecute(
         `INSERT INTO defects (
           id, org_id, inspection_item_id, inspection_id, site_id, asset_id,
@@ -297,15 +279,13 @@ async function extractItemDefects(
       );
       extractedCount++;
     }
-
     if (extractedCount > 0) {
       logger.info('Defects extracted from synced item', {
         inspectionId,
         itemId,
         count: extractedCount,
       });
-
-      void writeAuditLog(
+      await writeAuditLog(
         ctx,
         'defects.extracted' as Parameters<typeof writeAuditLog>[1],
         'inspection_items',
@@ -322,24 +302,19 @@ async function extractItemDefects(
     });
   }
 }
-
 // =============================================
 // LIST ITEMS FOR INSPECTION
 // =============================================
-
 export async function listInspectionItems(
   _request: Request,
   params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
   await checkRateLimit(ctx, 'read');
-
   const inspectionId = validateUUID(params['inspectionId'], 'inspectionId');
   const db = createDb(ctx);
-
   // Verify inspection belongs to this org
   await verifyInspectionOwnership(db, inspectionId, ctx.orgId);
-
   // Fetch items (no org_id on inspection_items — verified through inspection)
   const items = await db.rawQuery<Record<string, unknown>>(
     `SELECT ii.* FROM inspection_items ii
@@ -348,17 +323,14 @@ export async function listInspectionItems(
      ORDER BY ii.timestamp ASC`,
     [ctx.orgId, inspectionId],
   );
-
   return jsonResponse({
     success: true,
     data: items,
   }, ctx.requestId);
 }
-
 // =============================================
 // CREATE INSPECTION ITEM
 // =============================================
-
 export async function createInspectionItem(
   request: Request,
   _params: RouteParams,
@@ -366,15 +338,12 @@ export async function createInspectionItem(
 ): Promise<Response> {
   validateCsrf(request);
   await checkRateLimit(ctx, 'write');
-
   const body = await parseJsonBody(request);
   const db = createDb(ctx);
   const logger = Logger.fromContext(ctx);
-
   // Validate and verify inspection ownership
   const inspectionId = validateUUID(body['inspection_id'], 'inspection_id');
   const inspection = await verifyInspectionOwnership(db, inspectionId, ctx.orgId);
-
   // Offline-first sync: items may arrive AFTER the inspection has been signed.
   // The client completes capture + sign-off locally, then syncs in order:
   //   1. Inspection (arrives as 'signed')
@@ -387,25 +356,21 @@ export async function createInspectionItem(
   if (inspectionStatus === 'exported') {
     throw new ConflictError('Cannot add items to an exported inspection');
   }
-
   // Parse defects array if provided
   let defects: unknown[] = [];
   if (body['defects'] && Array.isArray(body['defects'])) {
     defects = validateArray(body['defects'], 'defects', { maxLength: 100 });
   }
-
   const assetId = body['asset_id'] ? validateUUID(body['asset_id'], 'asset_id') : null;
   const assetCode = validateString(body['asset_code'], 'asset_code', { maxLength: 50 });
   const assetType = validateString(body['asset_type'], 'asset_type', { maxLength: 50 });
   const siteId = inspection['site_id'] as string;
-
   // Defensive: ensure asset exists before inserting the item.
   // If the offline client created the asset locally but sync hasn't
   // reached the server yet, auto-create a minimal asset record.
   if (assetId) {
     await ensureAssetExists(db, assetId, assetCode, assetType, siteId, ctx.orgId, logger);
   }
-
   const data: Record<string, unknown> = {
     id: typeof body['id'] === 'string' && body['id'].length > 0
       ? validateUUID(body['id'], 'id')
@@ -434,32 +399,27 @@ export async function createInspectionItem(
     timestamp: validateISODate(body['timestamp'], 'timestamp'),
     created_at: new Date().toISOString(),
   };
-
   // Insert — explicit ::jsonb cast for jsonb columns
   const columns = Object.keys(data);
   const values = Object.values(data);
   const placeholders = columns.map((col, i) =>
     JSONB_COLUMNS.has(col) ? `$${i + 1}::jsonb` : `$${i + 1}`
   );
-
   const insertSql = `INSERT INTO inspection_items (${columns.join(', ')})
     VALUES (${placeholders.join(', ')})
     RETURNING *`;
-
   const rows = await db.rawQuery<Record<string, unknown>>(insertSql, values);
-
-  void writeAuditLog(ctx, 'inspection_item.created', 'inspection_items', data['id'] as string, {
+  await writeAuditLog(ctx, 'inspection_item.created', 'inspection_items', data['id'] as string, {
     inspection_id: inspectionId,
     asset_code: data['asset_code'],
     asset_type: data['asset_type'],
   }, request);
-
   // ── Defect extraction for signed inspections ──────────────────────
   // In offline-first sync, the inspection arrives signed before items sync.
   // The sign-off extraction in inspections.ts found no items and extracted
   // nothing. Now that this item has landed with defects, extract them
   // immediately so the Defect Tracker is always up to date.
-  // Fire-and-forget: never blocks the response to the client.
+  // MUST await — Cloudflare Workers kill void promises on response send.
   if (inspectionStatus === 'signed' && defects.length > 0) {
     await extractItemDefects(
       db, ctx, inspectionId, siteId,
@@ -467,17 +427,14 @@ export async function createInspectionItem(
       defects, logger,
     );
   }
-
   return jsonResponse({
     success: true,
     data: rows[0],
   }, ctx.requestId, 201);
 }
-
 // =============================================
 // UPDATE INSPECTION ITEM
 // =============================================
-
 export async function updateInspectionItem(
   request: Request,
   params: RouteParams,
@@ -485,24 +442,19 @@ export async function updateInspectionItem(
 ): Promise<Response> {
   validateCsrf(request);
   await checkRateLimit(ctx, 'write');
-
   const id = validateUUID(params['id'], 'id');
   const body = await parseJsonBody(request);
   const db = createDb(ctx);
-
   // Verify ownership and get current state
   const { item: existing, inspection } = await verifyItemOwnership(db, id, ctx.orgId);
   const inspectionStatus = inspection['status'] as string;
-
   // Cannot modify items on signed/exported inspections
   // Exception: AI processing updates (the queue consumer needs to write results)
   const isAiUpdate = body['ai_processing_status'] !== undefined || body['ai_analysis'] !== undefined;
   if ((inspectionStatus === 'signed' || inspectionStatus === 'exported') && !isAiUpdate) {
     throw new ConflictError('Cannot modify items on a signed or exported inspection');
   }
-
   const data: Record<string, unknown> = {};
-
   if ('voice_transcript' in body) data['voice_transcript'] = validateOptionalString(body['voice_transcript'], 'voice_transcript', { maxLength: 50000 });
   if ('transcription_method' in body) data['transcription_method'] = validateOptionalEnum(body['transcription_method'], 'transcription_method', TRANSCRIPTION_METHODS);
   if ('ai_analysis' in body) data['ai_analysis'] = body['ai_analysis'] ? JSON.stringify(body['ai_analysis']) : null;
@@ -518,11 +470,9 @@ export async function updateInspectionItem(
   if ('inspector_notes' in body) data['inspector_notes'] = validateOptionalString(body['inspector_notes'], 'inspector_notes', { maxLength: 5000 });
   if ('inspector_risk_override' in body) data['inspector_risk_override'] = validateOptionalEnum(body['inspector_risk_override'], 'inspector_risk_override', RISK_RATINGS);
   if ('audio_r2_key' in body) data['audio_r2_key'] = validateOptionalString(body['audio_r2_key'], 'audio_r2_key', { maxLength: 500 });
-
   if (Object.keys(data).length === 0) {
     return jsonResponse({ success: true, data: existing }, ctx.requestId);
   }
-
   // Update — explicit ::jsonb cast for jsonb columns
   const setClauses = Object.keys(data).map((col, i) =>
     JSONB_COLUMNS.has(col) ? `${col} = $${i + 1}::jsonb` : `${col} = $${i + 1}`
@@ -530,42 +480,34 @@ export async function updateInspectionItem(
   const updateSql = `UPDATE inspection_items SET ${setClauses.join(', ')}
     WHERE id = $${Object.keys(data).length + 1}
     RETURNING *`;
-
   const rows = await db.rawQuery<Record<string, unknown>>(
     updateSql,
     [...Object.values(data), id],
   );
-
   if (isAiUpdate) {
-    void writeAuditLog(ctx, 'inspection_item.ai_processed', 'inspection_items', id, {
+    await writeAuditLog(ctx, 'inspection_item.ai_processed', 'inspection_items', id, {
       ai_processing_status: data['ai_processing_status'],
     }, request);
   } else {
-    void writeAuditLog(ctx, 'inspection_item.updated', 'inspection_items', id, null, request);
+    await writeAuditLog(ctx, 'inspection_item.updated', 'inspection_items', id, null, request);
   }
-
   return jsonResponse({
     success: true,
     data: rows[0] ?? existing,
   }, ctx.requestId);
 }
-
 // =============================================
 // POLL AI STATUS
 // =============================================
-
 export async function getAiStatus(
   _request: Request,
   params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
   await checkRateLimit(ctx, 'read');
-
   const id = validateUUID(params['id'], 'id');
   const db = createDb(ctx);
-
   const { item } = await verifyItemOwnership(db, id, ctx.orgId);
-
   return jsonResponse({
     success: true,
     data: {

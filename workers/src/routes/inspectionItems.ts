@@ -461,7 +461,7 @@ export async function createInspectionItem(
   // immediately so the Defect Tracker is always up to date.
   // Fire-and-forget: never blocks the response to the client.
   if (inspectionStatus === 'signed' && defects.length > 0) {
-    void extractItemDefects(
+    await extractItemDefects(
       db, ctx, inspectionId, siteId,
       data['id'] as string, assetId,
       defects, logger,

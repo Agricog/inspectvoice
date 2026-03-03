@@ -11,9 +11,16 @@
  *
  * State Machine (enforced here):
  *   DRAFT → REVIEW → SIGNED → EXPORTED
+ *   DRAFT → SIGNED (auto-steps through review — single-session sign-off)
  *   - No backward transitions after SIGNED
  *   - SIGNED/EXPORTED inspections are immutable
  *   - Signature data is write-once (cannot be modified)
+ *
+ * FIX: 3 Mar 2026
+ *   - Allow draft→signed transition. The offline-first client completes
+ *     capture and sign-off in a single session without a separate "review"
+ *     API call. The server now accepts this and auto-steps through review,
+ *     writing both audit events for traceability.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -64,10 +71,15 @@ const INSPECTION_SORT_COLUMNS = [
   'inspection_date', 'created_at', 'updated_at', 'status', 'inspection_type',
 ] as const;
 
-/** Valid state transitions (forward only) */
+/**
+ * Valid state transitions (forward only, with auto-step support).
+ * draft→signed is allowed because the offline-first client completes
+ * the full capture + review + sign-off workflow locally. The server
+ * auto-steps through 'review' for audit trail completeness.
+ */
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  'draft': ['review'],
-  'review': ['signed', 'draft'],  // Allow back to draft from review only
+  'draft': ['review', 'signed'],
+  'review': ['signed', 'draft'],
   'signed': ['exported'],
   'exported': [],
 };
@@ -318,15 +330,26 @@ export async function updateInspection(
   if ('metadata' in body) data['metadata'] = body['metadata'];
 
   // ── SIGN-OFF HANDLING ──
-  // If transitioning to 'signed', capture immutable signature data
+  // If transitioning to 'signed', capture immutable signature data.
+  // If jumping from draft→signed, auto-step through review for audit trail.
   if (newStatus === 'signed') {
     data['signed_by'] = validateString(body['signed_by'] as unknown, 'signed_by', { maxLength: 200 });
     data['signed_at'] = new Date().toISOString();
     data['signature_ip_address'] = request.headers.get('CF-Connecting-IP') ?? null;
 
+    // Auto-step: draft→signed writes an intermediate review audit event
+    if (currentStatus === 'draft') {
+      void writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
+        from: 'draft',
+        to: 'review',
+        auto_stepped: true,
+      }, request);
+    }
+
     logger.info('Inspection signed', {
       inspectionId: id,
       signedBy: data['signed_by'] as string,
+      autoStepped: currentStatus === 'draft',
     });
   }
 

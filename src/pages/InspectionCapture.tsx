@@ -831,6 +831,35 @@ export default function InspectionCapture(): JSX.Element {
         return next;
       });
 
+      // Persist condition rating to asset cache so the baseline comparison
+      // shows "Then: Fair" (etc.) on the NEXT inspection visit.
+      // Also updates last_inspection_condition for the asset register display.
+      if (captureState.condition) {
+        try {
+          await assetsCache.put({
+            ...currentAsset,
+            baseline_condition: captureState.condition,
+            last_inspection_condition: captureState.condition,
+          } as Asset);
+
+          // Update in-memory assets so baseline reads the new condition
+          setAssets((prev) =>
+            prev.map((a) =>
+              a.id === currentAsset.id
+                ? ({
+                    ...a,
+                    baseline_condition: captureState.condition,
+                    last_inspection_condition: captureState.condition,
+                  } as Asset)
+                : a,
+            ),
+          );
+        } catch (cacheError) {
+          // Non-blocking — baseline label is cosmetic
+          captureError(cacheError, { module: 'InspectionCapture', operation: 'updateBaselineCondition' });
+        }
+      }
+
       setCaptureState((prev) => ({ ...prev, saved: true }));
 
       if (currentIndex < totalAssets - 1) {

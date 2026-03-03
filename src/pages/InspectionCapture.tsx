@@ -101,6 +101,7 @@ interface CustomChecklistItem {
 
 interface AssetCaptureState {
   checklistCompleted: Record<number, boolean>;
+  checklistDismissed: number[];
   customChecklist: CustomChecklistItem[];
   voiceTranscript: string;
   hasAudioRecording: boolean;
@@ -115,6 +116,7 @@ interface AssetCaptureState {
 function createEmptyCaptureState(): AssetCaptureState {
   return {
     checklistCompleted: {},
+    checklistDismissed: [],
     customChecklist: [],
     voiceTranscript: '',
     hasAudioRecording: false,
@@ -334,10 +336,14 @@ export default function InspectionCapture(): JSX.Element {
       )
     : [];
 
-  // Checklist completion counts
-  const standardCompleted = Object.values(captureState.checklistCompleted).filter(Boolean).length;
+  // Checklist completion counts (exclude dismissed standard items)
+  const dismissedSet = new Set(captureState.checklistDismissed);
+  const activeChecklistPoints = checklistPoints.filter((_, idx) => !dismissedSet.has(idx));
+  const standardCompleted = Object.entries(captureState.checklistCompleted)
+    .filter(([idx, done]) => done && !dismissedSet.has(Number(idx)))
+    .length;
   const customCompleted = captureState.customChecklist.filter((c) => c.completed).length;
-  const totalChecks = checklistPoints.length + captureState.customChecklist.length;
+  const totalChecks = activeChecklistPoints.length + captureState.customChecklist.length;
   const completedChecks = standardCompleted + customCompleted;
 
   const assetRecord = currentAsset ? (currentAsset as unknown as Record<string, unknown>) : null;
@@ -696,6 +702,18 @@ export default function InspectionCapture(): JSX.Element {
     }));
   }, []);
 
+  const handleDismissChecklistItem = useCallback((index: number) => {
+    setCaptureState((prev) => {
+      // Remove from completed and add to dismissed
+      const { [index]: _, ...remainingCompleted } = prev.checklistCompleted;
+      return {
+        ...prev,
+        checklistCompleted: remainingCompleted,
+        checklistDismissed: [...prev.checklistDismissed, index],
+      };
+    });
+  }, []);
+
   // =============================================
   // CUSTOM CHECKLIST HANDLERS
   // =============================================
@@ -1045,7 +1063,7 @@ export default function InspectionCapture(): JSX.Element {
       </div>
 
       {/* ── Checklist (Standard + Custom) ── */}
-      {(checklistPoints.length > 0 || captureState.customChecklist.length > 0) && (
+      {(activeChecklistPoints.length > 0 || captureState.customChecklist.length > 0) && (
         <div className="iv-panel p-4 mb-4">
           <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
             <Eye className="w-4 h-4 text-[#22C55E]" />
@@ -1062,22 +1080,36 @@ export default function InspectionCapture(): JSX.Element {
           </h3>
 
           {/* Standard BS EN checklist points */}
-          {checklistPoints.length > 0 && (
+          {activeChecklistPoints.length > 0 && (
             <div className="space-y-2">
-              {checklistPoints.map((point, idx) => (
-                <label key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] cursor-pointer transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(captureState.checklistCompleted[idx])}
-                    onChange={() => handleChecklistToggle(idx)}
-                    className="mt-0.5 w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0"
-                  />
-                  <div>
-                    <p className="text-sm iv-text">{point.label}</p>
-                    <p className="text-xs iv-muted mt-0.5">{point.description}</p>
+              {checklistPoints.map((point, idx) => {
+                if (dismissedSet.has(idx)) return null;
+                return (
+                  <div key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] group transition-colors">
+                    <label className="flex items-start gap-3 flex-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(captureState.checklistCompleted[idx])}
+                        onChange={() => handleChecklistToggle(idx)}
+                        className="mt-0.5 w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0"
+                      />
+                      <div>
+                        <p className="text-sm iv-text">{point.label}</p>
+                        <p className="text-xs iv-muted mt-0.5">{point.description}</p>
+                      </div>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleDismissChecklistItem(idx)}
+                      className="iv-btn-icon text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5"
+                      aria-label={`Remove: ${point.label}`}
+                      title="Remove from checklist"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                </label>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1118,7 +1150,7 @@ export default function InspectionCapture(): JSX.Element {
       )}
 
       {/* Show Add Custom Check even when no standard checklist points exist */}
-      {checklistPoints.length === 0 && captureState.customChecklist.length === 0 && (
+      {activeChecklistPoints.length === 0 && captureState.customChecklist.length === 0 && (
         <div className="iv-panel p-4 mb-4">
           <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
             <Eye className="w-4 h-4 text-[#22C55E]" />

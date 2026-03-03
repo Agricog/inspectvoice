@@ -4,10 +4,13 @@
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
- * FIX: 2 Mar 2026
- *   - Baseline photo now tracks latest captured photo (not just first)
+ * FIX: 3 Mar 2026
+ *   - Defect templates: [PLACEHOLDER] tokens render as labeled input fields
+ *     with live assembled preview (DefectTemplateFiller component)
+ *   - Baseline persistence: Update Baseline now persists to local IndexedDB
+ *     asset cache so it survives navigation and page reloads
+ *   - Photo baseline tracks latest captured photo
  *   - Photo removal properly updates baseline current photo
- *   - Defect descriptions editable inline (inspectors fill in [LOCATION] etc.)
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
@@ -70,6 +73,7 @@ import BaselineComparison from '@components/BaselineComparison';
 import type { BaselinePhoto, CurrentPhoto } from '@components/BaselineComparison';
 import DefectQuickPick from '@components/DefectQuickPick';
 import type { QuickPickSelection } from '@components/DefectQuickPick';
+import DefectTemplateFiller from '@components/DefectTemplateFiller';
 
 // =============================================
 // HELPERS
@@ -487,7 +491,7 @@ export default function InspectionCapture(): JSX.Element {
     }));
     setPhotoThumbnails(remaining);
 
-    // Update baseline current photo: use last remaining photo, or clear
+    // Update baseline current photo: use last remaining, or clear
     if (remaining.length === 0) {
       setFirstPhotoBase64(null);
     } else {
@@ -503,7 +507,7 @@ export default function InspectionCapture(): JSX.Element {
   }, [photoThumbnails]);
 
   // =============================================
-  // SET AS BASELINE HANDLER
+  // SET AS BASELINE HANDLER (with local persistence)
   // =============================================
 
   const handleSetBaseline = useCallback(async () => {
@@ -511,12 +515,45 @@ export default function InspectionCapture(): JSX.Element {
     setSettingBaseline(true);
     try {
       const now = new Date().toISOString();
+      const baselineSrc = `data:image/jpeg;base64,${firstPhotoBase64}`;
+
+      // 1. Set local baseline state for immediate UI update
       setLocalBaseline({
-        src: `data:image/jpeg;base64,${firstPhotoBase64}`,
+        src: baselineSrc,
         takenAt: now,
         takenBy: 'Inspector',
         condition: captureState.condition,
       });
+
+      // 2. Persist baseline to local IndexedDB asset cache
+      //    This survives navigation and page reloads.
+      //    Extra fields beyond the Asset type are stored by IndexedDB and
+      //    read back via the Record<string, unknown> cast in the baseline reader.
+      await assetsCache.put({
+        ...currentAsset,
+        baseline_photo_url: baselineSrc,
+        baseline_photo_taken_at: now,
+        baseline_photo_taken_by: 'Inspector',
+        baseline_condition: captureState.condition,
+      } as Asset);
+
+      // 3. Update in-memory assets state so the component re-reads the
+      //    baseline from the updated asset without needing a full reload
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.id === currentAsset.id
+            ? ({
+                ...a,
+                baseline_photo_url: baselineSrc,
+                baseline_photo_taken_at: now,
+                baseline_photo_taken_by: 'Inspector',
+                baseline_condition: captureState.condition,
+              } as Asset)
+            : a,
+        ),
+      );
+
+      // 4. Save reference photo to pending queue for eventual R2 upload
       try {
         await pendingPhotos.add({
           inspection_item_id: '',
@@ -1006,49 +1043,29 @@ export default function InspectionCapture(): JSX.Element {
           <BookOpen className="w-4 h-4" />Common Defects
         </button>
         {captureState.manualDefects.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {captureState.manualDefects.map((defect, idx) => (
               <div key={idx} className="p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2 min-w-0 flex-1">
-                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-2 ${
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                       defect.risk_rating === 'very_high' ? 'bg-[#EF4444]' :
                       defect.risk_rating === 'high' ? 'bg-[#F97316]' :
                       defect.risk_rating === 'medium' ? 'bg-[#EAB308]' :
                       'bg-[#22C55E]'
                     }`} />
-                    <div className="min-w-0 flex-1 space-y-2">
-                      {/* Editable description — fill in [LOCATION], [DEPTH] etc. */}
-                      <textarea
-                        value={defect.description}
-                        onChange={(e) => handleUpdateDefectField(idx, 'description', e.target.value)}
-                        rows={2}
-                        className="iv-input w-full text-sm resize-y"
-                        placeholder="Fill in [LOCATION], [DEPTH] etc."
-                      />
-                      {/* Editable remedial action */}
-                      {defect.remedial_action && (
-                        <textarea
-                          value={defect.remedial_action}
-                          onChange={(e) => handleUpdateDefectField(idx, 'remedial_action', e.target.value)}
-                          rows={2}
-                          className="iv-input w-full text-sm resize-y"
-                          placeholder="Remedial action..."
-                        />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-2xs iv-muted">
+                        {RISK_RATING_LABELS[defect.risk_rating as RiskRating] ?? defect.risk_rating}
+                      </span>
+                      {defect.bs_en_reference && (
+                        <span className="text-2xs text-iv-accent">{defect.bs_en_reference}</span>
                       )}
-                      <div className="flex flex-wrap items-center gap-2">
+                      {defect.action_timeframe && (
                         <span className="text-2xs iv-muted">
-                          {RISK_RATING_LABELS[defect.risk_rating as RiskRating] ?? defect.risk_rating}
+                          {ACTION_TIMEFRAME_LABELS[defect.action_timeframe as ActionTimeframe] ?? defect.action_timeframe}
                         </span>
-                        {defect.bs_en_reference && (
-                          <span className="text-2xs text-iv-accent">{defect.bs_en_reference}</span>
-                        )}
-                        {defect.action_timeframe && (
-                          <span className="text-2xs iv-muted">
-                            {ACTION_TIMEFRAME_LABELS[defect.action_timeframe as ActionTimeframe] ?? defect.action_timeframe}
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
                   <button
@@ -1060,6 +1077,30 @@ export default function InspectionCapture(): JSX.Element {
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
+                {/* Description — template filler or plain textarea */}
+                <div className="mb-2">
+                  <p className="text-2xs iv-muted uppercase tracking-wider mb-1">Description</p>
+                  <DefectTemplateFiller
+                    key={`desc-${idx}-${defect.description.substring(0, 20)}`}
+                    value={defect.description}
+                    onChange={(filled) => handleUpdateDefectField(idx, 'description', filled)}
+                    placeholder="Describe the defect..."
+                  />
+                </div>
+
+                {/* Remedial action — also supports template placeholders */}
+                {defect.remedial_action && (
+                  <div>
+                    <p className="text-2xs iv-muted uppercase tracking-wider mb-1">Remedial Action</p>
+                    <DefectTemplateFiller
+                      key={`remedy-${idx}-${defect.remedial_action.substring(0, 20)}`}
+                      value={defect.remedial_action}
+                      onChange={(filled) => handleUpdateDefectField(idx, 'remedial_action', filled)}
+                      placeholder="Remedial action..."
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>

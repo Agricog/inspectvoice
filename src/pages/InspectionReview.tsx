@@ -48,8 +48,9 @@ import {
   Thermometer,
   User,
   Clock,
+  Download,
 } from 'lucide-react';
-import { inspections, inspectionItems, assetsCache } from '@services/offlineStore';
+import { inspections, inspectionItems, assetsCache, sitesCache } from '@services/offlineStore';
 import { syncService } from '@services/syncService';
 import { captureError } from '@utils/errorTracking';
 import {
@@ -62,7 +63,7 @@ import {
   ACTION_TIMEFRAME_LABELS,
   ActionTimeframe,
 } from '@/types';
-import type { Inspection, InspectionItem, DefectDetail } from '@/types';
+import type { Inspection, InspectionItem, DefectDetail, Site, Asset } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
 import CompletenessCheckModal from '@components/CompletenessCheckModal';
 import { NormaliseButton } from '@components/NormaliseButton';
@@ -72,6 +73,8 @@ import type {
   NormalisableField,
   NormaliseFieldRequest,
 } from '@/types/normalisation';
+import { downloadReport } from '@services/pdfReport';
+import type { ReportData } from '@services/pdfReport';
 
 // =============================================
 // BATCH MAPPING — tracks which result maps to which local state field
@@ -435,6 +438,8 @@ export default function InspectionReview(): JSX.Element {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [items, setItems] = useState<InspectionItem[]>([]);
   const [customTypeNames, setCustomTypeNames] = useState<CustomTypeNameMap>(new Map());
+  const [site, setSite] = useState<Site | null>(null);
+  const [siteAssets, setSiteAssets] = useState<Asset[]>([]);
 
   // ---- Form ----
   const [summary, setSummary] = useState('');
@@ -456,6 +461,10 @@ export default function InspectionReview(): JSX.Element {
   const [batchResults, setBatchResults] = useState<NormaliseResult[]>([]);
   const [batchMappings, setBatchMappings] = useState<BatchFieldMapping[]>([]);
   const [showNormalisationReview, setShowNormalisationReview] = useState(false);
+
+  // ---- PDF generation ----
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   // ---- Load data ----
   useEffect(() => {
@@ -483,18 +492,29 @@ export default function InspectionReview(): JSX.Element {
         const itemList = localItems.map((li) => li.data);
         setItems(itemList);
 
+        // ── Load site for PDF generation ──
+        try {
+          const cachedSite = await sitesCache.get(siteId!);
+          if (cachedSite) setSite(cachedSite.data);
+        } catch (siteError) {
+          captureError(siteError, { module: 'InspectionReview', operation: 'loadSite' });
+        }
+
         // ── Build custom type name lookup from cached assets ──
         try {
           const cachedAssets = await assetsCache.getBySite(siteId!);
           const nameMap: CustomTypeNameMap = new Map();
+          const assetList: Asset[] = [];
           for (const ca of cachedAssets) {
             const asset = ca.data;
+            assetList.push(asset);
             const meta = asset.metadata as Record<string, unknown> | null | undefined;
             if (meta && typeof meta === 'object' && typeof meta.custom_type_name === 'string' && meta.custom_type_name) {
               nameMap.set(asset.id, meta.custom_type_name);
             }
           }
           setCustomTypeNames(nameMap);
+          setSiteAssets(assetList);
         } catch (assetError) {
           captureError(assetError, { module: 'InspectionReview', operation: 'loadAssetCustomNames' });
         }
@@ -733,6 +753,30 @@ export default function InspectionReview(): JSX.Element {
   const handleBackToSite = useCallback(() => {
     navigate(`/sites/${siteId}`, { replace: true });
   }, [navigate, siteId]);
+
+  // ---- PDF download ----
+  const handleDownloadPdf = useCallback(async () => {
+    if (!inspection || !site) return;
+    setGeneratingPdf(true);
+    setPdfError(null);
+
+    try {
+      const reportData: ReportData = {
+        inspection,
+        items,
+        site,
+        assets: siteAssets,
+        orgName: 'InspectVoice', // TODO: pull from org settings
+      };
+
+      await downloadReport(reportData);
+    } catch (error) {
+      captureError(error, { module: 'InspectionReview', operation: 'downloadPdf' });
+      setPdfError('Failed to generate PDF. Please try again.');
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }, [inspection, items, site, siteAssets]);
 
   // =============================================
   // RENDER: LOADING / ERROR
@@ -997,15 +1041,33 @@ export default function InspectionReview(): JSX.Element {
         <div className="space-y-3 mb-6">
           <button
             type="button"
-            onClick={handleBackToSite}
+            onClick={() => void handleDownloadPdf()}
+            disabled={generatingPdf || !site}
             className="iv-btn-primary w-full flex items-center justify-center gap-2"
+          >
+            {generatingPdf ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Generating PDF…
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Download PDF Report
+              </>
+            )}
+          </button>
+          {pdfError && (
+            <p className="text-xs text-[#EF4444] text-center">{pdfError}</p>
+          )}
+          <button
+            type="button"
+            onClick={handleBackToSite}
+            className="iv-btn-secondary w-full flex items-center justify-center gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Site
           </button>
-          <p className="text-xs iv-muted text-center">
-            PDF report will be generated when data syncs to the server.
-          </p>
         </div>
       </div>
     );

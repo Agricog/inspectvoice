@@ -24,6 +24,10 @@
  *   - Added defect extraction on sign-off: embedded inspection_items.defects[]
  *     are written as individual rows to the defects table so the Defect Tracker
  *     page has data to query.
+ *   - All async calls changed from void to await. Cloudflare Workers terminate
+ *     pending void promises when the response is sent, so fire-and-forget
+ *     patterns silently fail. All functions use try-catch internally so
+ *     awaiting them cannot crash the response.
  *
  * Build Standard: Autaimate v3 -- TypeScript strict, zero any, production-ready
  */
@@ -84,7 +88,6 @@ const IMMUTABLE_STATUSES = new Set(['signed', 'exported']);
 // =============================================
 // DEFECT EXTRACTION (sign-off pipeline)
 // =============================================
-
 /** Calculate due_date from action_timeframe */
 function calculateDueDate(timeframe: string | undefined): string | null {
   if (!timeframe) return null;
@@ -105,13 +108,13 @@ function calculateDueDate(timeframe: string | undefined): string | null {
       return null; // next_inspection, routine -- no fixed date
   }
 }
-
 /**
  * Extract embedded defects from inspection_items into the defects table.
  * Called when an inspection transitions to 'signed'.
  *
- * Fire-and-forget: wrapped in try-catch so extraction failure
- * never blocks the sign-off response. Logs errors for debugging.
+ * MUST be awaited — Cloudflare Workers terminate pending void promises
+ * when the response is sent. The try-catch inside ensures extraction
+ * failure can never crash the response — safe to await unconditionally.
  *
  * Idempotent: skips if defects already exist for this inspection
  * (guards against duplicate extraction on retry).
@@ -133,7 +136,6 @@ async function extractDefectsToTable(
       logger.info('Defects already extracted, skipping', { inspectionId });
       return;
     }
-
     // Fetch inspection items that have defects
     const items = await db.rawQuery<Record<string, unknown>>(
       ` SELECT id, asset_id, defects
@@ -143,26 +145,20 @@ async function extractDefectsToTable(
          AND defects::text != '[]' `,
       [inspectionId],
     );
-
     if (items.length === 0) {
       logger.info('No defects to extract', { inspectionId });
       return;
     }
-
     const now = new Date().toISOString();
     let extractedCount = 0;
-
     for (const item of items) {
       const defectsRaw = item['defects'];
       const defects = (
         typeof defectsRaw === 'string' ? JSON.parse(defectsRaw) : defectsRaw
       ) as Array<Record<string, unknown>>;
-
       if (!Array.isArray(defects) || defects.length === 0) continue;
-
       for (const defect of defects) {
         const dueDate = calculateDueDate(defect['action_timeframe'] as string | undefined);
-
         await db.rawExecute(
           ` INSERT INTO defects (
             id, org_id, inspection_item_id, inspection_id, site_id, asset_id,
@@ -201,10 +197,8 @@ async function extractDefectsToTable(
         extractedCount++;
       }
     }
-
     logger.info('Defects extracted to table', { inspectionId, count: extractedCount });
-
-    void writeAuditLog(ctx, 'defects.extracted' as Parameters<typeof writeAuditLog>[1], 'inspections', inspectionId, {
+    await writeAuditLog(ctx, 'defects.extracted' as Parameters<typeof writeAuditLog>[1], 'inspections', inspectionId, {
       count: extractedCount,
       source: 'sign_off_extraction',
     });
@@ -353,18 +347,17 @@ export async function createInspection(
     data.signature_ip_address = request.headers.get('CF-Connecting-IP') ?? null;
   }
   const inspection = await db.insert('inspections', data);
-  void writeAuditLog(ctx, 'inspection.created', 'inspections', data.id, {
+  await writeAuditLog(ctx, 'inspection.created', 'inspections', data.id, {
     inspection_type: data.inspection_type,
     site_id: siteId,
     status: data.status,
   }, request);
-
   // Extract defects to standalone table when created as signed
+  // MUST await — Cloudflare Workers kill void promises on response send
   if (data.status === 'signed') {
     const logger = Logger.fromContext(ctx);
-    void extractDefectsToTable(db, ctx, data.id, siteId, logger);
+    await extractDefectsToTable(db, ctx, data.id, siteId, logger);
   }
-
   return jsonResponse({
     success: true,
     data: inspection,
@@ -438,7 +431,7 @@ export async function updateInspection(
     data['signature_ip_address'] = request.headers.get('CF-Connecting-IP') ?? null;
     // Auto-step: draft->signed writes an intermediate review audit event
     if (currentStatus === 'draft') {
-      void writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
+      await writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
         from: 'draft',
         to: 'review',
         auto_stepped: true,
@@ -459,28 +452,27 @@ export async function updateInspection(
     return jsonResponse({ success: true, data: existing }, ctx.requestId);
   }
   const updated = await db.updateById('inspections', id, data);
-
   // -- DEFECT EXTRACTION (on sign-off) --
+  // MUST await — Cloudflare Workers kill void promises on response send
   if (newStatus === 'signed') {
     const siteId = (existing['site_id'] ?? data['site_id']) as string;
-    void extractDefectsToTable(db, ctx, id, siteId, logger);
+    await extractDefectsToTable(db, ctx, id, siteId, logger);
   }
-
   // Audit -- track status changes specially
   if (newStatus && newStatus !== currentStatus) {
-    void writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
+    await writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
       from: currentStatus,
       to: newStatus,
     }, request);
     if (newStatus === 'signed') {
-      void writeAuditLog(ctx, 'inspection.signed', 'inspections', id, {
+      await writeAuditLog(ctx, 'inspection.signed', 'inspections', id, {
         signed_by: data['signed_by'],
       }, request);
     }
   } else {
     const changes = buildChanges(existing, data);
     if (Object.keys(changes).length > 0) {
-      void writeAuditLog(ctx, 'inspection.updated', 'inspections', id, changes, request);
+      await writeAuditLog(ctx, 'inspection.updated', 'inspections', id, changes, request);
     }
   }
   return jsonResponse({
@@ -515,7 +507,7 @@ export async function deleteInspection(
     [id, ctx.orgId],
   );
   await db.deleteById('inspections', id);
-  void writeAuditLog(ctx, 'inspection.deleted', 'inspections', id, {
+  await writeAuditLog(ctx, 'inspection.deleted', 'inspections', id, {
     inspection_type: existing['inspection_type'],
     site_id: existing['site_id'],
     status: currentStatus,

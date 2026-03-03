@@ -9,13 +9,22 @@
  *   GET    /api/v1/inspection-items/:id/ai-status  — Poll AI processing status
  *
  * Tenant isolation: inspection_items → inspections → org_id
- * Items for signed inspections are immutable (except AI processing updates).
+ * Items for signed inspections are immutable (except AI processing updates
+ * and initial sync from the offline-first client).
  *
  * FIX: 3 Mar 2026
  *   - Defensive asset auto-creation: if the FK constraint on asset_id fails
  *     because the asset hasn't synced yet, the server creates a minimal asset
  *     record using asset_code, asset_type, and the inspection's site_id.
  *     This prevents cascading sync failures in the offline-first workflow.
+ *   - ensureAssetExists now includes org_id in the INSERT — the assets table
+ *     has a NOT NULL org_id column, so omitting it caused the insert to fail
+ *     silently, leaving the FK violation unresolved.
+ *   - Relaxed signed-inspection guard for item creation: in the offline-first
+ *     workflow, the inspection syncs (possibly already as signed) before items
+ *     arrive. Blocking item creation on signed inspections broke the sync
+ *     pipeline. Items are now allowed through on creation; updates to signed
+ *     inspections remain blocked (except AI processing).
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -116,6 +125,10 @@ async function verifyItemOwnership(
  * This is a defensive measure for offline-first sync ordering issues.
  * The asset record will be updated with full details when the asset
  * sync eventually succeeds (upsert pattern).
+ *
+ * FIX: org_id is now included in the INSERT. The assets table has a
+ * NOT NULL org_id column — omitting it caused the INSERT to fail
+ * silently (caught by try-catch), leaving the FK violation unresolved.
  */
 async function ensureAssetExists(
   db: ReturnType<typeof createDb>,
@@ -123,6 +136,7 @@ async function ensureAssetExists(
   assetCode: string,
   assetType: string,
   siteId: string,
+  orgId: string,
   logger: Logger,
 ): Promise<void> {
   // Check if asset already exists (fast path)
@@ -133,14 +147,14 @@ async function ensureAssetExists(
 
   if (existing.length > 0) return;
 
-  // Asset doesn't exist — create a minimal record
+  // Asset doesn't exist — create a minimal record including org_id
   const now = new Date().toISOString();
   try {
     await db.rawQuery(
-      `INSERT INTO assets (id, site_id, asset_code, asset_type, asset_category, is_active, metadata, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'other', true, '{}'::jsonb, $5, $5)
+      `INSERT INTO assets (id, org_id, site_id, asset_code, asset_type, asset_category, is_active, metadata, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'other', true, '{}'::jsonb, $6, $6)
        ON CONFLICT (id) DO NOTHING`,
-      [assetId, siteId, assetCode, assetType, now],
+      [assetId, orgId, siteId, assetCode, assetType, now],
     );
 
     logger.info('Auto-created missing asset for sync', {
@@ -148,6 +162,7 @@ async function ensureAssetExists(
       assetCode,
       assetType,
       siteId,
+      orgId,
     });
   } catch (insertError) {
     // If this also fails (e.g. site doesn't exist), let the original
@@ -211,10 +226,17 @@ export async function createInspectionItem(
   const inspectionId = validateUUID(body['inspection_id'], 'inspection_id');
   const inspection = await verifyInspectionOwnership(db, inspectionId, ctx.orgId);
 
-  // Cannot add items to signed/exported inspections
+  // Offline-first sync: items may arrive AFTER the inspection has been signed.
+  // The client completes capture + sign-off locally, then syncs in order:
+  //   1. Inspection (arrives as 'signed')
+  //   2. Inspection items (arrive after — must be allowed through)
+  //
+  // We only block item creation for 'exported' inspections, which indicates
+  // the inspection has been fully finalised and distributed. Updates to
+  // signed inspection items remain blocked (see updateInspectionItem).
   const inspectionStatus = inspection['status'] as string;
-  if (inspectionStatus === 'signed' || inspectionStatus === 'exported') {
-    throw new ConflictError('Cannot add items to a signed or exported inspection');
+  if (inspectionStatus === 'exported') {
+    throw new ConflictError('Cannot add items to an exported inspection');
   }
 
   // Parse defects array if provided
@@ -232,7 +254,7 @@ export async function createInspectionItem(
   // If the offline client created the asset locally but sync hasn't
   // reached the server yet, auto-create a minimal asset record.
   if (assetId) {
-    await ensureAssetExists(db, assetId, assetCode, assetType, siteId, logger);
+    await ensureAssetExists(db, assetId, assetCode, assetType, siteId, ctx.orgId, logger);
   }
 
   const data: Record<string, unknown> = {

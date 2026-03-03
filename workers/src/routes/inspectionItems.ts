@@ -25,6 +25,11 @@
  *     arrive. Blocking item creation on signed inspections broke the sync
  *     pipeline. Items are now allowed through on creation; updates to signed
  *     inspections remain blocked (except AI processing).
+ *   - Per-item defect extraction: when an item with defects arrives for a
+ *     signed inspection, defects are extracted to the defects table inline.
+ *     This solves the offline-first timing issue where the sign-off extraction
+ *     ran before items existed on the server. Self-contained — no cross-file
+ *     imports from inspections.ts.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
@@ -175,6 +180,150 @@ async function ensureAssetExists(
 }
 
 // =============================================
+// HELPER: Calculate due date from timeframe
+// =============================================
+
+/** Map action_timeframe to a concrete due date relative to now. */
+function calculateDueDate(timeframe: string | undefined): string | null {
+  if (!timeframe) return null;
+  const now = new Date();
+  switch (timeframe) {
+    case 'immediate':
+      return now.toISOString().slice(0, 10);
+    case '48_hours':
+      now.setDate(now.getDate() + 2);
+      return now.toISOString().slice(0, 10);
+    case '1_week':
+      now.setDate(now.getDate() + 7);
+      return now.toISOString().slice(0, 10);
+    case '1_month':
+      now.setDate(now.getDate() + 30);
+      return now.toISOString().slice(0, 10);
+    default:
+      return null; // next_inspection, routine — no fixed date
+  }
+}
+
+// =============================================
+// HELPER: Extract defects from a single item
+// =============================================
+
+/**
+ * Extract defects from a newly-synced inspection item into the standalone
+ * defects table. Called when an item with defects arrives for an
+ * already-signed inspection.
+ *
+ * WHY THIS EXISTS:
+ * In the offline-first workflow the inspection signs off locally and syncs
+ * first. The sign-off extraction in inspections.ts runs but finds no items
+ * (they haven't synced yet). This function is the second chance — it runs
+ * per-item as items arrive, ensuring defects always reach the defects table
+ * regardless of sync ordering.
+ *
+ * SAFETY:
+ *   - Fire-and-forget: wrapped in try-catch so extraction failure never
+ *     blocks the item creation response.
+ *   - Idempotent: checks for existing defects with the same
+ *     inspection_item_id + description before inserting.
+ *   - Self-contained: no cross-file imports. Duplicates the
+ *     calculateDueDate logic from inspections.ts deliberately to avoid
+ *     coupling between route handlers.
+ */
+async function extractItemDefects(
+  db: ReturnType<typeof createDb>,
+  ctx: RequestContext,
+  inspectionId: string,
+  siteId: string,
+  itemId: string,
+  assetId: string | null,
+  defects: unknown[],
+  logger: Logger,
+): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    let extractedCount = 0;
+
+    for (const raw of defects) {
+      const defect = raw as Record<string, unknown>;
+      const description = (defect['description'] as string) ?? '';
+      if (!description) continue;
+
+      const dueDate = calculateDueDate(defect['action_timeframe'] as string | undefined);
+
+      // Idempotency guard: skip if this exact defect was already extracted
+      // (e.g. by the sign-off extraction in inspections.ts on a retry)
+      const exists = await db.rawQuery<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM defects
+         WHERE inspection_item_id = $1 AND description = $2`,
+        [itemId, description],
+      );
+
+      if ((exists[0]?.count ?? 0) > 0) continue;
+
+      await db.rawExecute(
+        `INSERT INTO defects (
+          id, org_id, inspection_item_id, inspection_id, site_id, asset_id,
+          description, bs_en_reference, severity, remedial_action,
+          action_timeframe, status, source, estimated_cost_gbp,
+          due_date, made_safe, asset_closed, metadata, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17, $18::jsonb, $19, $20
+        )`,
+        [
+          crypto.randomUUID(),                                     // id
+          ctx.orgId,                                               // org_id
+          itemId,                                                  // inspection_item_id
+          inspectionId,                                            // inspection_id
+          siteId,                                                  // site_id
+          assetId,                                                 // asset_id
+          description,                                             // description
+          (defect['bs_en_reference'] as string) ?? null,           // bs_en_reference
+          (defect['risk_rating'] as string) ?? 'medium',           // severity
+          (defect['remedial_action'] as string) ?? '',             // remedial_action
+          (defect['action_timeframe'] as string) ?? 'routine',     // action_timeframe
+          'open',                                                  // status
+          'inspection',                                            // source
+          (defect['estimated_cost_band'] as string) ?? null,       // estimated_cost_gbp
+          dueDate,                                                 // due_date
+          false,                                                   // made_safe
+          false,                                                   // asset_closed
+          JSON.stringify({ extracted_from: 'item_sync', original: defect }), // metadata
+          now,                                                     // created_at
+          now,                                                     // updated_at
+        ],
+      );
+      extractedCount++;
+    }
+
+    if (extractedCount > 0) {
+      logger.info('Defects extracted from synced item', {
+        inspectionId,
+        itemId,
+        count: extractedCount,
+      });
+
+      void writeAuditLog(
+        ctx,
+        'defects.extracted' as Parameters<typeof writeAuditLog>[1],
+        'inspection_items',
+        itemId,
+        { count: extractedCount, source: 'item_sync' },
+      );
+    }
+  } catch (err) {
+    // Never block item creation — log and move on
+    logger.error('Failed to extract defects from item', {
+      itemId,
+      inspectionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+// =============================================
 // LIST ITEMS FOR INSPECTION
 // =============================================
 
@@ -304,6 +453,20 @@ export async function createInspectionItem(
     asset_code: data['asset_code'],
     asset_type: data['asset_type'],
   }, request);
+
+  // ── Defect extraction for signed inspections ──────────────────────
+  // In offline-first sync, the inspection arrives signed before items sync.
+  // The sign-off extraction in inspections.ts found no items and extracted
+  // nothing. Now that this item has landed with defects, extract them
+  // immediately so the Defect Tracker is always up to date.
+  // Fire-and-forget: never blocks the response to the client.
+  if (inspectionStatus === 'signed' && defects.length > 0) {
+    void extractItemDefects(
+      db, ctx, inspectionId, siteId,
+      data['id'] as string, assetId,
+      defects, logger,
+    );
+  }
 
   return jsonResponse({
     success: true,

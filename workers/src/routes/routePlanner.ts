@@ -128,7 +128,7 @@ export async function getRoutePlannerSites(
     const url = new URL(request.url);
     const filterUrgency = url.searchParams.get('urgency'); // overdue | due_today | due_this_week | due_this_month | all
     const filterUnassigned = url.searchParams.get('unassigned') === 'true';
-    const isPrivileged = ctx.userRole === 'org:admin' || ctx.userRole === 'org:manager';
+    const isPrivileged = ['admin', 'org:admin', 'manager', 'org:manager'].includes(ctx.userRole);
 
     // ── RBAC: site access ──
     let siteQuery: string;

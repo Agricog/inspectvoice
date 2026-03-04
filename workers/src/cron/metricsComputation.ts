@@ -6,16 +6,15 @@
  * Also callable via POST /api/v1/inspector-performance/compute (admin only).
  *
  * Computes monthly metrics per inspector per org from raw inspection data.
- * Strategy: UPSERT per (org, inspector, month, inspection_type).
- * Re-running is safe — always overwrites with latest data.
+ * Strategy: DELETE + INSERT per (org, inspector, month, inspection_type).
+ * Re-running is safe — always replaces with latest data.
  *
  * FIX: 4 Mar 2026
  *   - Replaced tagged template SQL composition with parameterised string queries.
- *     Neon's tagged template driver does NOT support fragment composition —
- *     sql`... ${sql`fragment`}` executes the fragment as a separate query and
- *     embeds the result object, causing silent failures.
- *   - All queries now use sql(queryString, params) form which supports
- *     conditional WHERE clauses safely.
+ *     Neon's tagged template driver does NOT support fragment composition.
+ *   - Changed UPSERT to DELETE+INSERT because PostgreSQL UNIQUE constraints
+ *     treat NULL as always distinct — ON CONFLICT never fires when
+ *     inspection_type IS NULL, causing duplicate rows on every run.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  */
@@ -329,7 +328,28 @@ async function computeForInspector(
   // ── Critical response time: placeholder ──
   const criticalResponseAvg: number | null = null;
 
-  // ── UPSERT ──
+  // ── DELETE then INSERT ──
+  // PostgreSQL UNIQUE constraints treat NULL as always distinct,
+  // so ON CONFLICT never fires when inspection_type IS NULL.
+  // We use explicit DELETE + INSERT to avoid duplicate rows.
+  if (inspectionType) {
+    await sql(
+      `DELETE FROM inspector_metrics_period
+       WHERE org_id = $1 AND inspector_user_id = $2
+         AND period_type = 'month' AND period_start = $3
+         AND inspection_type = $4`,
+      [orgId, inspectorUserId, periodStart, inspectionType],
+    );
+  } else {
+    await sql(
+      `DELETE FROM inspector_metrics_period
+       WHERE org_id = $1 AND inspector_user_id = $2
+         AND period_type = 'month' AND period_start = $3
+         AND inspection_type IS NULL`,
+      [orgId, inspectorUserId, periodStart],
+    );
+  }
+
   await sql(
     `INSERT INTO inspector_metrics_period (
        org_id, inspector_user_id, period_type, period_start, period_end,
@@ -346,28 +366,8 @@ async function computeForInspector(
        $12, $13, $14,
        $15, $16,
        $17, $18, $19,
-       $20, $21, NOW(), '1.1'
-     )
-     ON CONFLICT ON CONSTRAINT uq_metrics_period
-     DO UPDATE SET
-       inspections_completed = EXCLUDED.inspections_completed,
-       completeness_avg = EXCLUDED.completeness_avg,
-       completeness_counts = EXCLUDED.completeness_counts,
-       defects_total = EXCLUDED.defects_total,
-       defects_per_inspection_avg = EXCLUDED.defects_per_inspection_avg,
-       photo_compliance_pct = EXCLUDED.photo_compliance_pct,
-       normalisation_accept_rate = EXCLUDED.normalisation_accept_rate,
-       avg_time_to_signoff_seconds = EXCLUDED.avg_time_to_signoff_seconds,
-       overdue_rate = EXCLUDED.overdue_rate,
-       makesafe_initiated_count = EXCLUDED.makesafe_initiated_count,
-       makesafe_completed_count = EXCLUDED.makesafe_completed_count,
-       rework_rate = EXCLUDED.rework_rate,
-       critical_response_avg_seconds = EXCLUDED.critical_response_avg_seconds,
-       evidence_quality_pct = EXCLUDED.evidence_quality_pct,
-       completeness_variance = EXCLUDED.completeness_variance,
-       audit_flag_count = EXCLUDED.audit_flag_count,
-       computed_at = NOW(),
-       source_version = '1.1'`,
+       $20, $21, NOW(), '1.2'
+     )`,
     [
       orgId,                                                        // $1
       inspectorUserId,                                              // $2

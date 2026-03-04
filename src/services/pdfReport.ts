@@ -17,6 +17,14 @@
  * FIX: 3 Mar 2026
  *   - Added photoCountsByItem to ReportData for photo cross-referencing per asset
  *   - Renders "Photos: N captured" in accent green per asset when photos exist
+ *
+ * FIX: 4 Mar 2026
+ *   - Added sanitiseForPdf() to strip non-WinAnsi characters from all dynamic text.
+ *     pdf-lib StandardFonts only support WinAnsi encoding (Windows-1252). Any character
+ *     outside that range (emoji, CJK, extended Unicode from Whisper/AI output) throws
+ *     a silent error that was being swallowed by the catch handler.
+ *   - Replaced \u26A0 (warning triangle) with '!!' — not in WinAnsi range.
+ *   - Added console.error in downloadReport for debugging.
  */
 
 import {
@@ -123,11 +131,103 @@ export interface GeneratedReport {
 }
 
 // =============================================
+// WINANSI SANITISATION
+// =============================================
+
+/**
+ * Characters valid in WinAnsi (Windows-1252) encoding that pdf-lib
+ * StandardFonts support. Anything outside this set crashes pdf-lib silently.
+ *
+ * Valid ranges:
+ *   - U+0020–U+007E  (basic ASCII printable)
+ *   - U+00A0–U+00FF  (Latin-1 supplement)
+ *   - Specific Windows-1252 extras mapped from U+0080–U+009F range:
+ *     \u2026 (ellipsis), \u2014 (em dash), \u2013 (en dash), \u2018/\u2019 (quotes),
+ *     \u201C/\u201D (double quotes), \u2022 (bullet), \u2122 (TM), \u00B7 (middle dot), etc.
+ */
+const WINANSI_EXTRAS = new Set<number>([
+  0x20AC, // € Euro sign
+  0x201A, // ‚ single low-9 quote
+  0x0192, // ƒ latin small f with hook
+  0x201E, // „ double low-9 quote
+  0x2026, // … horizontal ellipsis
+  0x2020, // † dagger
+  0x2021, // ‡ double dagger
+  0x02C6, // ˆ modifier circumflex
+  0x2030, // ‰ per mille
+  0x0160, // Š S with caron
+  0x2039, // ‹ single left angle quote
+  0x0152, // Œ OE ligature
+  0x017D, // Ž Z with caron
+  0x2018, // ' left single quote
+  0x2019, // ' right single quote / apostrophe
+  0x201C, // " left double quote
+  0x201D, // " right double quote
+  0x2022, // • bullet
+  0x2013, // – en dash
+  0x2014, // — em dash
+  0x02DC, // ˜ small tilde
+  0x2122, // ™ trade mark
+  0x0161, // š s with caron
+  0x203A, // › single right angle quote
+  0x0153, // œ oe ligature
+  0x017E, // ž z with caron
+  0x0178, // Ÿ Y with diaeresis
+]);
+
+function isWinAnsiCodePoint(code: number): boolean {
+  // Basic ASCII printable + tab/newline
+  if (code === 0x09 || code === 0x0A || code === 0x0D) return true;
+  if (code >= 0x20 && code <= 0x7E) return true;
+  // Latin-1 supplement
+  if (code >= 0xA0 && code <= 0xFF) return true;
+  // Windows-1252 extras
+  return WINANSI_EXTRAS.has(code);
+}
+
+/**
+ * Replace common non-WinAnsi Unicode with WinAnsi equivalents,
+ * then strip anything still outside the valid range.
+ *
+ * Applied to ALL dynamic text before passing to pdf-lib drawText().
+ */
+function sanitiseForPdf(text: string): string {
+  // Common substitutions for characters Whisper/AI might produce
+  let result = text
+    .replace(/[\u2018\u2019\u201B\u02BC]/g, "'")   // smart single quotes → ASCII apostrophe
+    .replace(/[\u201C\u201D\u201F]/g, '"')            // smart double quotes → ASCII quote
+    .replace(/\u2026/g, '...')                         // ellipsis → three dots
+    .replace(/\u2014/g, ' - ')                         // em dash → spaced hyphen
+    .replace(/\u2013/g, '-')                           // en dash → hyphen
+    .replace(/\u00B0/g, ' deg ')                       // degree → text (safe in WinAnsi but sometimes garbled)
+    .replace(/\u2022/g, '- ')                          // bullet → dash
+    .replace(/\u00A0/g, ' ')                           // non-breaking space → regular space
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');      // zero-width chars → remove
+
+  // Strip any remaining non-WinAnsi characters
+  let cleaned = '';
+  for (let i = 0; i < result.length; i++) {
+    const code = result.charCodeAt(i);
+    if (isWinAnsiCodePoint(code)) {
+      cleaned += result[i];
+    }
+    // else: silently drop the character
+  }
+
+  return cleaned;
+}
+
+/** Sanitise a value that might be null/undefined */
+function safe(text: string | null | undefined): string {
+  return sanitiseForPdf(text ?? '');
+}
+
+// =============================================
 // HELPERS
 // =============================================
 
 function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '\u2014';
+  if (!dateStr) return '-';
   try {
     return new Date(dateStr).toLocaleDateString('en-GB', {
       day: 'numeric', month: 'long', year: 'numeric',
@@ -136,7 +236,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 function formatDateTime(dateStr: string | null): string {
-  if (!dateStr) return '\u2014';
+  if (!dateStr) return '-';
   try {
     return new Date(dateStr).toLocaleDateString('en-GB', {
       day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -175,8 +275,9 @@ function conditionColour(rating: ConditionRating | null): ReturnType<typeof rgb>
 }
 
 function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
+  const sanitised = sanitiseForPdf(text);
   const lines: string[] = [];
-  const paragraphs = text.split('\n');
+  const paragraphs = sanitised.split('\n');
   for (const paragraph of paragraphs) {
     if (paragraph.trim() === '') { lines.push(''); continue; }
     const words = paragraph.split(' ');
@@ -197,12 +298,13 @@ function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: numbe
 }
 
 function truncateText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string {
-  if (font.widthOfTextAtSize(text, fontSize) <= maxWidth) return text;
-  let truncated = text;
-  while (truncated.length > 0 && font.widthOfTextAtSize(truncated + '\u2026', fontSize) > maxWidth) {
+  const sanitised = sanitiseForPdf(text);
+  if (font.widthOfTextAtSize(sanitised, fontSize) <= maxWidth) return sanitised;
+  let truncated = sanitised;
+  while (truncated.length > 0 && font.widthOfTextAtSize(truncated + '...', fontSize) > maxWidth) {
     truncated = truncated.slice(0, -1);
   }
-  return truncated + '\u2026';
+  return truncated + '...';
 }
 
 function buildFilename(site: Site, inspection: Inspection): string {
@@ -237,7 +339,7 @@ function drawFooter(page: PDFPage, fonts: PDFFonts, reportId: string, pageNumber
   page.drawText(`Report: ${reportId}`, {
     x: MARGIN_LEFT, y: MARGIN_BOTTOM, size: FONT_SIZE_FOOTER, font: fonts.regular, color: COLOUR_MID_GREY,
   });
-  const confText = 'CONFIDENTIAL \u2014 For authorised use only';
+  const confText = 'CONFIDENTIAL - For authorised use only';
   const confWidth = fonts.italic.widthOfTextAtSize(confText, FONT_SIZE_FOOTER);
   page.drawText(confText, {
     x: (PAGE_WIDTH - confWidth) / 2, y: MARGIN_BOTTOM, size: FONT_SIZE_FOOTER, font: fonts.italic, color: COLOUR_MID_GREY,
@@ -272,7 +374,8 @@ function drawLabelValue(cursor: Cursor, fonts: PDFFonts, label: string, value: s
   cursor.page.drawText(label, {
     x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_MID_GREY,
   });
-  const valueLines = wrapText(value || '\u2014', fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - labelWidth);
+  const safeValue = sanitiseForPdf(value || '-');
+  const valueLines = wrapText(safeValue, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - labelWidth);
   for (let i = 0; i < valueLines.length; i++) {
     cursor.page.drawText(valueLines[i] ?? '', {
       x: MARGIN_LEFT + labelWidth, y: cursor.y - FONT_SIZE_BODY - (i * lineHeight), size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_BLACK,
@@ -284,12 +387,13 @@ function drawLabelValue(cursor: Cursor, fonts: PDFFonts, label: string, value: s
 
 function drawBadge(page: PDFPage, fonts: PDFFonts, text: string, x: number, y: number, textColour: ReturnType<typeof rgb>, bgColour: ReturnType<typeof rgb>): void {
   const fontSize = FONT_SIZE_SMALL;
-  const textWidth = fonts.bold.widthOfTextAtSize(text, fontSize);
+  const safeText = sanitiseForPdf(text);
+  const textWidth = fonts.bold.widthOfTextAtSize(safeText, fontSize);
   const padding = 6;
   const badgeWidth = textWidth + padding * 2;
   const badgeHeight = fontSize + 6;
   page.drawRectangle({ x, y: y - 2, width: badgeWidth, height: badgeHeight, color: bgColour, borderColor: textColour, borderWidth: 0.5 });
-  page.drawText(text, { x: x + padding, y: y + 2, size: fontSize, font: fonts.bold, color: textColour });
+  page.drawText(safeText, { x: x + padding, y: y + 2, size: fontSize, font: fonts.bold, color: textColour });
 }
 
 function drawHorizontalRule(cursor: Cursor): Cursor {
@@ -310,7 +414,7 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
 
   cursor.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 180, width: PAGE_WIDTH, height: 180, color: COLOUR_HEADER_BG });
 
-  cursor.page.drawText(data.orgName || 'InspectVoice', {
+  cursor.page.drawText(sanitiseForPdf(data.orgName || 'InspectVoice'), {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 60, size: 12, font: fonts.bold, color: COLOUR_ACCENT,
   });
   cursor.page.drawText('INSPECTION REPORT', {
@@ -336,7 +440,7 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
   });
 
   let y = PAGE_HEIGHT - 220;
-  cursor.page.drawText(site.name, { x: MARGIN_LEFT, y, size: 18, font: fonts.bold, color: COLOUR_DARK_GREY });
+  cursor.page.drawText(sanitiseForPdf(site.name), { x: MARGIN_LEFT, y, size: 18, font: fonts.bold, color: COLOUR_DARK_GREY });
   y -= 24;
 
   const addressLines = wrapText(site.address, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
@@ -345,7 +449,7 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
     y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   }
   if (site.postcode) {
-    cursor.page.drawText(site.postcode, { x: MARGIN_LEFT, y, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_MID_GREY });
+    cursor.page.drawText(sanitiseForPdf(site.postcode), { x: MARGIN_LEFT, y, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_MID_GREY });
     y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   }
   y -= 20;
@@ -353,11 +457,11 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
   const infoItems: Array<[string, string]> = [
     ['Report ID', inspection.id.substring(0, 8).toUpperCase()],
     ['Inspection Date', formatDate(inspection.inspection_date)],
-    ['Inspector', inspection.signed_by ?? '\u2014'],
+    ['Inspector', safe(inspection.signed_by) || '-'],
     ['Status', INSPECTION_STATUS_LABELS[inspection.status]],
-    ['Duration', inspection.duration_minutes ? `${inspection.duration_minutes} minutes` : '\u2014'],
-    ['Weather', inspection.weather_conditions ?? '\u2014'],
-    ['Surface', inspection.surface_conditions ?? '\u2014'],
+    ['Duration', inspection.duration_minutes ? `${inspection.duration_minutes} minutes` : '-'],
+    ['Weather', safe(inspection.weather_conditions) || '-'],
+    ['Surface', safe(inspection.surface_conditions) || '-'],
     ['Assets', `${data.items.length} inspected`],
   ];
 
@@ -369,7 +473,7 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
     const x = MARGIN_LEFT + (col * colWidth);
     const rowY = y - (row * (FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER * 2 + 4));
     cursor.page.drawText(label, { x, y: rowY, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_MID_GREY });
-    cursor.page.drawText(value, { x, y: rowY - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_BLACK });
+    cursor.page.drawText(sanitiseForPdf(value), { x, y: rowY - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_BLACK });
   }
 
   const gridRows = Math.ceil(infoItems.length / 2);
@@ -378,8 +482,8 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
   if (inspection.closure_recommended || inspection.immediate_action_required) {
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: y - 40, width: CONTENT_WIDTH, height: 40, color: COLOUR_RED_BG, borderColor: COLOUR_RED, borderWidth: 1 });
     const warningText = inspection.closure_recommended
-  ? '!! CLOSURE RECOMMENDED \u2014 Dangerous conditions identified'
-  : '!! IMMEDIATE ACTION REQUIRED \u2014 High risk items identified';
+      ? '!! CLOSURE RECOMMENDED - Dangerous conditions identified'
+      : '!! IMMEDIATE ACTION REQUIRED - High risk items identified';
     cursor.page.drawText(warningText, { x: MARGIN_LEFT + 12, y: y - 26, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_RED });
     y -= 60;
   }
@@ -424,13 +528,13 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
   cursor = drawLabelValue(cursor, fonts, 'Assets Inspected', String(items.length));
   cursor = drawLabelValue(cursor, fonts, 'Total Defects', String(inspection.total_defects));
   cursor = drawLabelValue(cursor, fonts, 'Condition Breakdown',
-    `Good: ${conditionCounts.good} \u00B7 Fair: ${conditionCounts.fair} \u00B7 Poor: ${conditionCounts.poor} \u00B7 Dangerous: ${conditionCounts.dangerous}`);
+    `Good: ${conditionCounts.good} / Fair: ${conditionCounts.fair} / Poor: ${conditionCounts.poor} / Dangerous: ${conditionCounts.dangerous}`);
 
   if (inspection.immediate_action_required) {
-    cursor = drawLabelValue(cursor, fonts, 'Immediate Action', 'REQUIRED \u2014 see defect register');
+    cursor = drawLabelValue(cursor, fonts, 'Immediate Action', 'REQUIRED - see defect register');
   }
   if (inspection.closure_recommended && inspection.closure_reason) {
-    cursor = drawLabelValue(cursor, fonts, 'Closure Reason', inspection.closure_reason);
+    cursor = drawLabelValue(cursor, fonts, 'Closure Reason', safe(inspection.closure_reason));
   }
 
   if (inspection.inspector_summary) {
@@ -456,13 +560,13 @@ function renderSiteDetails(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, da
   cursor = ensureSpace(doc, cursor, fonts, reportId, 160);
   cursor = drawSectionHeading(cursor, fonts, 'Site Details');
   const { site } = data;
-  cursor = drawLabelValue(cursor, fonts, 'Site Name', site.name);
-  cursor = drawLabelValue(cursor, fonts, 'Address', `${site.address}${site.postcode ? ', ' + site.postcode : ''}`);
+  cursor = drawLabelValue(cursor, fonts, 'Site Name', safe(site.name));
+  cursor = drawLabelValue(cursor, fonts, 'Address', `${safe(site.address)}${site.postcode ? ', ' + safe(site.postcode) : ''}`);
   cursor = drawLabelValue(cursor, fonts, 'Coordinates', `${site.latitude.toFixed(6)}, ${site.longitude.toFixed(6)}`);
-  if (site.contact_name) cursor = drawLabelValue(cursor, fonts, 'Contact', site.contact_name);
-  if (site.contact_phone) cursor = drawLabelValue(cursor, fonts, 'Phone', site.contact_phone);
-  if (site.contact_email) cursor = drawLabelValue(cursor, fonts, 'Email', site.contact_email);
-  if (site.access_notes) cursor = drawLabelValue(cursor, fonts, 'Access Notes', site.access_notes);
+  if (site.contact_name) cursor = drawLabelValue(cursor, fonts, 'Contact', safe(site.contact_name));
+  if (site.contact_phone) cursor = drawLabelValue(cursor, fonts, 'Phone', safe(site.contact_phone));
+  if (site.contact_email) cursor = drawLabelValue(cursor, fonts, 'Email', safe(site.contact_email));
+  if (site.access_notes) cursor = drawLabelValue(cursor, fonts, 'Access Notes', safe(site.access_notes));
   cursor = { ...cursor, y: cursor.y - 12 };
   return cursor;
 }
@@ -491,7 +595,7 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
 
     const headerHeight = 22;
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - headerHeight, width: CONTENT_WIDTH, height: headerHeight, color: rgb(0.95, 0.95, 0.95) });
-    cursor.page.drawText(`${item.asset_code} \u2014 ${typeName}`, {
+    cursor.page.drawText(sanitiseForPdf(`${item.asset_code} - ${typeName}`), {
       x: MARGIN_LEFT + 6, y: cursor.y - 15, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
     });
 
@@ -503,12 +607,13 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
     cursor = { ...cursor, y: cursor.y - headerHeight - 8 };
 
     if (config?.complianceStandard) {
-      cursor.page.drawText(config.complianceStandard, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_ACCENT });
+      cursor.page.drawText(sanitiseForPdf(config.complianceStandard), { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_ACCENT });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
     }
 
     if (asset?.manufacturer) {
-      const mfgText = [asset.manufacturer, asset.model, asset.serial_number].filter(Boolean).join(' \u00B7 ');
+      const mfgParts = [asset.manufacturer, asset.model, asset.serial_number].filter(Boolean);
+      const mfgText = sanitiseForPdf(mfgParts.join(' / '));
       cursor.page.drawText(mfgText, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_MID_GREY });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
     }
@@ -580,7 +685,7 @@ function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, de
   const riskLabel = RISK_RATING_LABELS[defect.risk_rating] ?? 'Unknown';
   drawBadge(cursor.page, fonts, riskLabel, indent, cursor.y - FONT_SIZE_BODY - 1, riskColour(defect.risk_rating), riskBgColour(defect.risk_rating));
 
-  const badgeOffset = fonts.bold.widthOfTextAtSize(riskLabel, FONT_SIZE_SMALL) + 20;
+  const badgeOffset = fonts.bold.widthOfTextAtSize(sanitiseForPdf(riskLabel), FONT_SIZE_SMALL) + 20;
   const descLines = wrapText(defect.description, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 24 - badgeOffset);
 
   for (let i = 0; i < descLines.length; i++) {
@@ -590,13 +695,13 @@ function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, de
   cursor = { ...cursor, y: cursor.y - (Math.max(1, descLines.length) * lineHeight) - 2 };
 
   const metaItems: string[] = [];
-  if (defect.bs_en_reference) metaItems.push(`Ref: ${defect.bs_en_reference}`);
-  if (defect.remedial_action) metaItems.push(`Action: ${defect.remedial_action.substring(0, 80)}`);
+  if (defect.bs_en_reference) metaItems.push(`Ref: ${safe(defect.bs_en_reference)}`);
+  if (defect.remedial_action) metaItems.push(`Action: ${safe(defect.remedial_action).substring(0, 80)}`);
   if (defect.action_timeframe) metaItems.push(`Timeframe: ${ACTION_TIMEFRAME_LABELS[defect.action_timeframe] ?? defect.action_timeframe}`);
   if (defect.estimated_cost_band) metaItems.push(`Est. Cost: ${COST_BAND_LABELS[defect.estimated_cost_band] ?? defect.estimated_cost_band}`);
 
   if (metaItems.length > 0) {
-    const metaText = metaItems.join(' \u00B7 ');
+    const metaText = metaItems.join(' / ');
     const metaLines = wrapText(metaText, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 24);
     for (const line of metaLines) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, lineHeight);
@@ -652,15 +757,15 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
     let xPos = MARGIN_LEFT + 4;
     cursor.page.drawText(truncateText(assetCode, fonts.mono, FONT_SIZE_SMALL, colWidths[0]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.mono, color: COLOUR_DARK_GREY });
     xPos += colWidths[0]!;
-    cursor.page.drawText(RISK_RATING_LABELS[defect.risk_rating] ?? '\u2014', { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.bold, color: riskColour(defect.risk_rating) });
+    cursor.page.drawText(sanitiseForPdf(RISK_RATING_LABELS[defect.risk_rating] ?? '-'), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.bold, color: riskColour(defect.risk_rating) });
     xPos += colWidths[1]!;
     cursor.page.drawText(truncateText(defect.description, fonts.regular, FONT_SIZE_SMALL, colWidths[2]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
     xPos += colWidths[2]!;
-    cursor.page.drawText(truncateText(defect.remedial_action ?? '\u2014', fonts.regular, FONT_SIZE_SMALL, colWidths[3]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
+    cursor.page.drawText(truncateText(defect.remedial_action ?? '-', fonts.regular, FONT_SIZE_SMALL, colWidths[3]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
     xPos += colWidths[3]!;
-    cursor.page.drawText(truncateText(ACTION_TIMEFRAME_LABELS[defect.action_timeframe] ?? '\u2014', fonts.regular, FONT_SIZE_SMALL, colWidths[4]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
+    cursor.page.drawText(truncateText(ACTION_TIMEFRAME_LABELS[defect.action_timeframe] ?? '-', fonts.regular, FONT_SIZE_SMALL, colWidths[4]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
     xPos += colWidths[4]!;
-    cursor.page.drawText(COST_BAND_LABELS[defect.estimated_cost_band] ?? '\u2014', { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
+    cursor.page.drawText(sanitiseForPdf(COST_BAND_LABELS[defect.estimated_cost_band] ?? '-'), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
 
     cursor = { ...cursor, y: rowY - rowHeight };
   }
@@ -691,7 +796,7 @@ function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: 
   cursor = { ...cursor, y: cursor.y - 20 };
 
   if (inspection.status === InspectionStatus.SIGNED || inspection.status === InspectionStatus.EXPORTED) {
-    cursor = drawLabelValue(cursor, fonts, 'Signed By', inspection.signed_by ?? '\u2014');
+    cursor = drawLabelValue(cursor, fonts, 'Signed By', safe(inspection.signed_by) || '-');
     cursor = drawLabelValue(cursor, fonts, 'Signed At', formatDateTime(inspection.signed_at));
 
     cursor = { ...cursor, y: cursor.y - 20 };
@@ -707,7 +812,7 @@ function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: 
       { x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY },
     );
   } else {
-    cursor.page.drawText('DRAFT \u2014 This inspection has not yet been signed off.', {
+    cursor.page.drawText('DRAFT - This inspection has not yet been signed off.', {
       x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_SUBHEADING, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_ORANGE,
     });
   }
@@ -730,9 +835,9 @@ export async function generateInspectionReport(data: ReportData): Promise<Genera
     mono: await doc.embedFont(StandardFonts.Courier),
   };
 
-  doc.setTitle(`Inspection Report \u2014 ${data.site.name}`);
+  doc.setTitle(`Inspection Report - ${sanitiseForPdf(data.site.name)}`);
   doc.setSubject(`${INSPECTION_TYPE_LABELS[data.inspection.inspection_type]} Inspection`);
-  doc.setAuthor(data.inspection.signed_by ?? data.orgName);
+  doc.setAuthor(sanitiseForPdf(data.inspection.signed_by ?? data.orgName));
   doc.setCreator('InspectVoice');
   doc.setProducer('InspectVoice PDF Generator (pdf-lib)');
   doc.setCreationDate(new Date());

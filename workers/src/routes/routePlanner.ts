@@ -258,13 +258,13 @@ export async function getRoutePlannerSites(
 
       const inspectionDues: InspectionDue[] = [];
 
-      // Routine
-      const routineFreq = (site.inspection_frequency_routine_days as number) || 0;
-      if (routineFreq > 0) {
-        inspectionDues.push(
-          computeDue('routine', routineFreq, siteInspections.get('routine') ?? null, today),
-        );
-      }
+     // Routine
+     const routineFreq = (site.inspection_frequency_routine_days as number) || 0;
+     if (routineFreq > 0) {
+       inspectionDues.push(
+         computeDue('routine', routineFreq, siteInspections.get('routine_visual') ?? null, today),
+       );
+    }
 
       // Operational
       const operationalFreq = (site.inspection_frequency_operational_days as number) || 0;
@@ -275,12 +275,12 @@ export async function getRoutePlannerSites(
       }
 
       // Annual
-      const annualFreq = (site.inspection_frequency_annual_days as number) || 0;
-      if (annualFreq > 0) {
-        inspectionDues.push(
-          computeDue('annual', annualFreq, siteInspections.get('annual') ?? null, today),
-        );
-      }
+const annualFreq = (site.inspection_frequency_annual_days as number) || 0;
+if (annualFreq > 0) {
+  inspectionDues.push(
+    computeDue('annual', annualFreq, siteInspections.get('annual_main') ?? null, today),
+  );
+}
 
       const siteUrgency = mostUrgent(inspectionDues);
 

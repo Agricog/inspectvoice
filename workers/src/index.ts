@@ -88,36 +88,12 @@ async function triggerMetricsComputation(
     return new Response(JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: 'Admin only' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   }
   try {
-    const { neon } = await import('@neondatabase/serverless');
-    const sql = neon(ctx.env.DATABASE_URL);
-    // Direct test: does the initial query find inspectors?
-    const inspectors = await sql`
-      SELECT DISTINCT org_id, inspector_id, COUNT(*)::int AS cnt
-      FROM inspections
-      WHERE status IN ('signed', 'exported')
-        AND signed_at >= '2026-03-01'
-        AND signed_at < '2026-04-01'
-      GROUP BY org_id, inspector_id
-    `;
-    // Try a direct insert
-    const errors: string[] = [];
-    for (const row of inspectors) {
-      try {
-        await sql`
-          INSERT INTO inspector_metrics_period (
-            org_id, inspector_user_id, period_type, period_start, period_end,
-            inspection_type, inspections_completed, computed_at, source_version
-          ) VALUES (
-            ${row.org_id as string}, ${row.inspector_id as string}, 'month', '2026-03-01', '2026-03-31',
-            NULL, ${row.cnt as number}, NOW(), 'test'
-          )
-          ON CONFLICT ON CONSTRAINT uq_metrics_period
-          DO UPDATE SET inspections_completed = EXCLUDED.inspections_completed, computed_at = NOW()
-        `;
-      } catch (e) {
-        errors.push(e instanceof Error ? e.message : String(e));
-      }
-    }
+    await computeInspectorMetrics(ctx.env);
+    return new Response(JSON.stringify({ success: true, message: 'Metrics computation complete' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } catch (error) {
+    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error) } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+}
     return new Response(JSON.stringify({
       success: true,
       inspectors_found: inspectors.length,

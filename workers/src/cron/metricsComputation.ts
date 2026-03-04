@@ -261,7 +261,7 @@ async function computeForInspector(
        COUNT(CASE WHEN status = 'accepted' THEN 1 END)::int AS accepted
      FROM normalisation_log
      WHERE org_id = $1
-       AND user_id = $2
+       AND requested_by = $2
        AND created_at >= $3
        AND created_at < $4::date + interval '1 day'`,
     [orgId, inspectorUserId, periodStart, periodEnd],

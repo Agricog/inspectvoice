@@ -72,7 +72,7 @@ type SortDir = 'asc' | 'desc';
 
 function formatMinutes(seconds: number | null): string {
   if (seconds === null) return '—';
-  const mins = Math.round(seconds / 60);
+  const mins = Math.round(Number(seconds) / 60);
   if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
   const rem = mins % 60;
@@ -196,13 +196,13 @@ export default function InspectorPerformancePage(): JSX.Element {
   }, [getToken, data]);
 
   // ── Sort header helper ──
-  function SortHeader({ label, field }: { label: string; field: SortKey }): JSX.Element {
+  function SortHeader({ label, field, align }: { label: string; field: SortKey; align?: 'left' | 'right' }): JSX.Element {
     const isActive = sortKey === field;
     return (
       <button
         type="button"
         onClick={() => handleSort(field)}
-        className="flex items-center gap-1 text-xs font-medium iv-muted hover:text-iv-text transition-colors"
+        className={`flex items-center gap-1 text-xs font-medium iv-muted hover:text-iv-text transition-colors ${align === 'left' ? '' : 'ml-auto'}`}
       >
         {label}
         {isActive ? (
@@ -363,7 +363,7 @@ export default function InspectorPerformancePage(): JSX.Element {
           <table className="w-full min-w-[900px]">
             <thead>
               <tr className="border-b border-iv-border">
-                <th className="text-left px-4 py-3"><SortHeader label="Inspector" field="inspector_name" /></th>
+                <th className="text-left px-4 py-3"><SortHeader label="Inspector" field="inspector_name" align="left" /></th>
                 <th className="text-right px-3 py-3"><SortHeader label="Inspections" field="inspections_completed" /></th>
                 <th className="text-right px-3 py-3"><SortHeader label="Completeness" field="completeness_avg" /></th>
                 <th className="text-right px-3 py-3"><SortHeader label="Overdue" field="overdue_rate" /></th>

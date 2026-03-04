@@ -79,6 +79,21 @@ import {
   resolvePerformanceShareLink,
 } from './routes/inspectorPerformance';
 import { computeInspectorMetrics } from './cron/metricsComputation';
+async function triggerMetricsComputation(
+  _request: Request,
+  _params: RouteParams,
+  ctx: RequestContext,
+): Promise<Response> {
+  if (!['admin', 'org:admin', 'manager', 'org:manager'].includes(ctx.userRole)) {
+    return new Response(JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: 'Admin only' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  try {
+    await computeInspectorMetrics(ctx.env);
+    return new Response(JSON.stringify({ success: true, message: 'Metrics computation complete' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } catch (error) {
+    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error) } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+}
 
 // ── Feature 15: Defect Library ──
 import {
@@ -245,6 +260,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
 
   // ── Feature 14: Inspector Performance ──
   ['GET',  '/api/v1/inspector-performance/benchmarks', getPerformanceBenchmarks],
+  ['POST', '/api/v1/inspector-performance/compute', triggerMetricsComputation],
   ['GET',  '/api/v1/inspector-performance/:userId', getPerformanceDetail],
   ['POST', '/api/v1/inspector-performance/:userId/share', createPerformanceShareLink],
   ['GET',  '/api/v1/inspector-performance', getPerformanceOverview],

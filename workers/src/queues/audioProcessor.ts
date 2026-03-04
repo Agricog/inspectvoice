@@ -24,6 +24,15 @@
  *   - Permanent failures → mark inspection_item as 'failed'
  *   - Each step is logged for tracing
  *
+ * FIX: 4 Mar 2026
+ *   - Added ::jsonb casts in storeAnalysisResults for ai_analysis and defects.
+ *     The neon HTTP driver sends parameters as text; PostgreSQL won't auto-cast
+ *     to jsonb in parameterised queries, causing silent type errors.
+ *   - Fixed createDefectRecords column names to match actual defects table
+ *     schema: defect_category→removed, action_required→remedial_action, added
+ *     due_date, made_safe, asset_closed, metadata columns.
+ *   - Added ::jsonb cast in markItemFailed for ai_analysis.
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
@@ -440,6 +449,13 @@ async function storeTranscriptOnly(
   }
 }
 
+/**
+ * Store AI analysis results back to the inspection item.
+ *
+ * FIX: explicit ::jsonb casts on ai_analysis ($3) and defects ($9).
+ * The neon HTTP driver sends all parameters as text. PostgreSQL won't
+ * auto-cast text→jsonb in parameterised queries, causing a type error.
+ */
 async function storeAnalysisResults(
   sql: NeonQueryFunction<false, false>,
   orgId: string,
@@ -455,7 +471,7 @@ async function storeAnalysisResults(
       `UPDATE inspection_items SET
         voice_transcript = $1,
         transcription_method = $2,
-        ai_analysis = $3,
+        ai_analysis = $3::jsonb,
         ai_model_version = $4,
         ai_processing_status = 'completed',
         ai_processed_at = NOW(),
@@ -463,7 +479,7 @@ async function storeAnalysisResults(
         risk_rating = $6,
         requires_action = $7,
         action_timeframe = $8,
-        defects = $9
+        defects = $9::jsonb
        WHERE id = $10
        AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $11)`,
       [
@@ -475,11 +491,11 @@ async function storeAnalysisResults(
           escalation_reasons: transcription.escalationReasons ?? [],
         }),
         modelVersion,
-        analysis.overallCondition,
-        analysis.riskRating,
-        analysis.requiresAction,
-        analysis.actionTimeframe,
-        JSON.stringify(analysis.defects),
+        analysis.overallCondition ?? 'fair',
+        analysis.riskRating ?? 'medium',
+        analysis.requiresAction ?? false,
+        analysis.actionTimeframe ?? null,
+        JSON.stringify(analysis.defects ?? []),
         inspectionItemId,
         orgId,
       ],
@@ -496,6 +512,36 @@ async function storeAnalysisResults(
   }
 }
 
+/** Calculate due_date from action_timeframe (matches inspections.ts logic) */
+function calculateDueDate(timeframe: string | undefined): string | null {
+  if (!timeframe) return null;
+  const now = new Date();
+  switch (timeframe) {
+    case 'immediate':
+      return now.toISOString().slice(0, 10);
+    case '48_hours':
+      now.setDate(now.getDate() + 2);
+      return now.toISOString().slice(0, 10);
+    case '1_week':
+      now.setDate(now.getDate() + 7);
+      return now.toISOString().slice(0, 10);
+    case '1_month':
+      now.setDate(now.getDate() + 30);
+      return now.toISOString().slice(0, 10);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Create defect records from AI analysis results.
+ *
+ * FIX: column names now match actual defects table schema:
+ *   - Removed defect_category (doesn't exist)
+ *   - action_required → remedial_action
+ *   - Added due_date, made_safe, asset_closed, metadata
+ *   - Added ::jsonb cast on metadata
+ */
 async function createDefectRecords(
   sql: NeonQueryFunction<false, false>,
   orgId: string,
@@ -509,51 +555,48 @@ async function createDefectRecords(
   try {
     const now = new Date().toISOString();
 
-    const valuePlaceholders: string[] = [];
-    const params: (string | null)[] = [];
-    let paramIndex = 1;
-
     for (const defect of analysis.defects) {
       const defectId = crypto.randomUUID();
+      const dueDate = calculateDueDate(defect.actionTimeframe);
 
-      valuePlaceholders.push(
-        `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, ` +
-        `$${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6}, $${paramIndex + 7}, ` +
-        `$${paramIndex + 8}, $${paramIndex + 9}, $${paramIndex + 10}, $${paramIndex + 11}, ` +
-        `'open', 'ai', $${paramIndex + 12}, $${paramIndex + 12})`,
+      await sql(
+        `INSERT INTO defects (
+          id, org_id, site_id, inspection_id, asset_id, inspection_item_id,
+          description, bs_en_reference, severity, remedial_action,
+          action_timeframe, status, source, estimated_cost_gbp,
+          due_date, made_safe, asset_closed, metadata, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17, $18::jsonb, $19, $20
+        )`,
+        [
+          defectId,
+          orgId,
+          siteId,
+          inspectionId,
+          assetId,
+          inspectionItemId,
+          defect.description ?? '',
+          defect.bsEnReference ?? null,
+          defect.severity ?? 'medium',
+          defect.actionRequired ?? '',
+          defect.actionTimeframe ?? 'routine',
+          'open',
+          'ai',
+          defect.estimatedRepairCost ?? null,
+          dueDate,
+          false,
+          false,
+          JSON.stringify({ extracted_from: 'ai_pipeline', defect_category: defect.defectCategory ?? null }),
+          now,
+          now,
+        ],
       );
-
-      params.push(
-        defectId,
-        orgId,
-        siteId,
-        inspectionId,
-        assetId,
-        inspectionItemId,
-        defect.description,
-        defect.severity,
-        defect.defectCategory,
-        defect.bsEnReference,
-        defect.actionRequired,
-        defect.actionTimeframe,
-        defect.estimatedRepairCost,
-        now,
-      );
-
-      paramIndex += 13;
     }
 
-    const query = `
-      INSERT INTO defects (
-        id, org_id, site_id, inspection_id, asset_id, inspection_item_id,
-        description, severity, defect_category, bs_en_reference,
-        action_required, action_timeframe, estimated_cost_gbp,
-        status, source, created_at, updated_at
-      ) VALUES ${valuePlaceholders.join(', ')}`;
-
-    await sql(query, params);
-
-    logger.info('Defect records created (batch)', {
+    logger.info('Defect records created', {
       inspectionItemId,
       count: analysis.defects.length,
     });
@@ -635,7 +678,7 @@ async function markItemFailed(
       `UPDATE inspection_items SET
         ai_processing_status = 'failed',
         ai_processed_at = NOW(),
-        ai_analysis = $1
+        ai_analysis = $1::jsonb
        WHERE id = $2
        AND inspection_id IN (SELECT id FROM inspections WHERE org_id = $3)`,
       [

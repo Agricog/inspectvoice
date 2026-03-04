@@ -236,7 +236,7 @@ async function computeForInspector(
   const makeSafeStats = await sql(
     `SELECT
        COUNT(ms.id)::int AS initiated,
-       COUNT(CASE WHEN ms.completed_at IS NOT NULL THEN 1 END)::int AS completed
+       COUNT(CASE WHEN ms.asset_closed = true THEN 1 END)::int AS completed
      FROM make_safe_actions ms
      INNER JOIN defects d ON d.id = ms.defect_id
      INNER JOIN inspection_items ii ON ii.id = d.inspection_item_id

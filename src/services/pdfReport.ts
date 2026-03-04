@@ -378,8 +378,8 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
   if (inspection.closure_recommended || inspection.immediate_action_required) {
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: y - 40, width: CONTENT_WIDTH, height: 40, color: COLOUR_RED_BG, borderColor: COLOUR_RED, borderWidth: 1 });
     const warningText = inspection.closure_recommended
-      ? '\u26A0 CLOSURE RECOMMENDED \u2014 Dangerous conditions identified'
-      : '\u26A0 IMMEDIATE ACTION REQUIRED \u2014 High risk items identified';
+  ? '!! CLOSURE RECOMMENDED \u2014 Dangerous conditions identified'
+  : '!! IMMEDIATE ACTION REQUIRED \u2014 High risk items identified';
     cursor.page.drawText(warningText, { x: MARGIN_LEFT + 12, y: y - 26, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_RED });
     y -= 60;
   }

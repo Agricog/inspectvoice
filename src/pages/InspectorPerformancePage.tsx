@@ -202,7 +202,7 @@ export default function InspectorPerformancePage(): JSX.Element {
       <button
         type="button"
         onClick={() => handleSort(field)}
-        className={`flex items-center gap-1 text-xs font-medium iv-muted hover:text-iv-text transition-colors ${align === 'left' ? '' : 'ml-auto'}`}
+        className="inline-flex items-center gap-1 text-xs font-medium iv-muted hover:text-iv-text transition-colors"
       >
         {label}
         {isActive ? (

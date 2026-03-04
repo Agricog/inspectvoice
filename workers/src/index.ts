@@ -80,58 +80,40 @@ import {
 import { computeInspectorMetrics } from './cron/metricsComputation';
 
 // ── Feature 14: Manual metrics trigger (admin only) ──
+// Wipes all stale/duplicate rows for this org, then recomputes fresh.
 async function triggerMetricsComputation(
   _request: Request,
   _params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
   if (!['admin', 'org:admin', 'manager', 'org:manager'].includes(ctx.userRole)) {
-    return new Response(JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: 'Admin only' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+    return new Response(
+      JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: 'Admin only' } }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
+    );
   }
   try {
+    // Clean up any stale/duplicate rows for this org before recomputing
     const { neon } = await import('@neondatabase/serverless');
-    const sqlFn = neon(ctx.env.DATABASE_URL) as unknown as (q: string, p?: unknown[]) => Promise<Array<Record<string, unknown>>>;
-
-    // Test 1: Core stats (same query as metricsComputation)
-    const core = await sqlFn(
-      `SELECT
-         COUNT(*)::int AS inspections_completed,
-         AVG(EXTRACT(EPOCH FROM (i.signed_at::timestamp - i.started_at::timestamp)))::int AS avg_signoff
-       FROM inspections i
-       WHERE i.org_id = $1 AND i.inspector_id = $2
-         AND i.status IN ('signed', 'exported')
-         AND i.signed_at >= $3 AND i.signed_at < $4::date + interval '1 day'`,
-      [ctx.orgId, ctx.userId, '2026-03-01', '2026-03-31'],
+    type SqlFn = (query: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>;
+    const sqlFn = neon(ctx.env.DATABASE_URL) as unknown as SqlFn;
+    const deleted = await sqlFn(
+      `DELETE FROM inspector_metrics_period WHERE org_id = $1 RETURNING id`,
+      [ctx.orgId],
     );
 
-    // Test 2: Photo compliance
-    let photoResult: unknown = null;
-    let photoError: string | null = null;
-    try {
-      photoResult = await sqlFn(
-        `SELECT
-           COUNT(ii.id)::int AS total_items,
-           COUNT(CASE WHEN EXISTS (
-             SELECT 1 FROM photos p WHERE p.inspection_item_id = ii.id
-           ) THEN 1 END)::int AS items_with_photo
-         FROM inspection_items ii
-         INNER JOIN inspections i ON i.id = ii.inspection_id
-         WHERE i.org_id = $1 AND i.inspector_id = $2
-           AND i.status IN ('signed', 'exported')
-           AND i.signed_at >= $3 AND i.signed_at < $4::date + interval '1 day'`,
-        [ctx.orgId, ctx.userId, '2026-03-01', '2026-03-31'],
-      );
-    } catch (e) {
-      photoError = e instanceof Error ? e.message : String(e);
-    }
+    // Run fresh computation
+    await computeInspectorMetrics(ctx.env);
 
-    return new Response(JSON.stringify({ core, photoResult, photoError }, null, 2), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ success: true, stale_rows_cleaned: deleted.length, message: 'Metrics recomputed' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
   } catch (error) {
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined }), {
-      status: 500, headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error) } }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    );
   }
 }
 

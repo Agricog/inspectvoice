@@ -81,20 +81,22 @@ function formatMinutes(seconds: number | null): string {
 
 function formatPct(value: number | null): string {
   if (value === null) return '—';
-  return `${value.toFixed(1)}%`;
+  return `${Number(value).toFixed(1)}%`;
 }
 
 function pctColour(value: number | null, goodAbove = 80, warnAbove = 50): string {
   if (value === null) return 'iv-muted';
-  if (value >= goodAbove) return 'text-[#22C55E]';
-  if (value >= warnAbove) return 'text-[#EAB308]';
+  const n = Number(value);
+  if (n >= goodAbove) return 'text-[#22C55E]';
+  if (n >= warnAbove) return 'text-[#EAB308]';
   return 'text-[#F97316]';
 }
 
 function pctColourInverse(value: number | null, goodBelow = 10, warnBelow = 25): string {
   if (value === null) return 'iv-muted';
-  if (value <= goodBelow) return 'text-[#22C55E]';
-  if (value <= warnBelow) return 'text-[#EAB308]';
+  const n = Number(value);
+  if (n <= goodBelow) return 'text-[#22C55E]';
+  if (n <= warnBelow) return 'text-[#EAB308]';
   return 'text-[#F97316]';
 }
 

@@ -8,18 +8,17 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import type { Env, QueueMessageBody, RouteHandler, RouteParams, WebhookHandler, PortalRequestContext } from './types';
+import type { Env, QueueMessageBody, RouteHandler, RouteParams, RequestContext, WebhookHandler, PortalRequestContext } from './types';
 import { guard, createWebhookContext } from './middleware/guard';
 import { portalGuard, verifyMagicLink } from './middleware/portalGuard';
 import { handlePreflight, addCorsHeaders } from './middleware/cors';
-import { listAssetsBySite, getAsset, createAsset, updateAsset, deleteAsset } from './routes/assets';
 import { formatErrorResponse } from './shared/errors';
 import { Logger } from './shared/logger';
 
 // ── Route Handlers ──
 import { listSites, getSite, createSite, updateSite, deleteSite } from './routes/sites';
 import { runCompletenessCheck } from './routes/completenessCheck';
-import { listAssetsBySite, getAsset, createAsset, updateAsset } from './routes/assets';
+import { listAssetsBySite, getAsset, createAsset, updateAsset, deleteAsset } from './routes/assets';
 import { getAssetHistory } from './routes/assetHistory';
 import { listInspections, getInspection, createInspection, updateInspection, deleteInspection } from './routes/inspections';
 import { listInspectionItems, createInspectionItem, updateInspectionItem, getAiStatus } from './routes/inspectionItems';
@@ -79,6 +78,8 @@ import {
   resolvePerformanceShareLink,
 } from './routes/inspectorPerformance';
 import { computeInspectorMetrics } from './cron/metricsComputation';
+
+// ── Feature 14: Manual metrics trigger (admin only) ──
 async function triggerMetricsComputation(
   _request: Request,
   _params: RouteParams,
@@ -87,36 +88,11 @@ async function triggerMetricsComputation(
   if (!['admin', 'org:admin', 'manager', 'org:manager'].includes(ctx.userRole)) {
     return new Response(JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: 'Admin only' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   }
-  const errors: string[] = [];
   try {
-    const { neon } = await import('@neondatabase/serverless');
-    const sql = neon(ctx.env.DATABASE_URL) as unknown as (query: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>;
-    const rows = await sql(
-      `SELECT COUNT(*)::int AS inspections_completed,
-              AVG(i.total_defects)::numeric(6,2) AS defects_per_inspection_avg,
-              SUM(i.total_defects)::int AS defects_total,
-              AVG(EXTRACT(EPOCH FROM (i.signed_at::timestamp - i.started_at::timestamp)))::int AS avg_signoff
-       FROM inspections i
-       WHERE i.org_id = $1
-         AND i.inspector_id = $2
-         AND i.status IN ('signed', 'exported')
-         AND i.signed_at >= $3
-         AND i.signed_at < $4::date + interval '1 day'`,
-      ['org_3AE2HUbv3RmB6IVlaOZUTJKyYEr', 'user_3AE2BqxUr1ZbDPrlgC6qRMbgYth', '2026-03-01', '2026-03-31'],
-    );
-    return new Response(JSON.stringify({ success: true, rows, errors }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    await computeInspectorMetrics(ctx.env);
+    return new Response(JSON.stringify({ success: true, message: 'Metrics computation complete' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
-    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  }
-}
-    return new Response(JSON.stringify({
-      success: true,
-      inspectors_found: inspectors.length,
-      inspectors,
-      errors,
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  } catch (error) {
-    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error) } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
@@ -216,7 +192,6 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   // ── Uploads (JWT-protected endpoints) ──
   ['POST', '/api/v1/uploads/photo', requestPhotoUpload],
   ['POST', '/api/v1/uploads/audio', requestAudioUpload],
-  // NOTE: PUT /api/v1/uploads/put/:r2Key moved to token-only auth below
   ['GET', '/api/v1/files/:r2Key', downloadFile],
 
   // ── Defects ──
@@ -284,8 +259,8 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET',  '/api/v1/sealed-exports', listSealedExports],
 
   // ── Feature 14: Inspector Performance ──
-  ['GET',  '/api/v1/inspector-performance/benchmarks', getPerformanceBenchmarks],
   ['POST', '/api/v1/inspector-performance/compute', triggerMetricsComputation],
+  ['GET',  '/api/v1/inspector-performance/benchmarks', getPerformanceBenchmarks],
   ['GET',  '/api/v1/inspector-performance/:userId', getPerformanceDetail],
   ['POST', '/api/v1/inspector-performance/:userId/share', createPerformanceShareLink],
   ['GET',  '/api/v1/inspector-performance', getPerformanceOverview],
@@ -384,44 +359,44 @@ export default {
         return addCorsHeaders(response, request, env);
       }
 
-     // ── Upload Proxy (token-only auth, no JWT) ──
-if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
-  const match = path.match(/^\/api\/v1\/uploads\/put\/(.+)$/);
-  if (match && match[1]) {
-    const r2Key = decodeURIComponent(match[1]);
-    // Derive orgId from key prefix (format: {orgId}/type/itemId/uuid.ext)
-    const orgId = r2Key.split('/')[0] ?? '';
-    const response = await proxyUploadToR2(request, { r2Key }, {
-      env,
-      requestId: crypto.randomUUID(),
-      orgId,
-      userId: '',
-      userRole: '',
-      method,
-      path,
-      startedAt: Date.now(),
-    } as RequestContext);
-    return addCorsHeaders(response, request, env);
-  }
-}
-      // ── Upload Confirm Routes (r2Key contains slashes — handle before router) ──
-if (method === 'POST') {
-  const photoConfirmMatch = path.match(/^\/api\/v1\/uploads\/photo\/(.+)\/confirm$/);
-  if (photoConfirmMatch && photoConfirmMatch[1]) {
-    const r2Key = decodeURIComponent(photoConfirmMatch[1]);
-    const ctx = await guard(request, env);
-    const response = await confirmPhotoUpload(request, { r2Key }, ctx);
-    return addCorsHeaders(response, request, env);
-  }
+      // ── Upload Proxy (token-only auth, no JWT) ──
+      if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
+        const match = path.match(/^\/api\/v1\/uploads\/put\/(.+)$/);
+        if (match && match[1]) {
+          const r2Key = decodeURIComponent(match[1]);
+          const orgId = r2Key.split('/')[0] ?? '';
+          const response = await proxyUploadToR2(request, { r2Key }, {
+            env,
+            requestId: crypto.randomUUID(),
+            orgId,
+            userId: '',
+            userRole: '',
+            method,
+            path,
+            startedAt: Date.now(),
+          } as RequestContext);
+          return addCorsHeaders(response, request, env);
+        }
+      }
 
-  const audioConfirmMatch = path.match(/^\/api\/v1\/uploads\/audio\/(.+)\/confirm$/);
-  if (audioConfirmMatch && audioConfirmMatch[1]) {
-    const r2Key = decodeURIComponent(audioConfirmMatch[1]);
-    const ctx = await guard(request, env);
-    const response = await confirmAudioUpload(request, { r2Key }, ctx);
-    return addCorsHeaders(response, request, env);
-  }
-}
+      // ── Upload Confirm Routes (r2Key contains slashes — handle before router) ──
+      if (method === 'POST') {
+        const photoConfirmMatch = path.match(/^\/api\/v1\/uploads\/photo\/(.+)\/confirm$/);
+        if (photoConfirmMatch && photoConfirmMatch[1]) {
+          const r2Key = decodeURIComponent(photoConfirmMatch[1]);
+          const ctx = await guard(request, env);
+          const response = await confirmPhotoUpload(request, { r2Key }, ctx);
+          return addCorsHeaders(response, request, env);
+        }
+
+        const audioConfirmMatch = path.match(/^\/api\/v1\/uploads\/audio\/(.+)\/confirm$/);
+        if (audioConfirmMatch && audioConfirmMatch[1]) {
+          const r2Key = decodeURIComponent(audioConfirmMatch[1]);
+          const ctx = await guard(request, env);
+          const response = await confirmAudioUpload(request, { r2Key }, ctx);
+          return addCorsHeaders(response, request, env);
+        }
+      }
 
       // ── Public Verification (no auth — Feature 10) ──
       if (path.startsWith('/api/v1/verify/') && method === 'GET') {
@@ -485,7 +460,7 @@ if (method === 'POST') {
       );
       return addCorsHeaders(notFoundResponse, request, env);
 
-   } catch (error) {
+    } catch (error) {
       const requestId = crypto.randomUUID();
 
       console.error(JSON.stringify({

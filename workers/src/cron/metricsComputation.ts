@@ -2,27 +2,20 @@
  * InspectVoice — Inspector Metrics Computation Cron
  * Feature 14: Daily aggregation of performance metrics
  *
- * Runs via Cloudflare Cron Trigger (add to wrangler.toml alongside existing summary email).
+ * Runs via Cloudflare Cron Trigger at 03:00 UTC daily.
+ * Also callable via POST /api/v1/inspector-performance/compute (admin only).
+ *
  * Computes monthly metrics per inspector per org from raw inspection data.
- *
- * Metrics computed:
- *   - inspections_completed: count of signed inspections
- *   - completeness_avg: average A–F grade from Feature 4 completeness check
- *   - completeness_counts: histogram of grades
- *   - defects_total + defects_per_inspection_avg
- *   - photo_compliance_pct: % of inspection items with at least 1 photo
- *   - normalisation_accept_rate: from normalisation_log
- *   - avg_time_to_signoff_seconds: started_at → signed_at
- *   - overdue_rate: % of inspections past scheduled frequency
- *   - makesafe_initiated_count / makesafe_completed_count
- *   - rework_rate: % inspections with status changes after initial sign-off
- *   - critical_response_avg_seconds: critical defect → first make-safe action
- *   - evidence_quality_pct: % defects with photo + notes
- *   - completeness_variance: stddev of completeness scores
- *   - audit_flag_count: normalisation rejects + BS EN edits
- *
  * Strategy: UPSERT per (org, inspector, month, inspection_type).
  * Re-running is safe — always overwrites with latest data.
+ *
+ * FIX: 4 Mar 2026
+ *   - Replaced tagged template SQL composition with parameterised string queries.
+ *     Neon's tagged template driver does NOT support fragment composition —
+ *     sql`... ${sql`fragment`}` executes the fragment as a separate query and
+ *     embeds the result object, causing silent failures.
+ *   - All queries now use sql(queryString, params) form which supports
+ *     conditional WHERE clauses safely.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  */
@@ -30,12 +23,18 @@
 import type { Env } from '../types';
 
 // =============================================
+// TYPES
+// =============================================
+
+type SqlFn = (query: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>;
+
+// =============================================
 // MAIN ENTRY POINT
 // =============================================
 
 export async function computeInspectorMetrics(env: Env): Promise<void> {
   const { neon } = await import('@neondatabase/serverless');
-  const sql = neon(env.DATABASE_URL);
+  const sql = neon(env.DATABASE_URL) as unknown as SqlFn;
 
   const now = new Date();
   const year = now.getFullYear();
@@ -47,19 +46,25 @@ export async function computeInspectorMetrics(env: Env): Promise<void> {
     { start: new Date(year, month - 1, 1), end: new Date(year, month, 0) },       // previous
   ];
 
+  let totalInserted = 0;
+  let totalErrors = 0;
+
   for (const period of periods) {
     const periodStart = isoDate(period.start);
     const periodEnd = isoDate(period.end);
 
     try {
-      await computePeriod(sql, periodStart, periodEnd);
+      const count = await computePeriod(sql, periodStart, periodEnd);
+      totalInserted += count;
     } catch (error) {
+      totalErrors++;
       console.error(JSON.stringify({
         level: 'error',
         module: 'metricsComputation',
         periodStart,
         periodEnd,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       }));
     }
   }
@@ -69,6 +74,8 @@ export async function computeInspectorMetrics(env: Env): Promise<void> {
     module: 'metricsComputation',
     message: 'Metrics computation complete',
     periodsProcessed: periods.length,
+    totalInserted,
+    totalErrors,
   }));
 }
 
@@ -76,47 +83,60 @@ export async function computeInspectorMetrics(env: Env): Promise<void> {
 // COMPUTE ONE PERIOD
 // =============================================
 
-type SqlFn = ReturnType<typeof import('@neondatabase/serverless').neon>;
-
-async function computePeriod(sql: SqlFn, periodStart: string, periodEnd: string): Promise<void> {
+async function computePeriod(sql: SqlFn, periodStart: string, periodEnd: string): Promise<number> {
   // Get all org/inspector combos that have signed inspections in this period
-  const inspectorPeriods = await sql`
-    SELECT DISTINCT org_id, inspector_id AS inspector_user_id
-    FROM inspections
-    WHERE status IN ('signed', 'exported')
-      AND signed_at >= ${periodStart}
-      AND signed_at < ${periodEnd}::date + interval '1 day'
-  ` as Array<{ org_id: string; inspector_user_id: string }>;
+  const inspectorPeriods = await sql(
+    `SELECT DISTINCT org_id, inspector_id AS inspector_user_id
+     FROM inspections
+     WHERE status IN ('signed', 'exported')
+       AND signed_at >= $1
+       AND signed_at < $2::date + interval '1 day'`,
+    [periodStart, periodEnd],
+  );
+
+  let insertCount = 0;
 
   for (const row of inspectorPeriods) {
+    const orgId = row['org_id'] as string;
+    const inspectorUserId = row['inspector_user_id'] as string;
+
     try {
-      // Compute combined (all types) + per-type
-      await computeForInspector(sql, row.org_id, row.inspector_user_id, periodStart, periodEnd, null);
+      // Compute combined (all types)
+      await computeForInspector(sql, orgId, inspectorUserId, periodStart, periodEnd, null);
+      insertCount++;
 
       // Per inspection type
-      const types = await sql`
-        SELECT DISTINCT inspection_type
-        FROM inspections
-        WHERE org_id = ${row.org_id}
-          AND inspector_id = ${row.inspector_user_id}
-          AND status IN ('signed', 'exported')
-          AND signed_at >= ${periodStart}
-          AND signed_at < ${periodEnd}::date + interval '1 day'
-      ` as Array<{ inspection_type: string }>;
+      const types = await sql(
+        `SELECT DISTINCT inspection_type
+         FROM inspections
+         WHERE org_id = $1
+           AND inspector_id = $2
+           AND status IN ('signed', 'exported')
+           AND signed_at >= $3
+           AND signed_at < $4::date + interval '1 day'`,
+        [orgId, inspectorUserId, periodStart, periodEnd],
+      );
 
       for (const t of types) {
-        await computeForInspector(sql, row.org_id, row.inspector_user_id, periodStart, periodEnd, t.inspection_type);
+        const inspType = t['inspection_type'] as string;
+        if (inspType) {
+          await computeForInspector(sql, orgId, inspectorUserId, periodStart, periodEnd, inspType);
+          insertCount++;
+        }
       }
     } catch (error) {
       console.error(JSON.stringify({
         level: 'error',
         module: 'metricsComputation',
-        orgId: row.org_id,
-        inspectorUserId: row.inspector_user_id,
+        orgId,
+        inspectorUserId,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       }));
     }
   }
+
+  return insertCount;
 }
 
 // =============================================
@@ -131,26 +151,31 @@ async function computeForInspector(
   periodEnd: string,
   inspectionType: string | null,
 ): Promise<void> {
-  const typeFilter = inspectionType
-    ? sql`AND i.inspection_type = ${inspectionType}`
-    : sql``;
+  // Build conditional type filter
+  const baseParams = [orgId, inspectorUserId, periodStart, periodEnd];
+  const typeClause = inspectionType
+    ? 'AND i.inspection_type = $5'
+    : '';
+  const params = inspectionType
+    ? [...baseParams, inspectionType]
+    : baseParams;
 
   // ── Core inspection stats ──
-  const coreStats = await sql`
-    SELECT
-      COUNT(*)::int AS inspections_completed,
-      AVG(i.total_defects)::numeric(6,2) AS defects_per_inspection_avg,
-      SUM(i.total_defects)::int AS defects_total,
-      AVG(EXTRACT(EPOCH FROM (i.signed_at::timestamp - i.started_at::timestamp)))::int AS avg_time_to_signoff_seconds,
-      SUM(i.very_high_risk_count + i.high_risk_count)::int AS critical_defect_count
-    FROM inspections i
-    WHERE i.org_id = ${orgId}
-      AND i.inspector_id = ${inspectorUserId}
-      AND i.status IN ('signed', 'exported')
-      AND i.signed_at >= ${periodStart}
-      AND i.signed_at < ${periodEnd}::date + interval '1 day'
-      ${typeFilter}
-  ` as Array<Record<string, unknown>>;
+  const coreStats = await sql(
+    `SELECT
+       COUNT(*)::int AS inspections_completed,
+       AVG(i.total_defects)::numeric(6,2) AS defects_per_inspection_avg,
+       SUM(i.total_defects)::int AS defects_total,
+       AVG(EXTRACT(EPOCH FROM (i.signed_at::timestamp - i.started_at::timestamp)))::int AS avg_time_to_signoff_seconds
+     FROM inspections i
+     WHERE i.org_id = $1
+       AND i.inspector_id = $2
+       AND i.status IN ('signed', 'exported')
+       AND i.signed_at >= $3
+       AND i.signed_at < $4::date + interval '1 day'
+       ${typeClause}`,
+    params,
+  );
 
   const core = coreStats[0] ?? {};
   const inspectionsCompleted = (core['inspections_completed'] as number) ?? 0;
@@ -158,147 +183,215 @@ async function computeForInspector(
   if (inspectionsCompleted === 0) return; // Nothing to record
 
   // ── Photo compliance: % of inspection items with at least 1 photo ──
-  const photoStats = await sql`
-    SELECT
-      COUNT(ii.id)::int AS total_items,
-      COUNT(CASE WHEN EXISTS (
-        SELECT 1 FROM photos p WHERE p.inspection_item_id = ii.id
-      ) THEN 1 END)::int AS items_with_photo
-    FROM inspection_items ii
-    INNER JOIN inspections i ON i.id = ii.inspection_id
-    WHERE i.org_id = ${orgId}
-      AND i.inspector_id = ${inspectorUserId}
-      AND i.status IN ('signed', 'exported')
-      AND i.signed_at >= ${periodStart}
-      AND i.signed_at < ${periodEnd}::date + interval '1 day'
-      ${typeFilter}
-  ` as Array<Record<string, unknown>>;
+  const photoStats = await sql(
+    `SELECT
+       COUNT(ii.id)::int AS total_items,
+       COUNT(CASE WHEN EXISTS (
+         SELECT 1 FROM photos p WHERE p.inspection_item_id = ii.id
+       ) THEN 1 END)::int AS items_with_photo
+     FROM inspection_items ii
+     INNER JOIN inspections i ON i.id = ii.inspection_id
+     WHERE i.org_id = $1
+       AND i.inspector_id = $2
+       AND i.status IN ('signed', 'exported')
+       AND i.signed_at >= $3
+       AND i.signed_at < $4::date + interval '1 day'
+       ${typeClause}`,
+    params,
+  );
 
   const photoRow = photoStats[0] ?? {};
   const totalItems = (photoRow['total_items'] as number) ?? 0;
   const itemsWithPhoto = (photoRow['items_with_photo'] as number) ?? 0;
-  const photoCompliancePct = totalItems > 0 ? (itemsWithPhoto / totalItems) * 100 : null;
+  const photoCompliancePct = totalItems > 0
+    ? Math.round((itemsWithPhoto / totalItems) * 10000) / 100
+    : null;
 
   // ── Evidence quality: % of defects with photo + inspector notes ──
-  const evidenceStats = await sql`
-    SELECT
-      COUNT(d.id)::int AS total_defects_tracked,
-      COUNT(CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != ''
-        AND EXISTS (SELECT 1 FROM photos p WHERE p.inspection_item_id = ii.id)
-        THEN 1 END)::int AS defects_with_evidence
-    FROM defects d
-    INNER JOIN inspection_items ii ON ii.id = d.inspection_item_id
-    INNER JOIN inspections i ON i.id = ii.inspection_id
-    WHERE i.org_id = ${orgId}
-      AND i.inspector_id = ${inspectorUserId}
-      AND i.status IN ('signed', 'exported')
-      AND i.signed_at >= ${periodStart}
-      AND i.signed_at < ${periodEnd}::date + interval '1 day'
-      ${typeFilter}
-  ` as Array<Record<string, unknown>>;
+  const evidenceStats = await sql(
+    `SELECT
+       COUNT(d.id)::int AS total_defects_tracked,
+       COUNT(CASE WHEN ii.inspector_notes IS NOT NULL AND ii.inspector_notes != ''
+         AND EXISTS (SELECT 1 FROM photos p WHERE p.inspection_item_id = ii.id)
+         THEN 1 END)::int AS defects_with_evidence
+     FROM defects d
+     INNER JOIN inspection_items ii ON ii.id = d.inspection_item_id
+     INNER JOIN inspections i ON i.id = ii.inspection_id
+     WHERE i.org_id = $1
+       AND i.inspector_id = $2
+       AND i.status IN ('signed', 'exported')
+       AND i.signed_at >= $3
+       AND i.signed_at < $4::date + interval '1 day'
+       ${typeClause}`,
+    params,
+  );
 
   const evidenceRow = evidenceStats[0] ?? {};
   const totalDefectsTracked = (evidenceRow['total_defects_tracked'] as number) ?? 0;
   const defectsWithEvidence = (evidenceRow['defects_with_evidence'] as number) ?? 0;
-  const evidenceQualityPct = totalDefectsTracked > 0 ? (defectsWithEvidence / totalDefectsTracked) * 100 : null;
+  const evidenceQualityPct = totalDefectsTracked > 0
+    ? Math.round((defectsWithEvidence / totalDefectsTracked) * 10000) / 100
+    : null;
 
   // ── Make-safe stats ──
-  const makeSafeStats = await sql`
-    SELECT
-      COUNT(ms.id)::int AS initiated,
-      COUNT(CASE WHEN ms.completed_at IS NOT NULL THEN 1 END)::int AS completed
-    FROM make_safe_actions ms
-    INNER JOIN defects d ON d.id = ms.defect_id
-    INNER JOIN inspection_items ii ON ii.id = d.inspection_item_id
-    INNER JOIN inspections i ON i.id = ii.inspection_id
-    WHERE i.org_id = ${orgId}
-      AND i.inspector_id = ${inspectorUserId}
-      AND i.signed_at >= ${periodStart}
-      AND i.signed_at < ${periodEnd}::date + interval '1 day'
-      ${typeFilter}
-  ` as Array<Record<string, unknown>>;
+  const makeSafeStats = await sql(
+    `SELECT
+       COUNT(ms.id)::int AS initiated,
+       COUNT(CASE WHEN ms.completed_at IS NOT NULL THEN 1 END)::int AS completed
+     FROM make_safe_actions ms
+     INNER JOIN defects d ON d.id = ms.defect_id
+     INNER JOIN inspection_items ii ON ii.id = d.inspection_item_id
+     INNER JOIN inspections i ON i.id = ii.inspection_id
+     WHERE i.org_id = $1
+       AND i.inspector_id = $2
+       AND i.signed_at >= $3
+       AND i.signed_at < $4::date + interval '1 day'
+       ${typeClause}`,
+    params,
+  );
 
   const msRow = makeSafeStats[0] ?? {};
   const makesafeInitiated = (msRow['initiated'] as number) ?? 0;
   const makesafeCompleted = (msRow['completed'] as number) ?? 0;
 
   // ── Normalisation accept rate ──
-  const normStats = await sql`
-    SELECT
-      COUNT(*)::int AS total_normalisations,
-      COUNT(CASE WHEN status = 'accepted' THEN 1 END)::int AS accepted
-    FROM normalisation_log nl
-    WHERE nl.org_id = ${orgId}
-      AND nl.user_id = ${inspectorUserId}
-      AND nl.created_at >= ${periodStart}
-      AND nl.created_at < ${periodEnd}::date + interval '1 day'
-  ` as Array<Record<string, unknown>>;
+  // Uses separate params (no inspection_type filter — normalisation is per-user)
+  const normStats = await sql(
+    `SELECT
+       COUNT(*)::int AS total_normalisations,
+       COUNT(CASE WHEN status = 'accepted' THEN 1 END)::int AS accepted
+     FROM normalisation_log
+     WHERE org_id = $1
+       AND user_id = $2
+       AND created_at >= $3
+       AND created_at < $4::date + interval '1 day'`,
+    [orgId, inspectorUserId, periodStart, periodEnd],
+  );
 
   const normRow = normStats[0] ?? {};
   const totalNorm = (normRow['total_normalisations'] as number) ?? 0;
   const acceptedNorm = (normRow['accepted'] as number) ?? 0;
-  const normAcceptRate = totalNorm > 0 ? (acceptedNorm / totalNorm) * 100 : null;
+  const normAcceptRate = totalNorm > 0
+    ? Math.round((acceptedNorm / totalNorm) * 10000) / 100
+    : null;
 
-  // ── Audit flags: normalisation rejects + field edits ──
+  // ── Audit flags: normalisation rejects ──
   const auditFlagCount = totalNorm > 0 ? (totalNorm - acceptedNorm) : 0;
 
-  // ── Completeness: placeholder — requires Feature 4 grade storage ──
-  // If completeness_grade is stored on inspections table, compute here.
-  // For now, set to null until completeness grades are persisted.
+  // ── Overdue rate: % of inspections completed past their scheduled due date ──
+  // Compare inspection_date against the site's frequency schedule
+  const overdueStats = await sql(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(CASE
+         WHEN i.inspection_date > (
+           SELECT MAX(prev.inspection_date) + (
+             CASE i.inspection_type
+               WHEN 'routine_visual' THEN COALESCE(s.inspection_frequency_routine_days, 7)
+               WHEN 'operational' THEN COALESCE(s.inspection_frequency_operational_days, 90)
+               WHEN 'annual_main' THEN COALESCE(s.inspection_frequency_annual_days, 365)
+               ELSE 365
+             END * interval '1 day'
+           )
+           FROM inspections prev
+           WHERE prev.site_id = i.site_id
+             AND prev.inspection_type = i.inspection_type
+             AND prev.status IN ('signed', 'exported')
+             AND prev.signed_at < i.signed_at
+         ) THEN 1
+       END)::int AS overdue
+     FROM inspections i
+     INNER JOIN sites s ON s.id = i.site_id
+     WHERE i.org_id = $1
+       AND i.inspector_id = $2
+       AND i.status IN ('signed', 'exported')
+       AND i.signed_at >= $3
+       AND i.signed_at < $4::date + interval '1 day'
+       ${typeClause}`,
+    params,
+  );
+
+  const overdueRow = overdueStats[0] ?? {};
+  const overdueTotal = (overdueRow['total'] as number) ?? 0;
+  const overdueCount = (overdueRow['overdue'] as number) ?? 0;
+  const overdueRate = overdueTotal > 0
+    ? Math.round((overdueCount / overdueTotal) * 10000) / 100
+    : null;
+
+  // ── Completeness: placeholder until Feature 4 grades are persisted ──
   const completenessAvg: number | null = null;
   const completenessVariance: number | null = null;
-  const completenessCounts = JSON.stringify({ A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 });
+  const completenessCounts = '{}';
 
-  // ── Overdue rate: placeholder — requires schedule comparison ──
-  const overdueRate: number | null = null;
-
-  // ── Rework rate: placeholder — requires status change tracking ──
+  // ── Rework rate: placeholder until status change tracking is added ──
   const reworkRate: number | null = null;
 
   // ── Critical response time: placeholder ──
   const criticalResponseAvg: number | null = null;
 
   // ── UPSERT ──
-  await sql`
-    INSERT INTO inspector_metrics_period (
-      org_id, inspector_user_id, period_type, period_start, period_end,
-      inspection_type, inspections_completed, completeness_avg, completeness_counts,
-      defects_total, defects_per_inspection_avg, photo_compliance_pct,
-      normalisation_accept_rate, avg_time_to_signoff_seconds, overdue_rate,
-      makesafe_initiated_count, makesafe_completed_count,
-      rework_rate, critical_response_avg_seconds, evidence_quality_pct,
-      completeness_variance, audit_flag_count, computed_at, source_version
-    ) VALUES (
-      ${orgId}, ${inspectorUserId}, 'month', ${periodStart}, ${periodEnd},
-      ${inspectionType}, ${inspectionsCompleted}, ${completenessAvg}, ${completenessCounts}::jsonb,
-      ${(core['defects_total'] as number) ?? 0}, ${core['defects_per_inspection_avg'] as number | null},
-      ${photoCompliancePct},
-      ${normAcceptRate}, ${core['avg_time_to_signoff_seconds'] as number | null}, ${overdueRate},
-      ${makesafeInitiated}, ${makesafeCompleted},
-      ${reworkRate}, ${criticalResponseAvg}, ${evidenceQualityPct},
-      ${completenessVariance}, ${auditFlagCount}, NOW(), '1.0'
-    )
-    ON CONFLICT ON CONSTRAINT uq_metrics_period
-    DO UPDATE SET
-      inspections_completed = EXCLUDED.inspections_completed,
-      completeness_avg = EXCLUDED.completeness_avg,
-      completeness_counts = EXCLUDED.completeness_counts,
-      defects_total = EXCLUDED.defects_total,
-      defects_per_inspection_avg = EXCLUDED.defects_per_inspection_avg,
-      photo_compliance_pct = EXCLUDED.photo_compliance_pct,
-      normalisation_accept_rate = EXCLUDED.normalisation_accept_rate,
-      avg_time_to_signoff_seconds = EXCLUDED.avg_time_to_signoff_seconds,
-      overdue_rate = EXCLUDED.overdue_rate,
-      makesafe_initiated_count = EXCLUDED.makesafe_initiated_count,
-      makesafe_completed_count = EXCLUDED.makesafe_completed_count,
-      rework_rate = EXCLUDED.rework_rate,
-      critical_response_avg_seconds = EXCLUDED.critical_response_avg_seconds,
-      evidence_quality_pct = EXCLUDED.evidence_quality_pct,
-      completeness_variance = EXCLUDED.completeness_variance,
-      audit_flag_count = EXCLUDED.audit_flag_count,
-      computed_at = NOW(),
-      source_version = '1.0'
-  `;
+  await sql(
+    `INSERT INTO inspector_metrics_period (
+       org_id, inspector_user_id, period_type, period_start, period_end,
+       inspection_type, inspections_completed, completeness_avg, completeness_counts,
+       defects_total, defects_per_inspection_avg, photo_compliance_pct,
+       normalisation_accept_rate, avg_time_to_signoff_seconds, overdue_rate,
+       makesafe_initiated_count, makesafe_completed_count,
+       rework_rate, critical_response_avg_seconds, evidence_quality_pct,
+       completeness_variance, audit_flag_count, computed_at, source_version
+     ) VALUES (
+       $1, $2, 'month', $3, $4,
+       $5, $6, $7, $8::jsonb,
+       $9, $10, $11,
+       $12, $13, $14,
+       $15, $16,
+       $17, $18, $19,
+       $20, $21, NOW(), '1.1'
+     )
+     ON CONFLICT ON CONSTRAINT uq_metrics_period
+     DO UPDATE SET
+       inspections_completed = EXCLUDED.inspections_completed,
+       completeness_avg = EXCLUDED.completeness_avg,
+       completeness_counts = EXCLUDED.completeness_counts,
+       defects_total = EXCLUDED.defects_total,
+       defects_per_inspection_avg = EXCLUDED.defects_per_inspection_avg,
+       photo_compliance_pct = EXCLUDED.photo_compliance_pct,
+       normalisation_accept_rate = EXCLUDED.normalisation_accept_rate,
+       avg_time_to_signoff_seconds = EXCLUDED.avg_time_to_signoff_seconds,
+       overdue_rate = EXCLUDED.overdue_rate,
+       makesafe_initiated_count = EXCLUDED.makesafe_initiated_count,
+       makesafe_completed_count = EXCLUDED.makesafe_completed_count,
+       rework_rate = EXCLUDED.rework_rate,
+       critical_response_avg_seconds = EXCLUDED.critical_response_avg_seconds,
+       evidence_quality_pct = EXCLUDED.evidence_quality_pct,
+       completeness_variance = EXCLUDED.completeness_variance,
+       audit_flag_count = EXCLUDED.audit_flag_count,
+       computed_at = NOW(),
+       source_version = '1.1'`,
+    [
+      orgId,                                                        // $1
+      inspectorUserId,                                              // $2
+      periodStart,                                                  // $3
+      periodEnd,                                                    // $4
+      inspectionType,                                               // $5
+      inspectionsCompleted,                                         // $6
+      completenessAvg,                                              // $7
+      completenessCounts,                                           // $8
+      (core['defects_total'] as number) ?? 0,                       // $9
+      (core['defects_per_inspection_avg'] as number | null) ?? null,// $10
+      photoCompliancePct,                                           // $11
+      normAcceptRate,                                               // $12
+      (core['avg_time_to_signoff_seconds'] as number | null) ?? null, // $13
+      overdueRate,                                                  // $14
+      makesafeInitiated,                                            // $15
+      makesafeCompleted,                                            // $16
+      reworkRate,                                                   // $17
+      criticalResponseAvg,                                          // $18
+      evidenceQualityPct,                                           // $19
+      completenessVariance,                                         // $20
+      auditFlagCount,                                               // $21
+    ],
+  );
 }
 
 // =============================================

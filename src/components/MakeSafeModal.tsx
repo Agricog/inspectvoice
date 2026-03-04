@@ -14,6 +14,13 @@
  *   - MakeSafeModal: full-screen modal with form
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
+ *
+ * FIX: 4 Mar 2026
+ *   - Removed JSON.stringify from body passed to secureFetch (secureFetch already
+ *     serialises via JSON.stringify internally — double-stringify sent a JSON string
+ *     instead of a JSON object, causing "Request body must be a JSON object" 400).
+ *   - Removed `as Response` casts — secureFetch returns parsed data, not a Response.
+ *   - Removed .json() calls on secureFetch results (already parsed).
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -61,6 +68,10 @@ interface MakeSafeFormData {
   asset_closed: boolean;
   photo: File | null;
   photoPreview: string | null;
+}
+
+interface PhotoUploadResponse {
+  data: { r2_key: string; upload_url: string };
 }
 
 type SubmitStatus = 'idle' | 'uploading_photo' | 'submitting' | 'success' | 'error';
@@ -253,23 +264,17 @@ function MakeSafeModal({
       if (form.photo) {
         setStatus('uploading_photo');
 
-        const uploadReq = await secureFetch('/api/v1/uploads/photo', {
+        // secureFetch serialises body internally — pass raw object, not JSON.stringify
+        const uploadData = await secureFetch<PhotoUploadResponse>('/api/v1/uploads/photo', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: {
             filename: form.photo.name,
             content_type: form.photo.type,
             context: 'make_safe',
-          }),
-        }) as Response;
+          },
+        });
 
-        if (!uploadReq.ok) throw new Error('Failed to get upload URL');
-
-        const uploadData = await uploadReq.json() as {
-          data: { r2_key: string; upload_url: string };
-        };
-
-        // Upload to R2
+        // Upload binary directly to R2 via signed URL (raw fetch, not secureFetch)
         const putRes = await fetch(uploadData.data.upload_url, {
           method: 'PUT',
           body: form.photo,
@@ -289,10 +294,10 @@ function MakeSafeModal({
       // ── Submit make-safe action ──
       setStatus('submitting');
 
-      const res = await secureFetch(`/api/v1/defects/${defectId}/make-safe`, {
+      // secureFetch serialises body internally — pass raw object
+      await secureFetch(`/api/v1/defects/${defectId}/make-safe`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           action_taken: form.action_taken,
           action_details: form.action_details.trim(),
           recommendation: form.recommendation.trim(),
@@ -300,13 +305,8 @@ function MakeSafeModal({
           photo_r2_key: photoR2Key,
           latitude: geoLocation?.lat ?? null,
           longitude: geoLocation?.lng ?? null,
-        }),
-      }) as Response;
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => null) as Record<string, string> | null;
-        throw new Error(body?.error ?? `Failed (${res.status})`);
-      }
+        },
+      });
 
       setStatus('success');
 

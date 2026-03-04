@@ -80,7 +80,6 @@ import {
 import { computeInspectorMetrics } from './cron/metricsComputation';
 
 // ── Feature 14: Manual metrics trigger (admin only) ──
-// Wipes all stale/duplicate rows for this org, then recomputes fresh.
 async function triggerMetricsComputation(
   _request: Request,
   _params: RouteParams,
@@ -93,20 +92,9 @@ async function triggerMetricsComputation(
     );
   }
   try {
-    // Clean up any stale/duplicate rows for this org before recomputing
-    const { neon } = await import('@neondatabase/serverless');
-    type SqlFn = (query: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>;
-    const sqlFn = neon(ctx.env.DATABASE_URL) as unknown as SqlFn;
-    const deleted = await sqlFn(
-      `DELETE FROM inspector_metrics_period WHERE org_id = $1 RETURNING id`,
-      [ctx.orgId],
-    );
-
-    // Run fresh computation
     await computeInspectorMetrics(ctx.env);
-
     return new Response(
-      JSON.stringify({ success: true, stale_rows_cleaned: deleted.length, message: 'Metrics recomputed' }),
+      JSON.stringify({ success: true, message: 'Metrics computation complete' }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     );
   } catch (error) {

@@ -139,7 +139,7 @@ export async function getPerformanceOverview(
       LEFT JOIN users u ON u.id = m.inspector_user_id AND u.org_id = m.org_id
       WHERE m.org_id = $1
         AND m.period_start >= $2
-        AND m.period_end <= $3
+        AND m.period_start <= $3
         AND m.period_type IN ('day', 'month')
         ${inspectionType ? 'AND (m.inspection_type = $4 OR m.inspection_type IS NULL)' : 'AND m.inspection_type IS NULL'}
       GROUP BY m.inspector_user_id, u.first_name, u.last_name, u.email

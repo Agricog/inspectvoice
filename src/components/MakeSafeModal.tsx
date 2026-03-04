@@ -16,11 +16,15 @@
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  *
  * FIX: 4 Mar 2026
+ *   - Added inspectionItemId prop — required by Worker's requestPhotoUpload endpoint
+ *     which validates inspection_item_id as a UUID. Without it, make-safe evidence
+ *     photos failed with "inspection_item_id must be a valid UUID".
  *   - Removed JSON.stringify from body passed to secureFetch (secureFetch already
  *     serialises via JSON.stringify internally — double-stringify sent a JSON string
  *     instead of a JSON object, causing "Request body must be a JSON object" 400).
  *   - Removed `as Response` casts — secureFetch returns parsed data, not a Response.
- *   - Removed .json() calls on secureFetch results (already parsed).
+ *   - Changed field names to match Worker: mime_type (not content_type), added
+ *     inspection_item_id on both upload request and confirm.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -43,6 +47,7 @@ import { secureFetch } from '@hooks/useFetch';
 
 interface MakeSafeButtonProps {
   defectId: string;
+  inspectionItemId: string;
   severity: string;
   description: string;
   siteName: string;
@@ -106,6 +111,7 @@ const INITIAL_FORM: MakeSafeFormData = {
 
 export function MakeSafeButton({
   defectId,
+  inspectionItemId,
   severity,
   description,
   siteName,
@@ -145,6 +151,7 @@ export function MakeSafeButton({
       {modalOpen && (
         <MakeSafeModal
           defectId={defectId}
+          inspectionItemId={inspectionItemId}
           severity={severity}
           description={description}
           siteName={siteName}
@@ -166,6 +173,7 @@ export function MakeSafeButton({
 
 function MakeSafeModal({
   defectId,
+  inspectionItemId,
   severity,
   description,
   siteName,
@@ -174,6 +182,7 @@ function MakeSafeModal({
   onSuccess,
 }: {
   defectId: string;
+  inspectionItemId: string;
   severity: string;
   description: string;
   siteName: string;
@@ -264,17 +273,19 @@ function MakeSafeModal({
       if (form.photo) {
         setStatus('uploading_photo');
 
-        // secureFetch serialises body internally — pass raw object, not JSON.stringify
+        // Step 1: Request signed upload URL from Worker
+        // secureFetch serialises body internally — pass raw object, NOT JSON.stringify
+        // Field names must match Worker: inspection_item_id (UUID), mime_type (string)
         const uploadData = await secureFetch<PhotoUploadResponse>('/api/v1/uploads/photo', {
           method: 'POST',
           body: {
-            filename: form.photo.name,
-            content_type: form.photo.type,
-            context: 'make_safe',
+            inspection_item_id: inspectionItemId,
+            mime_type: form.photo.type,
+            file_size_bytes: form.photo.size,
           },
         });
 
-        // Upload binary directly to R2 via signed URL (raw fetch, not secureFetch)
+        // Step 2: Upload binary directly to R2 via signed URL (raw fetch, not secureFetch)
         const putRes = await fetch(uploadData.data.upload_url, {
           method: 'PUT',
           body: form.photo,
@@ -285,9 +296,16 @@ function MakeSafeModal({
 
         photoR2Key = uploadData.data.r2_key;
 
-        // Confirm upload
+        // Step 3: Confirm upload — Worker creates photos DB record
         await secureFetch(`/api/v1/uploads/photo/${encodeURIComponent(photoR2Key)}/confirm`, {
           method: 'POST',
+          body: {
+            inspection_item_id: inspectionItemId,
+            captured_at: new Date().toISOString(),
+            latitude: geoLocation?.lat ?? null,
+            longitude: geoLocation?.lng ?? null,
+            caption: `Make-safe evidence: ${form.action_taken.replace(/_/g, ' ')}`,
+          },
         });
       }
 
@@ -320,7 +338,7 @@ function MakeSafeModal({
       setErrorMsg(message);
       setStatus('error');
     }
-  }, [form, defectId, geoLocation, onSuccess]);
+  }, [form, defectId, inspectionItemId, geoLocation, onSuccess]);
 
   // ── Render ─────────────────────────────────
   const isSubmitting = status === 'uploading_photo' || status === 'submitting';

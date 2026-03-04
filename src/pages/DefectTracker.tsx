@@ -19,6 +19,10 @@
  * - Loading, error, and empty states
  *
  * API: GET /api/defects?page=1&limit=20&status=...&severity=...&search=...&sort=...&order=...
+ *
+ * FIX: 4 Mar 2026
+ *   - Added inspectionItemId prop to MakeSafeButton in both DefectCard and DefectRow.
+ *     Required by Worker's requestPhotoUpload which validates inspection_item_id as UUID.
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
@@ -533,6 +537,7 @@ function DefectCard({ defect, onRefresh }: { defect: DefectListItem; onRefresh: 
         {!isTerminal && (
           <MakeSafeButton
             defectId={defect.id}
+            inspectionItemId={defect.inspection_item_id}
             severity={defect.severity}
             description={defect.description}
             siteName={defect.site_name}
@@ -685,6 +690,7 @@ function DefectRow({ defect, onRefresh }: { defect: DefectListItem; onRefresh: (
         {!isTerminal ? (
           <MakeSafeButton
             defectId={defect.id}
+            inspectionItemId={defect.inspection_item_id}
             severity={defect.severity}
             description={defect.description}
             siteName={defect.site_name}

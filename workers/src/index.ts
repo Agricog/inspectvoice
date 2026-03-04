@@ -87,11 +87,26 @@ async function triggerMetricsComputation(
   if (!['admin', 'org:admin', 'manager', 'org:manager'].includes(ctx.userRole)) {
     return new Response(JSON.stringify({ success: false, error: { code: 'FORBIDDEN', message: 'Admin only' } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   }
+  const errors: string[] = [];
   try {
-    await computeInspectorMetrics(ctx.env);
-    return new Response(JSON.stringify({ success: true, message: 'Metrics computation complete' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const { neon } = await import('@neondatabase/serverless');
+    const sql = neon(ctx.env.DATABASE_URL) as unknown as (query: string, params?: unknown[]) => Promise<Array<Record<string, unknown>>>;
+    const rows = await sql(
+      `SELECT COUNT(*)::int AS inspections_completed,
+              AVG(i.total_defects)::numeric(6,2) AS defects_per_inspection_avg,
+              SUM(i.total_defects)::int AS defects_total,
+              AVG(EXTRACT(EPOCH FROM (i.signed_at::timestamp - i.started_at::timestamp)))::int AS avg_signoff
+       FROM inspections i
+       WHERE i.org_id = $1
+         AND i.inspector_id = $2
+         AND i.status IN ('signed', 'exported')
+         AND i.signed_at >= $3
+         AND i.signed_at < $4::date + interval '1 day'`,
+      ['org_3AE2HUbv3RmB6IVlaOZUTJKyYEr', 'user_3AE2BqxUr1ZbDPrlgC6qRMbgYth', '2026-03-01', '2026-03-31'],
+    );
+    return new Response(JSON.stringify({ success: true, rows, errors }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
-    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error) } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ success: false, error: { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
     return new Response(JSON.stringify({

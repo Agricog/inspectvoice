@@ -196,7 +196,7 @@ export default function InspectorPerformancePage(): JSX.Element {
   }, [getToken, data]);
 
   // ── Sort header helper ──
-  function SortHeader({ label, field, align }: { label: string; field: SortKey; align?: 'left' | 'right' }): JSX.Element {
+  function SortHeader({ label, field }: { label: string; field: SortKey }): JSX.Element {
     const isActive = sortKey === field;
     return (
       <button
@@ -363,7 +363,7 @@ export default function InspectorPerformancePage(): JSX.Element {
           <table className="w-full min-w-[900px]">
             <thead>
               <tr className="border-b border-iv-border">
-                <th className="text-left px-4 py-3"><SortHeader label="Inspector" field="inspector_name" align="left" /></th>
+                <th className="text-left px-4 py-3"><SortHeader label="Inspector" field="inspector_name" /></th>
                 <th className="text-right px-3 py-3"><SortHeader label="Inspections" field="inspections_completed" /></th>
                 <th className="text-right px-3 py-3"><SortHeader label="Completeness" field="completeness_avg" /></th>
                 <th className="text-right px-3 py-3"><SortHeader label="Overdue" field="overdue_rate" /></th>

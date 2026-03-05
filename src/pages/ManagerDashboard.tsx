@@ -749,7 +749,8 @@ export function ManagerDashboard(): JSX.Element {
             <RecentInspections inspections={recentInspections} />
           </>
         )}
-      </div>
+     </div>
+      <PageHelp pageKey="dashboard" />
     </>
   );
 }

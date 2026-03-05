@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import { secureFetch } from '@hooks/useFetch';
 import {
   Plus,
   Search,
@@ -85,14 +86,44 @@ export function SiteList(): JSX.Element {
     trackPageView('/sites');
   }, []);
 
-  // Load sites from cache
+  // Load sites from cache, then refresh from API
   useEffect(() => {
     async function loadSites(): Promise<void> {
       try {
         setLoading(true);
         setError(null);
+
+        // 1. Show cached data immediately (offline-first)
         const cached = await sitesCache.getAll();
-        setSites(cached);
+        if (cached.length > 0) {
+          setSites(cached);
+        }
+
+        // 2. If online, fetch from API and merge into cache
+        if (navigator.onLine) {
+          try {
+            const response = await secureFetch<{ success: boolean; data: Array<CachedSite['data']> }>(
+              '/api/v1/sites',
+            );
+
+            if (response?.success && Array.isArray(response.data)) {
+              // Update IndexedDB cache with server data
+              await sitesCache.putMany(response.data);
+
+              // Reload from cache to get merged result
+              const refreshed = await sitesCache.getAll();
+              setSites(refreshed);
+            }
+          } catch (fetchErr) {
+            // API fetch failed — no problem, we already have cached data
+            // Only show error if we have zero cached sites
+            if (cached.length === 0) {
+              const message = fetchErr instanceof Error ? fetchErr.message : 'Failed to fetch sites';
+              setError(message);
+            }
+            captureError(fetchErr, { module: 'SiteList', operation: 'refreshFromAPI' });
+          }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to load sites';
         setError(message);

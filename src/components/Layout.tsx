@@ -65,7 +65,7 @@ export function Layout(): JSX.Element {
       )}
 
       {/* Header */}
-      <header className="border-b border-iv-border bg-iv-surface/80 backdrop-blur-sm sticky top-0 z-50">
+      <header className="border-b border-iv-border bg-iv-surface/80 backdrop-blur-sm sticky top-0 z-50 pt-[env(safe-area-inset-top)]">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-3 group min-w-0" onClick={closeMobileMenu}>

@@ -18,6 +18,13 @@
  *   - Dimension and file size reporting
  *   - TypeScript strict, zero any, pure service — no React dependency
  *
+ * FIX: 5 Mar 2026
+ *   - GPS extraction now runs in parallel with image processing, never blocks
+ *     photo rendering. Fixes infinite spinner on mobile when geolocation
+ *     permission prompt appears behind camera UI.
+ *   - Hard 3-second timeout on getCurrentPosition to prevent iOS Safari hang
+ *     where the browser timeout doesn't start until user responds to prompt.
+ *
  * Build Standard: Autaimate v3 — production-ready first time
  */
 
@@ -503,7 +510,8 @@ export async function processPhotoFile(
 // =============================================
 
 /**
- * Process any image blob: load → extract GPS → resize → compress → thumbnail.
+ * Process any image blob: load → resize → compress → thumbnail.
+ * GPS extraction runs in parallel — never blocks image rendering.
  */
 async function processImageBlob(
   source: File | Blob,
@@ -511,32 +519,8 @@ async function processImageBlob(
 ): Promise<PhotoCaptureResult> {
   const capturedAt = new Date().toISOString();
 
-  // Extract GPS from EXIF before processing (processing strips EXIF)
-  let latitude: number | null = null;
-  let longitude: number | null = null;
-
-  try {
-    const gps = await extractGPSFromExif(source);
-    if (gps) {
-      latitude = gps.latitude;
-      longitude = gps.longitude;
-    }
-  } catch (error) {
-    captureError(error, { module: 'photoCapture', operation: 'extractGPS' });
-  }
-
-  // If no EXIF GPS, try browser Geolocation API
-  if (latitude === null && longitude === null) {
-    try {
-      const position = await getCurrentPosition();
-      if (position) {
-        latitude = Math.round(position.coords.latitude * 1_000_000) / 1_000_000;
-        longitude = Math.round(position.coords.longitude * 1_000_000) / 1_000_000;
-      }
-    } catch {
-      // Non-critical
-    }
-  }
+  // Start GPS extraction in parallel — never blocks image processing
+  const gpsPromise = extractGPS(source);
 
   // Load image
   let img: HTMLImageElement;
@@ -575,6 +559,9 @@ async function processImageBlob(
     thumbnailBase64 = '';
   }
 
+  // Await GPS result — by now it's likely already resolved
+  const gps = await gpsPromise;
+
   return {
     base64Data: mainResult.base64,
     thumbnailBase64,
@@ -582,10 +569,39 @@ async function processImageBlob(
     fileSizeBytes: mainResult.sizeBytes,
     width: mainResult.width,
     height: mainResult.height,
-    latitude,
-    longitude,
+    latitude: gps?.latitude ?? null,
+    longitude: gps?.longitude ?? null,
     capturedAt,
   };
+}
+
+/**
+ * Extract GPS: try EXIF first, fall back to browser geolocation.
+ * Isolated so it never blocks image processing.
+ */
+async function extractGPS(
+  source: File | Blob,
+): Promise<{ latitude: number; longitude: number } | null> {
+  try {
+    const exifGps = await extractGPSFromExif(source);
+    if (exifGps) return exifGps;
+  } catch (error) {
+    captureError(error, { module: 'photoCapture', operation: 'extractGPS' });
+  }
+
+  try {
+    const position = await getCurrentPosition();
+    if (position) {
+      return {
+        latitude: Math.round(position.coords.latitude * 1_000_000) / 1_000_000,
+        longitude: Math.round(position.coords.longitude * 1_000_000) / 1_000_000,
+      };
+    }
+  } catch {
+    // Non-critical — photo still works without GPS
+  }
+
+  return null;
 }
 
 // =============================================
@@ -666,7 +682,15 @@ export function releaseCameraStream(stream: MediaStream): void {
 // GEOLOCATION HELPER
 // =============================================
 
-/** Get current position with a 5-second timeout. Returns null on failure. */
+/**
+ * Get current position with a hard 3-second timeout.
+ * Returns null on failure.
+ *
+ * FIX: iOS Safari's built-in geolocation timeout doesn't start until AFTER
+ * the user responds to the permission prompt. If the prompt appears behind
+ * the camera UI, the user never sees it and the call hangs indefinitely.
+ * This external timeout guarantees we never block photo processing.
+ */
 function getCurrentPosition(): Promise<GeolocationPosition | null> {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
@@ -674,13 +698,35 @@ function getCurrentPosition(): Promise<GeolocationPosition | null> {
       return;
     }
 
+    let settled = false;
+
+    // Hard external timeout — fires regardless of permission prompt state
+    const hardTimeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, 3000);
+
     navigator.geolocation.getCurrentPosition(
-      (position) => resolve(position),
-      () => resolve(null),
+      (position) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(hardTimeout);
+          resolve(position);
+        }
+      },
+      () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(hardTimeout);
+          resolve(null);
+        }
+      },
       {
         enableHighAccuracy: false,
-        timeout: 5000,
-        maximumAge: 30000,
+        timeout: 3000,
+        maximumAge: 60000,
       },
     );
   });
@@ -702,3 +748,4 @@ export function formatFileSize(bytes: number): string {
 export function estimateBase64Size(base64: string): number {
   return Math.ceil(base64.length * 0.75);
 }
+

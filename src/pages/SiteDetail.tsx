@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import MapGL, { Marker, NavigationControl } from 'react-map-gl';
+import { PageHelp } from '@components/PageHelp';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   ArrowLeft,
@@ -750,6 +751,7 @@ export function SiteDetail(): JSX.Element {
           )}
         </div>
       </div>
+      <PageHelp pageKey="siteDetail" />
     </>
   );
 }

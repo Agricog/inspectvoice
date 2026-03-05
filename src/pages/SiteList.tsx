@@ -393,8 +393,10 @@ export function SiteList(): JSX.Element {
               <ChevronRight className="w-5 h-5 text-iv-muted-2 shrink-0" />
             </Link>
           ))}
-        </div>
-     <PageHelp pageKey="sites" />
+      </div>
+      )}
+
+      <PageHelp pageKey="sites" />
     </>
   );
 }

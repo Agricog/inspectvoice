@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { secureFetch } from '@hooks/useFetch';
+import { PageHelp } from '@components/PageHelp';
 import {
   Plus,
   Search,
@@ -393,7 +394,7 @@ export function SiteList(): JSX.Element {
             </Link>
           ))}
         </div>
-      )}
+     <PageHelp pageKey="sites" />
     </>
   );
 }

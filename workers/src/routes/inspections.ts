@@ -29,6 +29,13 @@
  *     patterns silently fail. All functions use try-catch internally so
  *     awaiting them cannot crash the response.
  *
+ * FIX: 16 Mar 2026
+ *   - listInspections now JOINs sites and users tables to return site_name
+ *     and inspector_name columns required by the frontend InspectionList page.
+ *   - Response format changed from { meta } to { pagination } to match
+ *     the frontend InspectionListResponse type.
+ *   - Added search filter (site name or inspector name) and date range filters.
+ *
  * Build Standard: Autaimate v3 -- TypeScript strict, zero any, production-ready
  */
 import type { RequestContext, RouteParams } from '../types';
@@ -53,24 +60,30 @@ import {
 } from '../shared/validation';
 import {
   parsePagination,
-  buildPaginationMeta,
   paginationToOffset,
   parseSortField,
   parseSortDirection,
+  parseSearchQuery,
   parseFilterParam,
 } from '../shared/pagination';
 import { jsonResponse } from './helpers';
+
 // =============================================
 // ALLOWED VALUES
 // =============================================
+
 const INSPECTION_TYPES = [
   'routine_visual', 'operational', 'annual_main', 'post_repair', 'ad_hoc',
 ] as const;
+
 const INSPECTION_STATUSES = ['draft', 'review', 'signed', 'exported'] as const;
+
 const RISK_RATINGS = ['very_high', 'high', 'medium', 'low'] as const;
+
 const INSPECTION_SORT_COLUMNS = [
   'inspection_date', 'created_at', 'updated_at', 'status', 'inspection_type',
 ] as const;
+
 /**
  * Valid state transitions (forward only, with auto-step support).
  * draft->signed is allowed because the offline-first client completes
@@ -83,11 +96,14 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   'signed': ['exported'],
   'exported': [],
 };
+
 /** Immutable statuses -- no field updates allowed */
 const IMMUTABLE_STATUSES = new Set(['signed', 'exported']);
+
 // =============================================
 // DEFECT EXTRACTION (sign-off pipeline)
 // =============================================
+
 /** Calculate due_date from action_timeframe */
 function calculateDueDate(timeframe: string | undefined): string | null {
   if (!timeframe) return null;
@@ -108,6 +124,7 @@ function calculateDueDate(timeframe: string | undefined): string | null {
       return null; // next_inspection, routine -- no fixed date
   }
 }
+
 /**
  * Extract embedded defects from inspection_items into the defects table.
  * Called when an inspection transitions to 'signed'.
@@ -129,38 +146,45 @@ async function extractDefectsToTable(
   try {
     // Guard: skip if already extracted (idempotent)
     const existingCount = await db.rawQuery<{ count: number }>(
-      ` SELECT COUNT(*)::int AS count FROM defects WHERE inspection_id = $1 `,
+      `SELECT COUNT(*)::int AS count FROM defects WHERE inspection_id = $1`,
       [inspectionId],
     );
     if ((existingCount[0]?.count ?? 0) > 0) {
       logger.info('Defects already extracted, skipping', { inspectionId });
       return;
     }
+
     // Fetch inspection items that have defects
     const items = await db.rawQuery<Record<string, unknown>>(
-      ` SELECT id, asset_id, defects
+      `SELECT id, asset_id, defects
        FROM inspection_items
        WHERE inspection_id = $1
          AND defects IS NOT NULL
-         AND defects::text != '[]' `,
+         AND defects::text != '[]'`,
       [inspectionId],
     );
+
     if (items.length === 0) {
       logger.info('No defects to extract', { inspectionId });
       return;
     }
+
     const now = new Date().toISOString();
     let extractedCount = 0;
+
     for (const item of items) {
       const defectsRaw = item['defects'];
       const defects = (
         typeof defectsRaw === 'string' ? JSON.parse(defectsRaw) : defectsRaw
       ) as Array<Record<string, unknown>>;
+
       if (!Array.isArray(defects) || defects.length === 0) continue;
+
       for (const defect of defects) {
         const dueDate = calculateDueDate(defect['action_timeframe'] as string | undefined);
+
         await db.rawExecute(
-          ` INSERT INTO defects (
+          `INSERT INTO defects (
             id, org_id, inspection_item_id, inspection_id, site_id, asset_id,
             description, bs_en_reference, severity, remedial_action,
             action_timeframe, status, source, estimated_cost_gbp,
@@ -170,7 +194,7 @@ async function extractDefectsToTable(
             $7, $8, $9, $10,
             $11, $12, $13, $14,
             $15, $16, $17, $18::jsonb, $19, $20
-          ) `,
+          )`,
           [
             crypto.randomUUID(),           // id
             ctx.orgId,                     // org_id
@@ -197,7 +221,9 @@ async function extractDefectsToTable(
         extractedCount++;
       }
     }
+
     logger.info('Defects extracted to table', { inspectionId, count: extractedCount });
+
     await writeAuditLog(ctx, 'defects.extracted' as Parameters<typeof writeAuditLog>[1], 'inspections', inspectionId, {
       count: extractedCount,
       source: 'sign_off_extraction',
@@ -210,72 +236,128 @@ async function extractDefectsToTable(
     });
   }
 }
+
 // =============================================
 // LIST INSPECTIONS
 // =============================================
+
 export async function listInspections(
   request: Request,
   _params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
   await checkRateLimit(ctx, 'read');
+
   const db = createDb(ctx);
   const pagination = parsePagination(request, ctx.env);
   const { limit, offset } = paginationToOffset(pagination);
   const sortBy = parseSortField(request, [...INSPECTION_SORT_COLUMNS], 'inspection_date');
   const sortDir = parseSortDirection(request);
+
   const statusFilter = parseFilterParam(request, 'status');
   const typeFilter = parseFilterParam(request, 'type');
   const siteFilter = parseFilterParam(request, 'site_id');
+  const searchFilter = parseSearchQuery(request);
+  const dateFrom = parseFilterParam(request, 'from');
+  const dateTo = parseFilterParam(request, 'to');
+
   const conditions: string[] = [];
   const params: unknown[] = [];
-  let paramIndex = 2;
+  let paramIndex = 2; // $1 is org_id
+
   if (statusFilter && INSPECTION_STATUSES.includes(statusFilter as typeof INSPECTION_STATUSES[number])) {
-    conditions.push(` status = $${paramIndex} `);
+    conditions.push(`i.status = $${paramIndex}`);
     params.push(statusFilter);
     paramIndex++;
   }
+
   if (typeFilter && INSPECTION_TYPES.includes(typeFilter as typeof INSPECTION_TYPES[number])) {
-    conditions.push(` inspection_type = $${paramIndex} `);
+    conditions.push(`i.inspection_type = $${paramIndex}`);
     params.push(typeFilter);
     paramIndex++;
   }
+
   if (siteFilter) {
-    conditions.push(` site_id = $${paramIndex} `);
+    conditions.push(`i.site_id = $${paramIndex}`);
     params.push(siteFilter);
     paramIndex++;
   }
-  const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '';
-  const totalCount = await db.count('inspections', whereClause, params);
-  const inspections = await db.findMany(
-    'inspections',
-    whereClause,
-    params,
-    {
-      orderBy: sortBy,
-      orderDirection: sortDir,
-      limit,
-      offset,
-    },
+
+  if (searchFilter) {
+    conditions.push(`(s.name ILIKE $${paramIndex} OR u.display_name ILIKE $${paramIndex})`);
+    params.push(`%${searchFilter}%`);
+    paramIndex++;
+  }
+
+  if (dateFrom) {
+    conditions.push(`i.inspection_date >= $${paramIndex}`);
+    params.push(dateFrom);
+    paramIndex++;
+  }
+
+  if (dateTo) {
+    conditions.push(`i.inspection_date <= $${paramIndex}`);
+    params.push(dateTo);
+    paramIndex++;
+  }
+
+  const whereClause = conditions.length > 0
+    ? `AND ${conditions.join(' AND ')}`
+    : '';
+
+  // Count with JOINs so search filter works
+  const countRows = await db.rawQuery<{ count: number }>(
+    `SELECT COUNT(*)::int AS count
+     FROM inspections i
+     LEFT JOIN sites s ON s.id = i.site_id AND s.org_id = i.org_id
+     LEFT JOIN users u ON u.id = i.inspector_id
+     WHERE i.org_id = $1 ${whereClause}`,
+    [ctx.orgId, ...params],
   );
+  const totalCount = countRows[0]?.count ?? 0;
+
+  // Fetch with JOINed site_name and inspector_name
+  const inspections = await db.rawQuery<Record<string, unknown>>(
+    `SELECT i.*,
+            COALESCE(s.name, 'Unknown Site') AS site_name,
+            COALESCE(u.display_name, 'Unknown') AS inspector_name
+     FROM inspections i
+     LEFT JOIN sites s ON s.id = i.site_id AND s.org_id = i.org_id
+     LEFT JOIN users u ON u.id = i.inspector_id
+     WHERE i.org_id = $1 ${whereClause}
+     ORDER BY i.${sortBy} ${sortDir}
+     LIMIT ${limit} OFFSET ${offset}`,
+    [ctx.orgId, ...params],
+  );
+
   return jsonResponse({
     success: true,
     data: inspections,
-    meta: buildPaginationMeta(pagination, totalCount),
+    pagination: {
+      page: pagination.page,
+      limit,
+      total: totalCount,
+      total_pages: Math.ceil(totalCount / limit) || 1,
+    },
   }, ctx.requestId);
 }
+
 // =============================================
 // GET INSPECTION
 // =============================================
+
 export async function getInspection(
   _request: Request,
   params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
   await checkRateLimit(ctx, 'read');
+
   const id = validateUUID(params['id'], 'id');
   const db = createDb(ctx);
+
   const inspection = await db.findByIdOrThrow('inspections', id, 'Inspection');
+
   // Also fetch inspection items
   const items = await db.findByParent(
     'inspection_items',
@@ -284,6 +366,7 @@ export async function getInspection(
     id,
     { orderBy: 'timestamp', orderDirection: 'asc' },
   );
+
   return jsonResponse({
     success: true,
     data: {
@@ -292,9 +375,11 @@ export async function getInspection(
     },
   }, ctx.requestId);
 }
+
 // =============================================
 // CREATE INSPECTION
 // =============================================
+
 export async function createInspection(
   request: Request,
   _params: RouteParams,
@@ -302,11 +387,14 @@ export async function createInspection(
 ): Promise<Response> {
   validateCsrf(request);
   await checkRateLimit(ctx, 'write');
+
   const body = await parseJsonBody(request);
   const db = createDb(ctx);
+
   // Validate site belongs to this org
   const siteId = validateUUID(body['site_id'], 'site_id');
   await db.findByIdOrThrow('sites', siteId, 'Site');
+
   const data = {
     id: typeof body['id'] === 'string' && body['id'].length > 0
       ? validateUUID(body['id'], 'id')
@@ -340,32 +428,39 @@ export async function createInspection(
     notes: validateOptionalString(body['notes'], 'notes', { maxLength: 5000 }),
     metadata: body['metadata'] ?? {},
   };
+
   // If status is 'signed', capture signature data
   if (data.status === 'signed') {
     data.signed_by = validateString(body['signed_by'] as unknown, 'signed_by', { maxLength: 200 });
     data.signed_at = new Date().toISOString();
     data.signature_ip_address = request.headers.get('CF-Connecting-IP') ?? null;
   }
+
   const inspection = await db.insert('inspections', data);
+
   await writeAuditLog(ctx, 'inspection.created', 'inspections', data.id, {
     inspection_type: data.inspection_type,
     site_id: siteId,
     status: data.status,
   }, request);
+
   // Extract defects to standalone table when created as signed
   // MUST await — Cloudflare Workers kill void promises on response send
   if (data.status === 'signed') {
     const logger = Logger.fromContext(ctx);
     await extractDefectsToTable(db, ctx, data.id, siteId, logger);
   }
+
   return jsonResponse({
     success: true,
     data: inspection,
   }, ctx.requestId, 201);
 }
+
 // =============================================
 // UPDATE INSPECTION
 // =============================================
+
 export async function updateInspection(
   request: Request,
   params: RouteParams,
@@ -373,13 +468,16 @@ export async function updateInspection(
 ): Promise<Response> {
   validateCsrf(request);
   await checkRateLimit(ctx, 'write');
+
   const id = validateUUID(params['id'], 'id');
   const body = await parseJsonBody(request);
   const db = createDb(ctx);
   const logger = Logger.fromContext(ctx);
+
   // Fetch existing inspection
   const existing = await db.findByIdOrThrow<Record<string, unknown>>('inspections', id, 'Inspection');
   const currentStatus = existing['status'] as string;
+
   // -- IMMUTABILITY CHECK --
   if (IMMUTABLE_STATUSES.has(currentStatus)) {
     logger.warn('Attempted modification of immutable inspection', {
@@ -387,22 +485,25 @@ export async function updateInspection(
       currentStatus,
     });
     throw new ConflictError(
-      ` Inspection is ${currentStatus} and cannot be modified. Signed inspections are immutable. `,
+      `Inspection is ${currentStatus} and cannot be modified. Signed inspections are immutable.`,
     );
   }
+
   // -- STATE TRANSITION VALIDATION --
   const newStatus = body['status'] as string | undefined;
   if (newStatus && newStatus !== currentStatus) {
     const allowed = VALID_TRANSITIONS[currentStatus] ?? [];
     if (!allowed.includes(newStatus)) {
       throw new BadRequestError(
-        ` Cannot transition inspection from '${currentStatus}' to '${newStatus}'. ` +
-        ` Allowed transitions: ${allowed.length > 0 ? allowed.join(', ') : 'none'} `,
+        `Cannot transition inspection from '${currentStatus}' to '${newStatus}'. ` +
+        `Allowed transitions: ${allowed.length > 0 ? allowed.join(', ') : 'none'}`,
       );
     }
   }
+
   // Build update data
   const data: Record<string, unknown> = {};
+
   if ('inspection_type' in body) data['inspection_type'] = validateEnum(body['inspection_type'], 'inspection_type', INSPECTION_TYPES);
   if ('inspection_date' in body) data['inspection_date'] = validateISODate(body['inspection_date'], 'inspection_date');
   if ('started_at' in body) data['started_at'] = validateISODate(body['started_at'], 'started_at');
@@ -424,11 +525,13 @@ export async function updateInspection(
   if ('inspector_summary' in body) data['inspector_summary'] = validateOptionalString(body['inspector_summary'], 'inspector_summary', { maxLength: 5000 });
   if ('notes' in body) data['notes'] = validateOptionalString(body['notes'], 'notes', { maxLength: 5000 });
   if ('metadata' in body) data['metadata'] = body['metadata'];
+
   // -- SIGN-OFF HANDLING --
   if (newStatus === 'signed') {
     data['signed_by'] = validateString(body['signed_by'] as unknown, 'signed_by', { maxLength: 200 });
     data['signed_at'] = new Date().toISOString();
     data['signature_ip_address'] = request.headers.get('CF-Connecting-IP') ?? null;
+
     // Auto-step: draft->signed writes an intermediate review audit event
     if (currentStatus === 'draft') {
       await writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
@@ -437,33 +540,40 @@ export async function updateInspection(
         auto_stepped: true,
       }, request);
     }
+
     logger.info('Inspection signed', {
       inspectionId: id,
       signedBy: data['signed_by'] as string,
       autoStepped: currentStatus === 'draft',
     });
   }
+
   // -- EXPORT HANDLING --
   if (newStatus === 'exported') {
     if ('pdf_url' in body) data['pdf_url'] = validateOptionalString(body['pdf_url'], 'pdf_url', { maxLength: 500 });
     if ('pdf_generated_at' in body) data['pdf_generated_at'] = validateOptionalISODate(body['pdf_generated_at'], 'pdf_generated_at');
   }
+
   if (Object.keys(data).length === 0) {
     return jsonResponse({ success: true, data: existing }, ctx.requestId);
   }
+
   const updated = await db.updateById('inspections', id, data);
+
   // -- DEFECT EXTRACTION (on sign-off) --
   // MUST await — Cloudflare Workers kill void promises on response send
   if (newStatus === 'signed') {
     const siteId = (existing['site_id'] ?? data['site_id']) as string;
     await extractDefectsToTable(db, ctx, id, siteId, logger);
   }
+
   // Audit -- track status changes specially
   if (newStatus && newStatus !== currentStatus) {
     await writeAuditLog(ctx, 'inspection.status_changed', 'inspections', id, {
       from: currentStatus,
       to: newStatus,
     }, request);
+
     if (newStatus === 'signed') {
       await writeAuditLog(ctx, 'inspection.signed', 'inspections', id, {
         signed_by: data['signed_by'],
@@ -475,14 +585,17 @@ export async function updateInspection(
       await writeAuditLog(ctx, 'inspection.updated', 'inspections', id, changes, request);
     }
   }
+
   return jsonResponse({
     success: true,
     data: updated,
   }, ctx.requestId);
 }
+
 // =============================================
 // DELETE INSPECTION
 // =============================================
+
 export async function deleteInspection(
   request: Request,
   params: RouteParams,
@@ -490,28 +603,36 @@ export async function deleteInspection(
 ): Promise<Response> {
   validateCsrf(request);
   await checkRateLimit(ctx, 'write');
+
   const id = validateUUID(params['id'], 'id');
   const db = createDb(ctx);
   const logger = Logger.fromContext(ctx);
+
   const existing = await db.findByIdOrThrow<Record<string, unknown>>('inspections', id, 'Inspection');
   const currentStatus = existing['status'] as string;
+
   // Only draft and review inspections can be deleted
   if (IMMUTABLE_STATUSES.has(currentStatus)) {
     throw new ConflictError(
-      ` Cannot delete a ${currentStatus} inspection. Signed and exported inspections are permanent records. `,
+      `Cannot delete a ${currentStatus} inspection. Signed and exported inspections are permanent records.`,
     );
   }
+
   // Delete child records first (tenant-isolated via subquery), then the inspection
   await db.rawExecute(
-    ` DELETE FROM inspection_items WHERE inspection_id IN (SELECT id FROM inspections WHERE id = $1 AND org_id = $2) `,
+    `DELETE FROM inspection_items WHERE inspection_id IN (SELECT id FROM inspections WHERE id = $1 AND org_id = $2)`,
     [id, ctx.orgId],
   );
+
   await db.deleteById('inspections', id);
+
   await writeAuditLog(ctx, 'inspection.deleted', 'inspections', id, {
     inspection_type: existing['inspection_type'],
     site_id: existing['site_id'],
     status: currentStatus,
   }, request);
+
   logger.info('Inspection deleted', { inspectionId: id, status: currentStatus });
+
   return jsonResponse({ success: true, data: null }, ctx.requestId);
 }

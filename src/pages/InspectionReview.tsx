@@ -814,6 +814,21 @@ export default function InspectionReview(): JSX.Element {
     setPdfError(null);
 
     try {
+      // Load actual photo base64 data for PDF embedding
+      const photosByItem: Record<string, string[]> = {};
+      for (const item of items) {
+        try {
+          const photos = await pendingPhotos.getByItem(item.id);
+          if (photos.length > 0) {
+            photosByItem[item.id] = photos
+              .filter((p) => !p.is_reference_photo)
+              .map((p) => p.base64Data);
+          }
+        } catch {
+          // Skip — photos won't embed but report still generates
+        }
+      }
+
       const reportData: ReportData = {
         inspection,
         items,
@@ -821,6 +836,7 @@ export default function InspectionReview(): JSX.Element {
         assets: siteAssets,
         orgName: organization?.name || 'InspectVoice',
         photoCountsByItem,
+        photosByItem,
       };
 
       await downloadReport(reportData);

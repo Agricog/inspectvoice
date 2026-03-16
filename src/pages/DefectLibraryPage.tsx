@@ -258,14 +258,31 @@ export default function DefectLibraryPage(): JSX.Element {
     }
   }, [form, editingId, getToken, fetchEntries]);
 
-  // ── Delete ──
+  // ── Delete org entry ──
   const handleDelete = useCallback(async (entryId: string) => {
     if (!confirm('Deactivate this org entry? It can be restored later.')) return;
     try {
       const token = await getToken();
+      const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
       await fetch(`${API_BASE}/api/v1/defect-library/${entryId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf },
+      });
+      void fetchEntries();
+    } catch {
+      // silent
+    }
+  }, [getToken, fetchEntries]);
+
+  // ── Delete system entry (uses same endpoint — server now allows system entries) ──
+  const handleDeleteSystem = useCallback(async (entryId: string) => {
+    if (!confirm('Delete this system entry? It can be re-seeded later.')) return;
+    try {
+      const token = await getToken();
+      const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
+      await fetch(`${API_BASE}/api/v1/defect-library/${entryId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf },
       });
       void fetchEntries();
     } catch {
@@ -517,9 +534,19 @@ export default function DefectLibraryPage(): JSX.Element {
                           </>
                         )}
                         {entry.source === 'system' && (
-                          <span title="System entry (read-only)">
-                            <Shield className="w-3.5 h-3.5 iv-muted opacity-40" />
-                          </span>
+                          <>
+                            <span title="System entry">
+                              <Shield className="w-3.5 h-3.5 iv-muted opacity-40" />
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteSystem(entry.id)}
+                              className="iv-btn-icon opacity-60 hover:opacity-100 text-red-400"
+                              title="Delete system entry"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>

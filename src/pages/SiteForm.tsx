@@ -282,8 +282,15 @@ export function SiteForm(): JSX.Element {
             savedSite = response.data;
           }
         } catch (apiErr) {
-          // API failed — fall back to local-only save
-          console.warn('[SiteForm] API save failed, saving locally:', apiErr);
+          // Only fall back to local save when genuinely offline
+          if (navigator.onLine) {
+            // Online but API rejected — surface the real error
+            const message = apiErr instanceof Error ? apiErr.message : 'Failed to save site';
+            console.error('[SiteForm] API save failed while online:', apiErr);
+            throw new Error(message);
+          }
+          // Offline — local fallback is expected behaviour
+          console.warn('[SiteForm] Offline — saving locally for sync:', apiErr);
         }
         // Cache locally — use server response if available, otherwise build local data
         const siteToCache = savedSite ?? buildLocalSiteData(finalValues, localId);

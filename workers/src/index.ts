@@ -114,6 +114,7 @@ import {
   createDefectLibraryEntry,
   updateDefectLibraryEntry,
   deleteDefectLibraryEntry,
+  deleteAllLibraryEntries,
   recordLibraryUsage,
   seedDefectLibrary,
 } from './routes/defectLibrary';
@@ -286,6 +287,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['POST',   '/api/v1/defect-library', createDefectLibraryEntry],
   ['PUT',    '/api/v1/defect-library/:id', updateDefectLibraryEntry],
   ['DELETE', '/api/v1/defect-library/:id', deleteDefectLibraryEntry],
+  ['DELETE', '/api/v1/defect-library', deleteAllLibraryEntries],
   ['GET',    '/api/v1/defect-library', listDefectLibrary],
 
   // ── Feature 16: Client Workspace Management (Inspector-Side) ──

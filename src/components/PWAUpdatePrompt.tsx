@@ -176,7 +176,17 @@ export function PWAUpdatePrompt(): JSX.Element {
 
   const handleUpdate = useCallback(() => {
     if (window.__IV_SW_UPDATE) {
-      void window.__IV_SW_UPDATE(true);
+      window.__IV_SW_UPDATE(true).catch(() => {
+        // Fallback: force reload if skipWaiting fails
+        window.location.reload();
+      });
+      // Safety net: if nothing happens after 3 seconds, reload anyway
+      setTimeout(() => {
+        window.location.reload();
+      }, 3000);
+    } else {
+      // No SW update function available — just reload
+      window.location.reload();
     }
   }, []);
 

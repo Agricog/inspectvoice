@@ -489,7 +489,7 @@ export async function deleteDefectLibraryEntry(
     const result = await query(ctx, `
       UPDATE defect_library_entry
       SET is_active = false
-      WHERE id = $1 AND org_id = $2 AND source = 'org'
+      WHERE id = $1 AND (org_id = $2 OR source = 'system')
       RETURNING id
     `, [entryId, ctx.orgId]) as Array<Record<string, unknown>>;
 

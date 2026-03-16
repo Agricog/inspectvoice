@@ -290,12 +290,13 @@ async function handleOrgCreated(
   const sql = neon(ctx.env.DATABASE_URL);
 
   await sql(
-    `INSERT INTO organisations (org_id, company_name, subscription_status, created_at, updated_at)
-     VALUES ($1, $2, 'trialing', NOW(), NOW())
+    `INSERT INTO organisations (org_id, name, company_name, subscription_status, created_at, updated_at)
+     VALUES ($1, $2, $3, 'trialing', NOW(), NOW())
      ON CONFLICT (org_id) DO UPDATE SET
+       name = EXCLUDED.name,
        company_name = EXCLUDED.company_name,
        updated_at = NOW()`,
-    [org.id, org.name],
+    [org.id, org.name, org.name],
   );
 
   logger.info('Organisation created from Clerk webhook', { orgId: org.id });
@@ -315,10 +316,11 @@ async function handleOrgUpdated(
 
   await sql(
     `UPDATE organisations SET
-       company_name = $1,
+       name = $1,
+       company_name = $2,
        updated_at = NOW()
-     WHERE org_id = $2`,
-    [org.name, org.id],
+     WHERE org_id = $3`,
+    [org.name, org.name, org.id],
   );
 
   logger.info('Organisation updated from Clerk webhook', { orgId: org.id });

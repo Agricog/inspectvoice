@@ -11,10 +11,10 @@
  *   - Create/edit form (org entries only, system are read-only)
  *   - Version history drawer
  *   - Seed button (admin only, one-time)
+ *   - Delete All button (admin only, clears all entries for re-seeding)
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  */
-
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -148,6 +148,9 @@ export default function DefectLibraryPage(): JSX.Element {
   const [seeding, setSeeding] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
 
+  // Delete All
+  const [deletingAll, setDeletingAll] = useState(false);
+
   // ── Fetch entries ──
   const fetchEntries = useCallback(async () => {
     setLoading(true);
@@ -217,7 +220,6 @@ export default function DefectLibraryPage(): JSX.Element {
       setFormError('Title, asset type, description, and remedial action are required.');
       return;
     }
-
     setFormSaving(true);
     setFormError(null);
     try {
@@ -233,7 +235,6 @@ export default function DefectLibraryPage(): JSX.Element {
         timeframe_default: form.timeframe_default || null,
         change_note: form.change_note || (editingId ? 'Updated' : 'Initial version'),
       };
-
       const url = editingId
         ? `${API_BASE}/api/v1/defect-library/${editingId}`
         : `${API_BASE}/api/v1/defect-library`;
@@ -244,12 +245,10 @@ export default function DefectLibraryPage(): JSX.Element {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-
       if (!res.ok) {
         const errJson = await res.json() as { error?: { message?: string } };
         throw new Error(errJson.error?.message ?? `${res.status}`);
       }
-
       setShowForm(false);
       void fetchEntries();
     } catch (err) {
@@ -315,6 +314,29 @@ export default function DefectLibraryPage(): JSX.Element {
     }
   }, [getToken]);
 
+  // ── Delete All ──
+  const handleDeleteAll = useCallback(async () => {
+    if (!confirm('Delete ALL library entries (system + org)? System entries can be re-seeded afterwards.')) return;
+    setDeletingAll(true);
+    try {
+      const token = await getToken();
+      const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
+      const res = await fetch(`${API_BASE}/api/v1/defect-library`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf },
+      });
+      if (res.ok) {
+        const json = await res.json() as { data: { deleted: number } };
+        setSeedResult(`Deleted ${json.data.deleted} entries`);
+        void fetchEntries();
+      }
+    } catch {
+      setSeedResult('Delete failed');
+    } finally {
+      setDeletingAll(false);
+    }
+  }, [getToken, fetchEntries]);
+
   // ── Update form field helper ──
   const updateField = (field: keyof FormData, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -349,6 +371,10 @@ export default function DefectLibraryPage(): JSX.Element {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button type="button" onClick={() => void handleDeleteAll()} disabled={deletingAll} className="iv-btn-secondary text-xs flex items-center gap-1.5 text-red-400 hover:text-red-300">
+            {deletingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            Delete All
+          </button>
           <button type="button" onClick={handleSeed} disabled={seeding} className="iv-btn-secondary text-xs flex items-center gap-1.5">
             {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
             Seed System Entries
@@ -380,7 +406,6 @@ export default function DefectLibraryPage(): JSX.Element {
               ))}
             </select>
           </div>
-
           <select
             value={sourceFilter}
             onChange={(e) => { setSourceFilter(e.target.value); setOffset(0); }}
@@ -390,7 +415,6 @@ export default function DefectLibraryPage(): JSX.Element {
             <option value="system">System</option>
             <option value="org">Org Custom</option>
           </select>
-
           <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
             <div className="relative flex-1">
               <Search className="w-4 h-4 iv-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -546,13 +570,11 @@ export default function DefectLibraryPage(): JSX.Element {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             {formError && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-300">
                 {formError}
               </div>
             )}
-
             <div className="space-y-3">
               <div>
                 <label className="iv-label mb-1 block">Asset Type *</label>
@@ -568,7 +590,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   ))}
                 </select>
               </div>
-
               <div>
                 <label className="iv-label mb-1 block">Title *</label>
                 <input
@@ -580,7 +601,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   maxLength={200}
                 />
               </div>
-
               <div>
                 <label className="iv-label mb-1 block">Description Template *</label>
                 <textarea
@@ -592,7 +612,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   maxLength={2000}
                 />
               </div>
-
               <div>
                 <label className="iv-label mb-1 block">BS EN References</label>
                 <input
@@ -603,7 +622,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   placeholder="Comma-separated, e.g. BS EN 1176-1:2017 §4.2.4"
                 />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="iv-label mb-1 block">Severity *</label>
@@ -631,7 +649,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   </select>
                 </div>
               </div>
-
               <div>
                 <label className="iv-label mb-1 block">Remedial Action *</label>
                 <textarea
@@ -642,7 +659,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   maxLength={2000}
                 />
               </div>
-
               <div>
                 <label className="iv-label mb-1 block">Action Timeframe</label>
                 <select
@@ -656,7 +672,6 @@ export default function DefectLibraryPage(): JSX.Element {
                   ))}
                 </select>
               </div>
-
               {editingId && (
                 <div>
                   <label className="iv-label mb-1 block">Change Note</label>
@@ -670,7 +685,6 @@ export default function DefectLibraryPage(): JSX.Element {
                 </div>
               )}
             </div>
-
             <div className="flex items-center gap-3 mt-6">
               <button
                 type="button"
@@ -710,7 +724,6 @@ export default function DefectLibraryPage(): JSX.Element {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="p-4">
               {historyLoading ? (
                 <div className="flex items-center justify-center py-8">

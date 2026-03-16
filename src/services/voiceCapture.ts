@@ -822,29 +822,41 @@ export class VoiceCapture {
     // Clean up any existing manager first
     this.stopSpeechRecognition();
 
-    try {
-      this.speechManager = new SpeechApiManager(
-        this.config.language,
-        // onTranscriptUpdate
-        (finalText: string, interimText: string) => {
-          this.finalTranscript = finalText;
-          this.interimTranscript = interimText;
+    // Delay start to let the browser fully release the previous
+    // SpeechRecognition instance. Without this, the first recognition
+    // attempt on subsequent assets (asset 2, 3, etc.) silently fails
+    // because the browser's internal speech service is still shutting down.
+    setTimeout(() => {
+      // Guard: only proceed if still in a recording-related state
+      if (
+        this.state !== VoiceCaptureState.RECORDING &&
+        this.state !== VoiceCaptureState.REQUESTING_PERMISSION
+      ) {
+        return;
+      }
 
-          const combined = (finalText + interimText).trim();
-          const isFinal = interimText === '';
-          this.events.onTranscript?.(combined, isFinal);
-        },
-        // onSpeechError (non-fatal — MediaRecorder still captures audio)
-        (error: string) => {
-          console.warn('[VoiceCapture] Speech API:', error);
-        },
-      );
-
-      this.speechManager.start();
-    } catch (error) {
-      // Non-critical — MediaRecorder still captures audio for server-side transcription
-      console.warn('[VoiceCapture] Speech recognition not available:', error);
-    }
+      try {
+        this.speechManager = new SpeechApiManager(
+          this.config.language,
+          // onTranscriptUpdate
+          (finalText: string, interimText: string) => {
+            this.finalTranscript = finalText;
+            this.interimTranscript = interimText;
+            const combined = (finalText + interimText).trim();
+            const isFinal = interimText === '';
+            this.events.onTranscript?.(combined, isFinal);
+          },
+          // onSpeechError (non-fatal — MediaRecorder still captures audio)
+          (error: string) => {
+            console.warn('[VoiceCapture] Speech API:', error);
+          },
+        );
+        this.speechManager.start();
+      } catch (error) {
+        // Non-critical — MediaRecorder still captures audio for server-side transcription
+        console.warn('[VoiceCapture] Speech recognition not available:', error);
+      }
+    }, 350);
   }
 
   private stopSpeechRecognition(): void {

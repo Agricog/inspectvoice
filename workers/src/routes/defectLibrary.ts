@@ -1,6 +1,6 @@
 /**
  * InspectVoice — Defect Library Route Handlers
- * Feature 15: CRUD, quick-pick, version history, seed, audit
+ * Feature 15: CRUD, quick-pick, version history, seed, audit, delete-all
  *
  * Routes:
  *   GET    /api/v1/defect-library                     → list entries (filtered)
@@ -10,17 +10,18 @@
  *   POST   /api/v1/defect-library                     → create org entry (manager/admin)
  *   PUT    /api/v1/defect-library/:id                 → update org entry → new version (manager/admin)
  *   DELETE /api/v1/defect-library/:id                 → soft-delete org entry (manager/admin)
+ *   DELETE /api/v1/defect-library                     → delete all entries (admin only)
  *   POST   /api/v1/defect-library/seed                → seed system entries (admin only, idempotent)
  *   POST   /api/v1/defect-library/:id/record-usage    → bump usage counter on pick
  *
  * RBAC:
  *   - All org members: read + quick-pick + record-usage
  *   - org:admin + org:manager: create, update, delete org entries
+ *   - org:admin: delete all, seed
  *   - System entries: read-only in-app
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  */
-
 import type { RequestContext, RouteParams } from '../types';
 import { formatErrorResponse } from '../shared/errors';
 import { Logger } from '../shared/logger';
@@ -195,7 +196,6 @@ export async function quickPickDefects(
       ORDER BY e.usage_count DESC, e.sort_order ASC
       LIMIT $3
     `;
-
     const rows = await query(ctx, sql, [assetType, ctx.orgId, limit]) as Array<Record<string, unknown>>;
 
     const items = rows.map((r) => ({
@@ -247,8 +247,8 @@ export async function getDefectLibraryEntry(
       WHERE e.id = $1
         AND (e.source = 'system' OR e.org_id = $2)
     `;
-
     const rows = await query(ctx, sql, [entryId, ctx.orgId]) as Array<Record<string, unknown>>;
+
     if (rows.length === 0) {
       return new Response(
         JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: 'Library entry not found', requestId: ctx.requestId } }),
@@ -285,7 +285,6 @@ export async function getDefectLibraryVersions(
       WHERE entry_id = $1
       ORDER BY version DESC
     `;
-
     const rows = await query(ctx, sql, [entryId]) as Array<Record<string, unknown>>;
 
     const versions = rows.map((r) => ({
@@ -410,7 +409,6 @@ export async function updateDefectLibraryEntry(
         { status: 403, headers: { 'Content-Type': 'application/json' } },
       );
     }
-
     if (existing['org_id'] !== ctx.orgId) {
       return forbidden(ctx.requestId);
     }
@@ -503,6 +501,47 @@ export async function deleteDefectLibraryEntry(
     }
 
     return json({ id: entryId, deactivated: true }, ctx.requestId);
+  } catch (error) {
+    return formatErrorResponse(error, ctx.requestId);
+  }
+}
+
+// =============================================
+// DELETE ALL ENTRIES (admin only)
+// DELETE /api/v1/defect-library
+// =============================================
+
+export async function deleteAllLibraryEntries(
+  _request: Request,
+  _params: RouteParams,
+  ctx: RequestContext,
+): Promise<Response> {
+  try {
+    if (ctx.userRole !== 'admin' && ctx.userRole !== 'org:admin') {
+      return forbidden(ctx.requestId);
+    }
+
+    // Delete versions first (FK constraint), then entries
+    // System entries: delete all (they can be re-seeded)
+    // Org entries: delete only this org's
+    await query(ctx, `
+      DELETE FROM defect_library_entry_version
+      WHERE entry_id IN (
+        SELECT id FROM defect_library_entry
+        WHERE source = 'system' OR org_id = $1
+      )
+    `, [ctx.orgId]);
+
+    const result = await query(ctx, `
+      DELETE FROM defect_library_entry
+      WHERE source = 'system' OR org_id = $1
+      RETURNING id
+    `, [ctx.orgId]) as Array<Record<string, unknown>>;
+
+    const logger = Logger.fromContext(ctx);
+    logger.info('Defect library cleared', { deletedCount: result.length });
+
+    return json({ deleted: result.length }, ctx.requestId);
   } catch (error) {
     return formatErrorResponse(error, ctx.requestId);
   }

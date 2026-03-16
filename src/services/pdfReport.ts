@@ -7,7 +7,7 @@
  *   1. Cover page — site name, inspection type, date, inspector, org branding
  *   2. Executive summary — risk counts, condition breakdown, closure warnings
  *   3. Site details — location, contact, compliance info
- *   4. Asset inspection results — per-asset condition, defects, notes, voice transcripts, photo counts
+ *   4. Asset inspection results — per-asset condition, defects, notes, voice transcripts, embedded photos
  *   5. Defect register — all defects in tabular format
  *   6. Sign-off — inspector declaration, name, signature timestamp
  *   7. Footer — page numbers, report ID, confidentiality notice
@@ -25,8 +25,13 @@
  *     a silent error that was being swallowed by the catch handler.
  *   - Replaced \u26A0 (warning triangle) with '!!' — not in WinAnsi range.
  *   - Added console.error in downloadReport for debugging.
+ *
+ * FIX: 16 Mar 2026
+ *   - Photos now embedded inline in the PDF per asset section.
+ *     Photos are loaded as base64 from IndexedDB (pendingPhotos) and passed
+ *     via photosByItem. Displayed as a grid (3 per row, 160x120) under each asset.
+ *   - renderAssetResults is now async to support pdf-lib embedJpg().
  */
-
 import {
   PDFDocument,
   StandardFonts,
@@ -34,7 +39,6 @@ import {
   type PDFFont,
   type PDFPage,
 } from 'pdf-lib';
-
 import {
   INSPECTION_TYPE_LABELS,
   INSPECTION_TYPE_DESCRIPTIONS,
@@ -47,7 +51,6 @@ import {
   InspectionStatus,
   INSPECTION_STATUS_LABELS,
 } from '@/types';
-
 import type {
   Inspection,
   InspectionItem,
@@ -55,7 +58,6 @@ import type {
   Asset,
   DefectDetail,
 } from '@/types';
-
 import { getAssetTypeConfig } from '@config/assetTypes';
 
 // =============================================
@@ -122,6 +124,8 @@ export interface ReportData {
   orgLogoBase64?: string;
   /** Photo counts per inspection_item ID (from pendingPhotos in offlineStore) */
   photoCountsByItem?: Record<string, number>;
+  /** Actual photo base64 data per inspection_item ID for embedding in PDF */
+  photosByItem?: Record<string, string[]>;
 }
 
 export interface GeneratedReport {
@@ -134,90 +138,42 @@ export interface GeneratedReport {
 // WINANSI SANITISATION
 // =============================================
 
-/**
- * Characters valid in WinAnsi (Windows-1252) encoding that pdf-lib
- * StandardFonts support. Anything outside this set crashes pdf-lib silently.
- *
- * Valid ranges:
- *   - U+0020–U+007E  (basic ASCII printable)
- *   - U+00A0–U+00FF  (Latin-1 supplement)
- *   - Specific Windows-1252 extras mapped from U+0080–U+009F range:
- *     \u2026 (ellipsis), \u2014 (em dash), \u2013 (en dash), \u2018/\u2019 (quotes),
- *     \u201C/\u201D (double quotes), \u2022 (bullet), \u2122 (TM), \u00B7 (middle dot), etc.
- */
 const WINANSI_EXTRAS = new Set<number>([
-  0x20AC, // € Euro sign
-  0x201A, // ‚ single low-9 quote
-  0x0192, // ƒ latin small f with hook
-  0x201E, // „ double low-9 quote
-  0x2026, // … horizontal ellipsis
-  0x2020, // † dagger
-  0x2021, // ‡ double dagger
-  0x02C6, // ˆ modifier circumflex
-  0x2030, // ‰ per mille
-  0x0160, // Š S with caron
-  0x2039, // ‹ single left angle quote
-  0x0152, // Œ OE ligature
-  0x017D, // Ž Z with caron
-  0x2018, // ' left single quote
-  0x2019, // ' right single quote / apostrophe
-  0x201C, // " left double quote
-  0x201D, // " right double quote
-  0x2022, // • bullet
-  0x2013, // – en dash
-  0x2014, // — em dash
-  0x02DC, // ˜ small tilde
-  0x2122, // ™ trade mark
-  0x0161, // š s with caron
-  0x203A, // › single right angle quote
-  0x0153, // œ oe ligature
-  0x017E, // ž z with caron
-  0x0178, // Ÿ Y with diaeresis
+  0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6,
+  0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
+  0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A,
+  0x0153, 0x017E, 0x0178,
 ]);
 
 function isWinAnsiCodePoint(code: number): boolean {
-  // Basic ASCII printable + tab/newline
   if (code === 0x09 || code === 0x0A || code === 0x0D) return true;
   if (code >= 0x20 && code <= 0x7E) return true;
-  // Latin-1 supplement
   if (code >= 0xA0 && code <= 0xFF) return true;
-  // Windows-1252 extras
   return WINANSI_EXTRAS.has(code);
 }
 
-/**
- * Replace common non-WinAnsi Unicode with WinAnsi equivalents,
- * then strip anything still outside the valid range.
- *
- * Applied to ALL dynamic text before passing to pdf-lib drawText().
- */
 function sanitiseForPdf(text: string): string {
-  // Common substitutions for characters Whisper/AI might produce
   let result = text
-    .replace(/[\u2018\u2019\u201B\u02BC]/g, "'")   // smart single quotes → ASCII apostrophe
-    .replace(/[\u201C\u201D\u201F]/g, '"')            // smart double quotes → ASCII quote
-    .replace(/\u2026/g, '...')                         // ellipsis → three dots
-    .replace(/\u2014/g, ' - ')                         // em dash → spaced hyphen
-    .replace(/\u2013/g, '-')                           // en dash → hyphen
-    .replace(/\u00B0/g, ' deg ')                       // degree → text (safe in WinAnsi but sometimes garbled)
-    .replace(/\u2022/g, '- ')                          // bullet → dash
-    .replace(/\u00A0/g, ' ')                           // non-breaking space → regular space
-    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');      // zero-width chars → remove
+    .replace(/[\u2018\u2019\u201B\u02BC]/g, "'")
+    .replace(/[\u201C\u201D\u201F]/g, '"')
+    .replace(/\u2026/g, '...')
+    .replace(/\u2014/g, ' - ')
+    .replace(/\u2013/g, '-')
+    .replace(/\u00B0/g, ' deg ')
+    .replace(/\u2022/g, '- ')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
 
-  // Strip any remaining non-WinAnsi characters
   let cleaned = '';
   for (let i = 0; i < result.length; i++) {
     const code = result.charCodeAt(i);
     if (isWinAnsiCodePoint(code)) {
       cleaned += result[i];
     }
-    // else: silently drop the character
   }
-
   return cleaned;
 }
 
-/** Sanitise a value that might be null/undefined */
 function safe(text: string | null | undefined): string {
   return sanitiseForPdf(text ?? '');
 }
@@ -413,7 +369,6 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
   const { inspection, site } = data;
 
   cursor.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 180, width: PAGE_WIDTH, height: 180, color: COLOUR_HEADER_BG });
-
   cursor.page.drawText(sanitiseForPdf(data.orgName || 'InspectVoice'), {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 60, size: 12, font: fonts.bold, color: COLOUR_ACCENT,
   });
@@ -448,10 +403,12 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
     cursor.page.drawText(line, { x: MARGIN_LEFT, y, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_MID_GREY });
     y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   }
+
   if (site.postcode) {
     cursor.page.drawText(sanitiseForPdf(site.postcode), { x: MARGIN_LEFT, y, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_MID_GREY });
     y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   }
+
   y -= 20;
 
   const infoItems: Array<[string, string]> = [
@@ -496,6 +453,7 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
   cursor = drawSectionHeading(cursor, fonts, 'Executive Summary');
 
   const { inspection, items } = data;
+
   const boxWidth = CONTENT_WIDTH / 4 - 4;
   const boxHeight = 50;
   const riskData: Array<[string, number, ReturnType<typeof rgb>, ReturnType<typeof rgb>]> = [
@@ -533,6 +491,7 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
   if (inspection.immediate_action_required) {
     cursor = drawLabelValue(cursor, fonts, 'Immediate Action', 'REQUIRED - see defect register');
   }
+
   if (inspection.closure_recommended && inspection.closure_reason) {
     cursor = drawLabelValue(cursor, fonts, 'Closure Reason', safe(inspection.closure_reason));
   }
@@ -544,6 +503,7 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
       x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_SUBHEADING, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
     });
     cursor = { ...cursor, y: cursor.y - FONT_SIZE_SUBHEADING * LINE_HEIGHT_MULTIPLIER - 4 };
+
     const summaryLines = wrapText(inspection.inspector_summary, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
     for (const line of summaryLines) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
@@ -559,7 +519,9 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
 function renderSiteDetails(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
   cursor = ensureSpace(doc, cursor, fonts, reportId, 160);
   cursor = drawSectionHeading(cursor, fonts, 'Site Details');
+
   const { site } = data;
+
   cursor = drawLabelValue(cursor, fonts, 'Site Name', safe(site.name));
   cursor = drawLabelValue(cursor, fonts, 'Address', `${safe(site.address)}${site.postcode ? ', ' + safe(site.postcode) : ''}`);
   cursor = drawLabelValue(cursor, fonts, 'Coordinates', `${site.latitude.toFixed(6)}, ${site.longitude.toFixed(6)}`);
@@ -567,15 +529,17 @@ function renderSiteDetails(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, da
   if (site.contact_phone) cursor = drawLabelValue(cursor, fonts, 'Phone', safe(site.contact_phone));
   if (site.contact_email) cursor = drawLabelValue(cursor, fonts, 'Email', safe(site.contact_email));
   if (site.access_notes) cursor = drawLabelValue(cursor, fonts, 'Access Notes', safe(site.access_notes));
+
   cursor = { ...cursor, y: cursor.y - 12 };
   return cursor;
 }
 
-function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
+async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Promise<Cursor> {
   cursor = ensureSpace(doc, cursor, fonts, reportId, 80);
   cursor = drawSectionHeading(cursor, fonts, 'Asset Inspection Results');
 
   const { items, assets } = data;
+
   const assetMap = new Map<string, Asset>();
   for (const asset of assets) {
     assetMap.set(asset.id, asset);
@@ -618,7 +582,7 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
     }
 
-    // Photo count (from local capture via pendingPhotos)
+    // Photo count
     const photoCount = data.photoCountsByItem?.[item.id] ?? 0;
     if (photoCount > 0) {
       const photoText = `Photos: ${String(photoCount)} captured`;
@@ -632,10 +596,53 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
     }
 
+    // Embed actual photos if available
+    const itemPhotos = data.photosByItem?.[item.id];
+    if (itemPhotos && itemPhotos.length > 0) {
+      const photoWidth = 160;
+      const photoHeight = 120;
+      const photosPerRow = 3;
+      const photoGap = 8;
+
+      for (let pIdx = 0; pIdx < itemPhotos.length; pIdx++) {
+        const col = pIdx % photosPerRow;
+        const isNewRow = col === 0;
+
+        if (isNewRow) {
+          cursor = ensureSpace(doc, cursor, fonts, reportId, photoHeight + 12);
+        }
+
+        const xPos = MARGIN_LEFT + 6 + col * (photoWidth + photoGap);
+
+        try {
+          const base64 = itemPhotos[pIdx]!;
+          const imageBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+          const image = await doc.embedJpg(imageBytes);
+          const scaled = image.scaleToFit(photoWidth, photoHeight);
+
+          cursor.page.drawImage(image, {
+            x: xPos,
+            y: cursor.y - scaled.height,
+            width: scaled.width,
+            height: scaled.height,
+          });
+
+          // Move cursor down after the last photo in a row (or last photo overall)
+          if (col === photosPerRow - 1 || pIdx === itemPhotos.length - 1) {
+            cursor = { ...cursor, y: cursor.y - photoHeight - photoGap };
+          }
+        } catch (photoErr) {
+          // Skip unembeddable photos (PNG, corrupt data) — log and continue
+          console.warn('[PDF] Failed to embed photo:', photoErr);
+        }
+      }
+    }
+
     if (item.voice_transcript) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, 40);
       cursor.page.drawText('Voice Observation:', { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_DARK_GREY });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+
       const transcriptLines = wrapText(item.voice_transcript, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
       for (const line of transcriptLines) {
         cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
@@ -649,6 +656,7 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
       cursor = ensureSpace(doc, cursor, fonts, reportId, 40);
       cursor.page.drawText('Inspector Notes:', { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_DARK_GREY });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+
       const noteLines = wrapText(item.inspector_notes, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
       for (const line of noteLines) {
         cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
@@ -662,6 +670,7 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
       cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
       cursor.page.drawText(`Defects (${item.defects.length}):`, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_ORANGE });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 4 };
+
       for (const defect of item.defects) {
         cursor = renderDefectBlock(doc, cursor, fonts, defect, reportId);
       }
@@ -679,6 +688,7 @@ function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, d
 
 function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, defect: DefectDetail, reportId: string): Cursor {
   cursor = ensureSpace(doc, cursor, fonts, reportId, 60);
+
   const lineHeight = FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   const indent = MARGIN_LEFT + 12;
 
@@ -686,12 +696,13 @@ function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, de
   drawBadge(cursor.page, fonts, riskLabel, indent, cursor.y - FONT_SIZE_BODY - 1, riskColour(defect.risk_rating), riskBgColour(defect.risk_rating));
 
   const badgeOffset = fonts.bold.widthOfTextAtSize(sanitiseForPdf(riskLabel), FONT_SIZE_SMALL) + 20;
-  const descLines = wrapText(defect.description, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 24 - badgeOffset);
 
+  const descLines = wrapText(defect.description, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 24 - badgeOffset);
   for (let i = 0; i < descLines.length; i++) {
     const xPos = i === 0 ? indent + badgeOffset : indent;
     cursor.page.drawText(descLines[i] ?? '', { x: xPos, y: cursor.y - FONT_SIZE_BODY - (i * lineHeight), size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_DARK_GREY });
   }
+
   cursor = { ...cursor, y: cursor.y - (Math.max(1, descLines.length) * lineHeight) - 2 };
 
   const metaItems: string[] = [];
@@ -721,6 +732,7 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
       allDefects.push({ assetCode: item.asset_code, defect });
     }
   }
+
   if (allDefects.length === 0) return cursor;
 
   const riskOrder: Record<string, number> = {
@@ -779,6 +791,7 @@ function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: 
   cursor = drawSectionHeading(cursor, fonts, 'Declaration & Sign-Off');
 
   const { inspection } = data;
+
   const declaration =
     'I declare that this inspection has been carried out in accordance with BS EN 1176-7:2020. ' +
     'All observations have been made to the best of my professional ability and the findings recorded ' +
@@ -802,7 +815,6 @@ function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: 
     cursor = { ...cursor, y: cursor.y - 20 };
     cursor.page.drawLine({ start: { x: MARGIN_LEFT, y: cursor.y }, end: { x: MARGIN_LEFT + 200, y: cursor.y }, thickness: 1, color: COLOUR_BLACK });
     cursor.page.drawText('Inspector Signature', { x: MARGIN_LEFT, y: cursor.y - 12, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY });
-
     cursor.page.drawLine({ start: { x: MARGIN_LEFT + 260, y: cursor.y }, end: { x: MARGIN_LEFT + 400, y: cursor.y }, thickness: 1, color: COLOUR_BLACK });
     cursor.page.drawText('Date', { x: MARGIN_LEFT + 260, y: cursor.y - 12, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY });
 
@@ -844,14 +856,13 @@ export async function generateInspectionReport(data: ReportData): Promise<Genera
 
   const firstPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   drawFooter(firstPage, fonts, reportId, 1);
-
   let cursor: Cursor = { y: CONTENT_TOP, page: firstPage, pageNumber: 1 };
 
   cursor = renderCoverPage(cursor, fonts, data);
   cursor = addPage(doc, cursor, fonts, reportId);
   cursor = renderExecutiveSummary(doc, cursor, fonts, data, reportId);
   cursor = renderSiteDetails(doc, cursor, fonts, data, reportId);
-  cursor = renderAssetResults(doc, cursor, fonts, data, reportId);
+  cursor = await renderAssetResults(doc, cursor, fonts, data, reportId);
   cursor = renderDefectRegister(doc, cursor, fonts, data, reportId);
   cursor = renderSignOff(doc, cursor, fonts, data, reportId);
 

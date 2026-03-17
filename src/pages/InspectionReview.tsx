@@ -602,11 +602,12 @@ export default function InspectionReview(): JSX.Element {
     dangerous: items.filter((i) => i.overall_condition === ConditionRating.DANGEROUS).length,
   };
 
+  const allDefects = items.flatMap((i) => i.defects);
   const riskCounts = {
-    veryHigh: items.filter((i) => i.risk_rating === RiskRating.VERY_HIGH).length,
-    high: items.filter((i) => i.risk_rating === RiskRating.HIGH).length,
-    medium: items.filter((i) => i.risk_rating === RiskRating.MEDIUM).length,
-    low: items.filter((i) => i.risk_rating === RiskRating.LOW).length,
+    veryHigh: allDefects.filter((d) => d.risk_rating === RiskRating.VERY_HIGH).length,
+    high: allDefects.filter((d) => d.risk_rating === RiskRating.HIGH).length,
+    medium: allDefects.filter((d) => d.risk_rating === RiskRating.MEDIUM).length,
+    low: allDefects.filter((d) => d.risk_rating === RiskRating.LOW).length,
   };
 
   const totalDefects = items.reduce((sum, i) => sum + i.defects.length, 0);

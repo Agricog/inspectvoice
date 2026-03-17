@@ -400,7 +400,17 @@ export async function optimiseRoute(
       coordParams.push(ctx.userId);
     }
 
-    const siteRows = await sql(coordQuery, coordParams);
+    let siteRows;
+    try {
+      siteRows = await sql(coordQuery, coordParams);
+    } catch (sqlError) {
+      logger.error('Route SQL query failed', {
+        error: sqlError instanceof Error ? sqlError.message : String(sqlError),
+        stack: sqlError instanceof Error ? sqlError.stack : undefined,
+        paramCount: coordParams.length,
+      });
+      throw new AppError('SERVER_ERROR', 'Failed to fetch site coordinates', 500);
+    }
 
     if (siteRows.length < 2) {
       throw new AppError('VALIDATION_ERROR', 'Fewer than 2 accessible sites found', 400);

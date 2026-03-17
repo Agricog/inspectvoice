@@ -141,10 +141,12 @@ export async function listDefects(
   // Fetch with joined context
   const dataSql = `SELECT d.*,
       ii.asset_code, ii.asset_type,
-      i.site_id, i.inspection_type, i.inspection_date
+      i.site_id, i.inspection_type, i.inspection_date,
+      COALESCE(s.name, 'Unknown Site') AS site_name
     FROM defects d
     INNER JOIN inspection_items ii ON d.inspection_item_id = ii.id
     INNER JOIN inspections i ON ii.inspection_id = i.id
+    LEFT JOIN sites s ON s.id = i.site_id AND s.org_id = i.org_id
     WHERE ${whereClause}
     ORDER BY d.${sortBy} ${sortDir === 'asc' ? 'ASC' : 'DESC'}
     LIMIT ${limit} OFFSET ${offset}`;
@@ -154,7 +156,12 @@ export async function listDefects(
   return jsonResponse({
     success: true,
     data: defects,
-    meta: buildPaginationMeta(pagination, totalCount),
+    pagination: {
+      page: pagination.page,
+      limit,
+      total: totalCount,
+      total_pages: Math.ceil(totalCount / limit) || 1,
+    },
   }, ctx.requestId);
 }
 

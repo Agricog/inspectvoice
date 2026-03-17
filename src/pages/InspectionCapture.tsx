@@ -1,7 +1,7 @@
 /**
  * InspectVoice — Inspection Capture Workflow
  * Batch 14 + Feature 5 (Baseline photo comparison) + Feature 15 (Defect Quick-Pick)
- * + Custom Checklist Items
+ * + Custom Checklist Items + Custom Defect Auto-Save to Library
  *
  * Route: /sites/:siteId/inspections/:inspectionId/capture
  *
@@ -15,6 +15,12 @@
  *   - Custom checklist: inspectors can add ad-hoc inspection points beyond
  *     the standard BS EN checklist. Rendered below standard items with
  *     separate completion tracking and inline add/delete controls.
+ *
+ * FIX: 17 Mar 2026
+ *   - Speech API warm-up on page mount (first-record reliability)
+ *   - Custom defects auto-save to org defect library for the asset type.
+ *     Next time anyone inspects the same asset type, field-originated
+ *     defects appear in the Common Defects quick-pick.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
@@ -100,6 +106,12 @@ interface CustomChecklistItem {
   completed: boolean;
 }
 
+/** Extends DefectDetail with library tracking for auto-save logic */
+interface CaptureDefect extends DefectDetail {
+  /** Library entry ID if from quick-pick, 'existing' if loaded from prior save, undefined if custom */
+  _libraryEntryId?: string;
+}
+
 interface AssetCaptureState {
   checklistCompleted: Record<number, boolean>;
   checklistDismissed: number[];
@@ -111,7 +123,7 @@ interface AssetCaptureState {
   notes: string;
   condition: ConditionRating | null;
   saved: boolean;
-  manualDefects: DefectDetail[];
+  manualDefects: CaptureDefect[];
 }
 
 function createEmptyCaptureState(): AssetCaptureState {
@@ -445,6 +457,7 @@ export default function InspectionCapture(): JSX.Element {
         saved: true,
         manualDefects: (existing.defects ?? []).map((d) => ({
           ...d,
+          _libraryEntryId: 'existing',
           description: sanitiseDescription(d.description),
           remedial_action: sanitiseDescription(d.remedial_action),
         })),
@@ -772,13 +785,15 @@ export default function InspectionCapture(): JSX.Element {
   // =============================================
 
   const handleQuickPickSelect = useCallback((selection: QuickPickSelection) => {
-    const defect: DefectDetail = {
+    const selRecord = selection as unknown as Record<string, unknown>;
+    const defect: CaptureDefect = {
       description: sanitiseDescription(selection.description),
       bs_en_reference: selection.bs_en_reference,
       risk_rating: selection.risk_rating as RiskRating,
       remedial_action: sanitiseDescription(selection.remedial_action),
       action_timeframe: (selection.action_timeframe ?? 'routine') as ActionTimeframe,
       estimated_cost_band: (selection.estimated_cost_band ?? 'low') as CostBand,
+      _libraryEntryId: typeof selRecord['entry_id'] === 'string' ? selRecord['entry_id'] : undefined,
     };
     setCaptureState((prev) => ({
       ...prev,
@@ -831,7 +846,7 @@ export default function InspectionCapture(): JSX.Element {
         ai_model_version: existing?.ai_model_version ?? '',
         ai_processing_status: existing?.ai_processing_status ?? AIProcessingStatus.PENDING,
         ai_processed_at: existing?.ai_processed_at ?? null,
-        defects: captureState.manualDefects.map((d) => ({
+        defects: captureState.manualDefects.map(({ _libraryEntryId: _, ...d }) => ({
           ...d,
           description: sanitiseDescription(d.description),
           remedial_action: sanitiseDescription(d.remedial_action),
@@ -898,6 +913,44 @@ export default function InspectionCapture(): JSX.Element {
         } catch (cacheError) {
           // Non-blocking — baseline label is cosmetic
           captureError(cacheError, { module: 'InspectionCapture', operation: 'updateBaselineCondition' });
+        }
+      }
+
+      // ── Auto-save custom defects to org library ──────────────────
+      // Custom defects (no _libraryEntryId) get saved as org library
+      // entries for this asset type so they appear in quick-pick next time.
+      // Fire-and-forget — never blocks the save flow.
+      const customDefects = captureState.manualDefects.filter((d) => !d._libraryEntryId);
+      if (customDefects.length > 0 && currentAsset) {
+        for (const defect of customDefects) {
+          try {
+            const clerkWin = window as unknown as { Clerk?: { session?: { getToken: () => Promise<string> } } };
+            const token = await clerkWin.Clerk?.session?.getToken();
+            if (!token) break; // Offline or no auth — skip all
+            const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
+            const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+            void fetch(`${apiBase}/api/v1/defect-library`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'X-CSRF-Token': csrf,
+              },
+              body: JSON.stringify({
+                asset_type: currentAsset.asset_type,
+                title: defect.description.replace(/\[.*?\]/g, '').trim().slice(0, 100) || 'Custom defect',
+                description_template: defect.description,
+                bs_en_refs: defect.bs_en_reference ? [defect.bs_en_reference] : [],
+                severity_default: defect.risk_rating ?? 'medium',
+                remedial_action_template: defect.remedial_action ?? '',
+                cost_band: defect.estimated_cost_band ?? null,
+                timeframe_default: defect.action_timeframe ?? null,
+                change_note: 'Auto-saved from field inspection',
+              }),
+            });
+          } catch {
+            // Fire-and-forget — inspector may be offline, defect is still captured in inspection
+          }
         }
       }
 

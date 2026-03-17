@@ -51,6 +51,7 @@ import {
   createVoiceCapture,
   checkBrowserCapabilities,
   formatDuration,
+  warmUpSpeechApi,
   VoiceCaptureState,
   StopReason,
 } from '@services/voiceCapture';
@@ -366,6 +367,7 @@ export default function InspectionCapture(): JSX.Element {
 
   useEffect(() => {
     setBrowserCaps(checkBrowserCapabilities());
+    warmUpSpeechApi('en-GB');
   }, []);
 
   useEffect(() => {

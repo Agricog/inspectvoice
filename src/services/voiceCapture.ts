@@ -1067,6 +1067,38 @@ export function createVoiceCapture(
 }
 
 // =============================================
+// SPEECH API WARM-UP
+// =============================================
+
+/**
+ * Warm up the browser's Web Speech API on page load.
+ * The first SpeechRecognition.start() often silently fails because
+ * the browser's speech service hasn't initialised. This does a quick
+ * start/abort cycle to prime it so the first real recording works.
+ *
+ * Call once when InspectionCapture page mounts.
+ */
+export function warmUpSpeechApi(lang: string = 'en-GB'): void {
+  try {
+    const Ctor =
+      (window as unknown as Record<string, unknown>)['SpeechRecognition'] ??
+      (window as unknown as Record<string, unknown>)['webkitSpeechRecognition'];
+    if (!Ctor || typeof Ctor !== 'function') return;
+
+    const r = new (Ctor as new () => SpeechRecognitionInstance)();
+    r.continuous = false;
+    r.interimResults = false;
+    r.lang = lang;
+    r.onstart = () => { try { r.abort(); } catch { /* */ } };
+    r.onerror = () => {};
+    r.onend = () => {};
+    r.start();
+  } catch {
+    // Speech API not available — silent
+  }
+}
+
+// =============================================
 // UTILITIES
 // =============================================
 

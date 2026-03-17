@@ -329,8 +329,18 @@ if (annualFreq > 0) {
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     );
   } catch (error) {
-    logger.error('Route planner sites failed', { error: error instanceof Error ? error.message : String(error) });
-    return formatErrorResponse(error, ctx.requestId);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    logger.error('Route optimisation failed', { error: errMsg, stack: errStack });
+    // formatErrorResponse can crash on errors without valid statusCode — safe fallback
+    try {
+      return formatErrorResponse(error, ctx.requestId);
+    } catch {
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: errMsg, requestId: ctx.requestId } }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
   }
 }
 

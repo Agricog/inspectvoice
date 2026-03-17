@@ -414,13 +414,18 @@ export async function createInspectionItem(
     asset_code: data['asset_code'],
     asset_type: data['asset_type'],
   }, request);
-  // ── Defect extraction for signed inspections ──────────────────────
-  // In offline-first sync, the inspection arrives signed before items sync.
-  // The sign-off extraction in inspections.ts found no items and extracted
-  // nothing. Now that this item has landed with defects, extract them
-  // immediately so the Defect Tracker is always up to date.
+  // ── Defect extraction ─────────────────────────────────────────────
+  // Always extract defects to the standalone defects table when items
+  // arrive with defects, regardless of inspection status. The extraction
+  // is idempotent (checks for duplicates before inserting).
+  //
+  // This covers all sync orderings:
+  //   - Items arrive AFTER signed inspection → extracts immediately
+  //   - Items arrive BEFORE sign-off → extracts now, sign-off skips dupes
+  //   - Items arrive for draft → extracts now, ready when inspection signs
+  //
   // MUST await — Cloudflare Workers kill void promises on response send.
-  if (inspectionStatus === 'signed' && defects.length > 0) {
+  if (defects.length > 0) {
     await extractItemDefects(
       db, ctx, inspectionId, siteId,
       data['id'] as string, assetId,

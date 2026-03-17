@@ -179,6 +179,40 @@ export async function quickPickDefects(
     const url = new URL(request.url);
     const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '8', 10), 20);
 
+    // Auto-seed system entries if none exist (first use or after delete-all)
+    const systemCheck = await query(ctx, `
+      SELECT COUNT(*)::int AS count FROM defect_library_entry WHERE source = 'system'
+    `) as Array<{ count: number }>;
+    if ((systemCheck[0]?.count ?? 0) === 0) {
+      const logger = Logger.fromContext(ctx);
+      logger.info('No system entries found — auto-seeding defect library');
+      let seeded = 0;
+      for (const seed of DEFECT_LIBRARY_SEED) {
+        const existsRows = await query(ctx, `
+          SELECT id FROM defect_library_entry WHERE system_key = $1 AND source = 'system'
+        `, [seed.system_key]) as Array<Record<string, unknown>>;
+        if (existsRows.length > 0) continue;
+        const entryRows = await query(ctx, `
+          INSERT INTO defect_library_entry (source, asset_type, title, system_key, sort_order)
+          VALUES ('system', $1, $2, $3, $4)
+          RETURNING id
+        `, [seed.asset_type, seed.title, seed.system_key, seed.sort_order]) as Array<Record<string, unknown>>;
+        const entryId = entryRows[0]!['id'] as string;
+        await query(ctx, `
+          INSERT INTO defect_library_entry_version
+            (entry_id, version, description_template, bs_en_refs, severity_default,
+             remedial_action_template, cost_band, timeframe_default, change_note)
+          VALUES ($1, 1, $2, $3, $4, $5, $6, $7, 'System seed v1')
+        `, [
+          entryId, seed.description_template, seed.bs_en_refs,
+          seed.severity_default, seed.remedial_action_template,
+          seed.cost_band, seed.timeframe_default,
+        ]);
+        seeded++;
+      }
+      logger.info('Auto-seeded defect library', { count: seeded });
+    }
+
     const sql = `
       SELECT
         e.id AS entry_id, v.id AS version_id, e.title,

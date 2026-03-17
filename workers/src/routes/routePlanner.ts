@@ -363,7 +363,7 @@ export async function optimiseRoute(
     }
 
     // ── Fetch site coordinates (RBAC-aware) ──
-    const isPrivileged = ctx.userRole === 'org:admin' || ctx.userRole === 'org:manager';
+    const isPrivileged = ['admin', 'org:admin', 'manager', 'org:manager'].includes(ctx.userRole);
     const placeholders = body.site_ids.map((_, i) => `$${i + 2}`).join(',');
 
     let coordQuery: string;

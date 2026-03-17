@@ -375,7 +375,6 @@ export async function optimiseRoute(
         FROM sites
         WHERE org_id = $1
           AND id IN (${placeholders})
-        ORDER BY array_position(ARRAY[${placeholders}]::uuid[], id)
       `;
     } else {
       coordQuery = `
@@ -387,7 +386,6 @@ export async function optimiseRoute(
           AND sa.is_active = true
         WHERE s.org_id = $1
           AND s.id IN (${placeholders})
-        ORDER BY array_position(ARRAY[${placeholders}]::uuid[], s.id)
       `;
       coordParams.push(ctx.userId);
     }

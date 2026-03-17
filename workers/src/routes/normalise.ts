@@ -15,11 +15,11 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import { neon } from '@neondatabase/serverless';
 import type { RequestContext, RouteParams } from '../types';
 import { checkRateLimit } from '../middleware/rateLimit';
 import { validateCsrf } from '../middleware/csrf';
+import { BadRequestError } from '../shared/errors';
 import {
   parseJsonBody,
   validateUUID,
@@ -66,14 +66,13 @@ const HISTORY_STATUSES = ['pending', 'accepted', 'rejected'] as const;
 
 async function getOrgStyleConfig(ctx: RequestContext): Promise<ReturnType<typeof resolveStyleConfig>> {
   const sql = neon(ctx.env.DATABASE_URL);
-
   const rows = await sql(
     `SELECT settings FROM organisations WHERE org_id = $1 LIMIT 1`,
     [ctx.orgId],
   );
 
   if (rows.length === 0) {
-    throw Object.assign(new Error('Organisation not found'), { statusCode: 404 });
+    throw new BadRequestError('Organisation not found');
   }
 
   const settings = (rows[0] as Record<string, unknown>)['settings'];
@@ -84,10 +83,7 @@ async function getOrgStyleConfig(ctx: RequestContext): Promise<ReturnType<typeof
   const style = resolveStyleConfig(orgSettings);
 
   if (!style.enabled) {
-    throw Object.assign(
-      new Error('AI normalisation is not enabled for this organisation. Enable it in Settings → Writing Style.'),
-      { statusCode: 403 },
-    );
+    throw new BadRequestError('AI normalisation is not enabled for this organisation. Enable it in Settings → Writing Style.');
   }
 
   return style;
@@ -164,15 +160,13 @@ export async function normaliseBatchEndpoint(
   // Validate fields array
   const rawFields = body['fields'];
   if (!Array.isArray(rawFields) || rawFields.length === 0) {
-    throw Object.assign(new Error('fields must be a non-empty array'), { statusCode: 400 });
+    throw new BadRequestError('fields must be a non-empty array');
   }
-
   if (rawFields.length > 50) {
-    throw Object.assign(new Error('Maximum 50 fields per batch'), { statusCode: 400 });
+    throw new BadRequestError('Maximum 50 fields per batch');
   }
 
   const inputs: NormaliseFieldInput[] = [];
-
   for (const field of rawFields as Record<string, unknown>[]) {
     if (!field || typeof field !== 'object') continue;
 
@@ -282,11 +276,9 @@ export async function listNormalisationHistory(
 ): Promise<Response> {
   // Admin or manager only
   if (ctx.userRole !== 'admin' && ctx.userRole !== 'manager') {
-    throw Object.assign(
-      new Error('Only admins and managers can view normalisation history'),
-      { statusCode: 403 },
-    );
+    throw new BadRequestError('Only admins and managers can view normalisation history');
   }
+
   await checkRateLimit(ctx, 'read');
 
   const sql = neon(ctx.env.DATABASE_URL);
@@ -294,6 +286,7 @@ export async function listNormalisationHistory(
   const { limit, offset } = paginationToOffset(pagination);
   const sortBy = parseSortField(request, [...HISTORY_SORT_COLUMNS], 'created_at');
   const sortDir = parseSortDirection(request, 'desc');
+
   const statusFilter = parseFilterParam(request, 'status');
   const fieldFilter = parseFilterParam(request, 'field_name');
   const inspectorFilter = parseFilterParam(request, 'requested_by');
@@ -358,11 +351,9 @@ export async function getNormalisationUsage(
   ctx: RequestContext,
 ): Promise<Response> {
   if (ctx.userRole !== 'admin') {
-    throw Object.assign(
-      new Error('Only admins can view normalisation usage'),
-      { statusCode: 403 },
-    );
+    throw new BadRequestError('Only admins can view normalisation usage');
   }
+
   await checkRateLimit(ctx, 'read');
 
   const sql = neon(ctx.env.DATABASE_URL);
@@ -387,12 +378,14 @@ export async function getNormalisationUsage(
   const settings = orgRows.length > 0
     ? (orgRows[0] as Record<string, unknown>)['settings'] as Record<string, unknown> | null
     : null;
+
   const style = resolveStyleConfig(settings ?? {});
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentRow = (rows as Record<string, unknown>[]).find(
     (r) => r['month_year'] === currentMonth,
   );
+
   const currentUsed = currentRow
     ? Number(currentRow['input_tokens_total'] ?? 0) + Number(currentRow['output_tokens_total'] ?? 0)
     : 0;

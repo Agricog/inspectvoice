@@ -332,6 +332,17 @@ if (annualFreq > 0) {
     const errMsg = error instanceof Error ? error.message : String(error);
     const errStack = error instanceof Error ? error.stack : undefined;
     logger.error('Route optimisation failed', { error: errMsg, stack: errStack });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: errMsg, requestId: ctx.requestId },
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    logger.error('Route optimisation failed', { error: errMsg, stack: errStack });
     // formatErrorResponse can crash on errors without valid statusCode — safe fallback
     try {
       return formatErrorResponse(error, ctx.requestId);

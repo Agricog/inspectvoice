@@ -357,6 +357,7 @@ export default function RoutePlanner(): JSX.Element {
   // ---- UI ----
   const [mobileView, setMobileView] = useState<MobileView>('list');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
 
   // ---- RBAC (simplified — real role comes from API response filtering) ----
   // Admin/manager see all; inspector sees assigned only. The API handles this.
@@ -486,6 +487,7 @@ export default function RoutePlanner(): JSX.Element {
   const handleOptimise = useCallback(async () => {
     if (routeStops.length < 2) return;
     setOptimising(true);
+    setRouteError(null);
 
     try {
       const { secureFetch } = await import('@hooks/useFetch');
@@ -520,6 +522,7 @@ export default function RoutePlanner(): JSX.Element {
       setMobileView('map');
     } catch (error) {
       console.error('Route optimisation failed:', error);
+      setRouteError(error instanceof Error ? error.message : 'Route optimisation failed. Check your connection and try again.');
     } finally {
       setOptimising(false);
     }
@@ -768,7 +771,10 @@ export default function RoutePlanner(): JSX.Element {
                 </>
               )}
             </div>
-
+            {/* Route error */}
+            {routeError && (
+              <p className="text-xs text-red-400 mt-2">{routeError}</p>
+            )}
             {/* Route summary */}
             {routeData && (
               <div className="flex items-center gap-3 mt-2 text-xs">

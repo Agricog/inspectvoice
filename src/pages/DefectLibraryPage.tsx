@@ -387,7 +387,7 @@ export default function DefectLibraryPage(): JSX.Element {
             <p className="text-sm iv-muted">{total} entries</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => void handleDeleteAll()} disabled={deletingAll} className="iv-btn-secondary text-xs flex items-center gap-1.5 text-red-400 hover:text-red-300">
             {deletingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
             Delete All

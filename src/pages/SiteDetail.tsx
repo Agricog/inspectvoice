@@ -211,22 +211,34 @@ export function SiteDetail(): JSX.Element {
   }, [id]);
 
   // ── Site delete handler ──
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const handleDelete = useCallback(async () => {
     if (!id) return;
     setDeleting(true);
+    setDeleteError(null);
     try {
       try {
         await secureFetch(`/api/v1/sites/${id}`, { method: 'DELETE' });
       } catch (err) {
         const is404 = err instanceof Error && err.message.includes('404');
-        if (!is404) throw err;
+        if (!is404) {
+          // Check for FK constraint errors (signed inspections exist)
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes('foreign key') || message.includes('referenced') || message.includes('constraint')) {
+            setDeleteError('Cannot delete this site — it has signed inspections. Delete or archive the inspections first.');
+            setDeleting(false);
+            return;
+          }
+          throw err;
+        }
       }
       await sitesCache.delete(id);
       void navigate('/sites');
     } catch (err) {
       captureError(err, { module: 'SiteDetail', operation: 'deleteSite' });
+      setDeleteError('Failed to delete site. Please try again.');
       setDeleting(false);
-      setConfirmDelete(false);
     }
   }, [id, navigate]);
 
@@ -409,6 +421,11 @@ export function SiteDetail(): JSX.Element {
             <p className="text-sm text-iv-muted mb-5">
               Are you sure you want to delete <strong className="text-iv-text">{site.name}</strong>? All associated data will be removed.
             </p>
+            {deleteError && (
+              <p className="text-sm text-risk-high mb-4 p-3 rounded-lg bg-risk-high/10 border border-risk-high/30">
+                {deleteError}
+              </p>
+            )}
             <div className="flex items-center gap-3 justify-end">
               <button
                 type="button"

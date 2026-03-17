@@ -13,7 +13,6 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import { neon } from '@neondatabase/serverless';
 import { Logger } from '../shared/logger';
 import { BadGatewayError, BadRequestError } from '../shared/errors';
@@ -34,13 +33,10 @@ const RETRY_DELAY_MS = 1_000;
 
 /** Maximum input text length (chars) */
 const MAX_INPUT_LENGTH = 5_000;
-
 /** Minimum text length worth normalising */
 const MIN_INPUT_LENGTH = 10;
-
 /** Default monthly token budget per org */
 const DEFAULT_MONTHLY_BUDGET = 500_000;
-
 /** Current prompt version — increment when prompt changes */
 const PROMPT_VERSION = 'v1';
 
@@ -153,10 +149,8 @@ function restoreBsEnReferences(
       restored = restored.replace(token.placeholder, token.original);
     }
   }
-
   // Safety: remove any unreplaced placeholders (shouldn't happen)
   restored = restored.replace(/\[\[BSEN_\d+\]\]/g, '');
-
   return restored;
 }
 
@@ -165,7 +159,7 @@ function restoreBsEnReferences(
 // =============================================
 
 const DEFAULT_STYLE_CONFIG: StyleConfig = {
-  enabled: false,
+  enabled: true,
   stylePreset: 'formal',
   customGuide: null,
   examples: [],
@@ -215,7 +209,7 @@ export function resolveStyleConfig(
   }
 
   return {
-    enabled: settings['enabled'] === true,
+    enabled: settings['enabled'] !== false,
     stylePreset: preset,
     customGuide: typeof settings['custom_guide'] === 'string'
       ? settings['custom_guide']
@@ -240,17 +234,14 @@ async function checkTokenBudget(
   budget: number,
 ): Promise<{ withinBudget: boolean; used: number; remaining: number }> {
   const monthYear = new Date().toISOString().slice(0, 7); // '2026-02'
-
   const rows = await sql(
     `SELECT input_tokens_total + output_tokens_total AS total_tokens
      FROM normalisation_usage
      WHERE org_id = $1 AND month_year = $2`,
     [orgId, monthYear],
   );
-
   const used = rows.length > 0 ? Number((rows[0] as Record<string, unknown>)['total_tokens'] ?? 0) : 0;
   const remaining = Math.max(0, budget - used);
-
   return {
     withinBudget: used < budget,
     used,
@@ -324,7 +315,6 @@ function buildNormalisationSystemPrompt(
   };
 
   let prompt = `You are a professional text editor for InspectVoice, a UK playground safety inspection platform.
-
 Your task is to normalise ${fieldContext[fieldName]} to match the organisation's house writing style.
 
 ## ABSOLUTE RULES — NEVER VIOLATE
@@ -344,7 +334,6 @@ Your task is to normalise ${fieldContext[fieldName]} to match the organisation's
    - If the original mentions a standard vaguely, leave the reference as-is.
 
 ## WRITING STYLE
-
 ${PRESET_DESCRIPTIONS[style.stylePreset] ?? PRESET_DESCRIPTIONS['formal']}`;
 
   // Custom guide overlay
@@ -427,7 +416,6 @@ export async function normaliseField(
       `Text too short for normalisation (${input.originalText.length} chars, minimum ${MIN_INPUT_LENGTH})`,
     );
   }
-
   const text = input.originalText.slice(0, MAX_INPUT_LENGTH);
 
   // ── Check budget ────────────────────────
@@ -450,7 +438,6 @@ export async function normaliseField(
 
   // ── Call Anthropic ──────────────────────
   let lastError = '';
-
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
       await delay(RETRY_DELAY_MS * attempt);
@@ -488,7 +475,6 @@ export async function normaliseField(
 
       const data = await response.json() as ClaudeResponse;
       const textBlock = data.content?.find((b) => b.type === 'text');
-
       if (!textBlock?.text) {
         throw new BadGatewayError('AI returned empty response');
       }
@@ -640,7 +626,6 @@ export async function acceptNormalisation(
   env: Env,
 ): Promise<{ normalisedText: string; fieldName: string }> {
   const sql = neon(env.DATABASE_URL);
-
   const rows = await sql(
     `UPDATE normalisation_log
      SET status = 'accepted', reviewed_by = $3, reviewed_at = now()
@@ -672,7 +657,6 @@ export async function rejectNormalisation(
   env: Env,
 ): Promise<void> {
   const sql = neon(env.DATABASE_URL);
-
   const rows = await sql(
     `UPDATE normalisation_log
      SET status = 'rejected', rejected_reason = $4, reviewed_by = $3, reviewed_at = now()

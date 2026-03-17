@@ -456,11 +456,18 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
 
   const boxWidth = CONTENT_WIDTH / 4 - 4;
   const boxHeight = 50;
+  // Count risk severities from actual defect data (inspection-level counts may be unpopulated offline)
+  const allDefects = items.flatMap((i) => i.defects);
+  const veryHighCount = allDefects.filter((d) => d.risk_rating === RiskRating.VERY_HIGH).length;
+  const highCount = allDefects.filter((d) => d.risk_rating === RiskRating.HIGH).length;
+  const mediumCount = allDefects.filter((d) => d.risk_rating === RiskRating.MEDIUM).length;
+  const lowCount = allDefects.filter((d) => d.risk_rating === RiskRating.LOW).length;
+
   const riskData: Array<[string, number, ReturnType<typeof rgb>, ReturnType<typeof rgb>]> = [
-    ['Very High', inspection.very_high_risk_count, COLOUR_RED, COLOUR_RED_BG],
-    ['High', inspection.high_risk_count, COLOUR_ORANGE, COLOUR_ORANGE_BG],
-    ['Medium', inspection.medium_risk_count, COLOUR_YELLOW, COLOUR_YELLOW_BG],
-    ['Low', inspection.low_risk_count, COLOUR_GREEN, COLOUR_GREEN_BG],
+    ['Very High', veryHighCount, COLOUR_RED, COLOUR_RED_BG],
+    ['High', highCount, COLOUR_ORANGE, COLOUR_ORANGE_BG],
+    ['Medium', mediumCount, COLOUR_YELLOW, COLOUR_YELLOW_BG],
+    ['Low', lowCount, COLOUR_GREEN, COLOUR_GREEN_BG],
   ];
 
   for (let i = 0; i < riskData.length; i++) {
@@ -484,7 +491,7 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
   };
 
   cursor = drawLabelValue(cursor, fonts, 'Assets Inspected', String(items.length));
-  cursor = drawLabelValue(cursor, fonts, 'Total Defects', String(inspection.total_defects));
+  cursor = drawLabelValue(cursor, fonts, 'Total Defects', String(allDefects.length));
   cursor = drawLabelValue(cursor, fonts, 'Condition Breakdown',
     `Good: ${conditionCounts.good} / Fair: ${conditionCounts.fair} / Poor: ${conditionCounts.poor} / Dangerous: ${conditionCounts.dangerous}`);
 

@@ -448,12 +448,10 @@ export async function optimiseRoute(
     optimizationUrl.searchParams.set('geometries', 'geojson');
     optimizationUrl.searchParams.set('overview', 'full');
 
-    // If start point provided, fix it as source
-    if (body.start_lat !== undefined && body.start_lng !== undefined) {
+    /// Mapbox requires source + destination when roundtrip=false
+    if (!roundTrip) {
       optimizationUrl.searchParams.set('source', 'first');
-      if (!roundTrip) {
-        optimizationUrl.searchParams.set('destination', 'any');
-      }
+      optimizationUrl.searchParams.set('destination', 'last');
     }
 
     const optResponse = await fetch(optimizationUrl.toString());

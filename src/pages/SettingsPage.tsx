@@ -442,20 +442,60 @@ function OrganisationSection({
 }): JSX.Element {
   const [orgName, setOrgName] = useState(org.name ?? '');
   const [primaryColor, setPrimaryColor] = useState(org.primary_color ?? '#22C55E');
+  const [logoBase64, setLogoBase64] = useState<string | null>(
+    (org as Record<string, unknown>).metadata &&
+    typeof (org as Record<string, unknown>).metadata === 'object' &&
+    (org as Record<string, unknown>).metadata !== null
+      ? (((org as Record<string, unknown>).metadata as Record<string, unknown>).logo_base64 as string | null) ?? null
+      : null,
+  );
+  const [logoPreview, setLogoPreview] = useState<string | null>(logoBase64);
   const [sectionState, setSectionState] = useState<SectionState>(INITIAL_SECTION_STATE);
 
   useEffect(() => {
     setOrgName(org.name ?? '');
     setPrimaryColor(org.primary_color ?? '#22C55E');
+    const meta = (org as Record<string, unknown>).metadata as Record<string, unknown> | null | undefined;
+    const savedLogo = meta?.logo_base64 as string | null ?? null;
+    setLogoBase64(savedLogo);
+    setLogoPreview(savedLogo);
   }, [org]);
+
+  const handleLogoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      setSectionState({ status: 'error', message: 'Logo must be PNG or JPEG' });
+      return;
+    }
+    if (file.size > 200_000) {
+      setSectionState({ status: 'error', message: 'Logo must be under 200KB' });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      setLogoBase64(base64);
+      setLogoPreview(base64);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const handleRemoveLogo = useCallback(() => {
+    setLogoBase64(null);
+    setLogoPreview(null);
+  }, []);
 
   const handleSave = useCallback(async () => {
     setSectionState({ status: 'saving', message: '' });
     try {
+      const existingMeta = (org as Record<string, unknown>).metadata as Record<string, unknown> | null ?? {};
       await onSave({
         name: orgName.trim(),
         primary_color: primaryColor.trim(),
-      });
+        brand_colour: primaryColor.trim(),
+        metadata: { ...existingMeta, logo_base64: logoBase64 },
+      } as Partial<Organisation>);
       setSectionState({ status: 'success', message: 'Organisation updated' });
       setTimeout(() => setSectionState(INITIAL_SECTION_STATE), 3000);
     } catch {
@@ -525,6 +565,44 @@ function OrganisationSection({
             className="w-full px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-muted cursor-not-allowed opacity-60"
           />
         </FormField>
+
+        <div className="sm:col-span-2">
+          <FormField label="Company Logo" htmlFor="org-logo" hint="PNG or JPEG, max 200KB. Appears on PDF report cover page.">
+            <div className="flex items-center gap-4">
+              {logoPreview ? (
+                <div className="relative w-16 h-16 rounded-lg border border-iv-border bg-white flex items-center justify-center overflow-hidden">
+                  <img src={logoPreview} alt="Logo preview" className="max-w-full max-h-full object-contain" />
+                  <button
+                    type="button"
+                    onClick={handleRemoveLogo}
+                    className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+                    aria-label="Remove logo"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-lg border-2 border-dashed border-iv-border flex items-center justify-center">
+                  <Building2 className="w-6 h-6 text-iv-muted-2" />
+                </div>
+              )}
+              <label
+                htmlFor="org-logo"
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm text-iv-text hover:bg-iv-surface cursor-pointer transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                {logoPreview ? 'Change Logo' : 'Upload Logo'}
+              </label>
+              <input
+                id="org-logo"
+                type="file"
+                accept="image/png,image/jpeg"
+                onChange={handleLogoChange}
+                className="hidden"
+              />
+            </div>
+          </FormField>
+        </div>
       </div>
 
       <SaveButton sectionState={sectionState} onClick={handleSave} disabled={!orgName.trim()} />

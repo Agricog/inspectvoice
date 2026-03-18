@@ -1414,7 +1414,7 @@ export default function InspectionCapture(): JSX.Element {
                 <div className="mb-2">
                   <p className="text-2xs iv-muted uppercase tracking-wider mb-1">Description</p>
                   <DefectTemplateFiller
-                    key={`desc-${idx}-${defect.description.substring(0, 20)}`}
+                    key={`desc-${idx}`}
                     value={defect.description}
                     onChange={(filled) => handleUpdateDefectField(idx, 'description', filled)}
                     placeholder="Describe the defect..."
@@ -1426,7 +1426,7 @@ export default function InspectionCapture(): JSX.Element {
                   <div>
                     <p className="text-2xs iv-muted uppercase tracking-wider mb-1">Remedial Action</p>
                     <DefectTemplateFiller
-                      key={`remedy-${idx}-${defect.remedial_action.substring(0, 20)}`}
+                      key={`remedy-${idx}`}
                       value={defect.remedial_action}
                       onChange={(filled) => handleUpdateDefectField(idx, 'remedial_action', filled)}
                       placeholder="Remedial action..."

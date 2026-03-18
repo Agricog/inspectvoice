@@ -5,12 +5,13 @@
  * Bridges Clerk's useAuth().getToken (React hook) to secureFetch (plain function).
  *
  * Flow:
- *   1. AuthTokenProvider component (near app root) calls setTokenGetter()
- *      with Clerk's getToken function
+ *   1. AuthTokenProvider gates children until setTokenGetter() is called
  *   2. secureFetch calls getAuthToken() on every request
  *   3. Token is fetched fresh each time (Clerk handles caching/refresh)
  *
- * This avoids every secureFetch caller needing to pass getToken manually.
+ * No race condition possible — AuthTokenProvider prevents any component
+ * from mounting (and therefore calling secureFetch) until the bridge
+ * is established.
  *
  * Build Standard: Autaimate v3
  */

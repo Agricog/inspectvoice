@@ -148,7 +148,7 @@ export async function createCheckoutSession(
   if (!customerId) {
     // Create Stripe customer
     const userRows = await sql(
-      `SELECT email FROM users WHERE user_id = $1 LIMIT 1`,
+      `SELECT email FROM users WHERE clerk_user_id = $1 LIMIT 1`,
       [ctx.userId],
     );
     const userEmail = (userRows[0] as Record<string, unknown> | undefined)?.['email'] as string ?? '';

@@ -8,6 +8,7 @@
  *   - customer.subscription.deleted → set org to cancelled
  *   - invoice.paid → confirm payment, extend access
  *   - invoice.payment_failed → flag payment issue
+ *   - checkout.session.completed → link subscription to org after checkout
  *
  * Security:
  *   - Stripe signature verification (stripe-signature header)
@@ -16,53 +17,43 @@
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
-
 import type { WebhookContext, Env } from '../../types';
 import { claimWebhookEvent, markEventProcessed, markEventFailed } from '../../services/idempotency';
 import { writeWebhookAuditLog } from '../../services/audit';
 import { Logger } from '../../shared/logger';
 import { BadRequestError, UnauthorizedError } from '../../shared/errors';
 import { jsonResponse } from '../helpers';
-
 // =============================================
 // ENTRY POINT
 // =============================================
-
 export async function handleStripeWebhook(
   request: Request,
   ctx: WebhookContext,
 ): Promise<Response> {
   const logger = Logger.fromWebhookContext(ctx);
-
   // ── Step 1: Verify Stripe signature ──
   const signature = request.headers.get('stripe-signature');
   if (!signature) {
     throw new UnauthorizedError('Missing stripe-signature header');
   }
-
   const rawBody = await request.text();
-
   const event = await verifyStripeSignature(rawBody, signature, ctx.env.STRIPE_WEBHOOK_SECRET);
-
   logger.info('Stripe webhook received', {
     eventType: event.type,
     eventId: event.id,
   });
-
   // ── Step 2: Idempotency check ──
   const claimed = await claimWebhookEvent(ctx, event.id, 'stripe');
   if (!claimed) {
     logger.info('Stripe event already processed', { eventId: event.id });
     return jsonResponse({ success: true, message: 'Already processed' }, ctx.requestId);
   }
-
   // ── Step 3: Check WEBHOOKS_PAUSED ──
   if (ctx.env.WEBHOOKS_PAUSED === 'true') {
     logger.info('Webhooks paused — logged but not processed', { eventId: event.id });
     await markEventProcessed(ctx, event.id);
     return jsonResponse({ success: true, message: 'Logged (paused)' }, ctx.requestId);
   }
-
   // ── Step 4: Process event ──
   try {
     await processStripeEvent(event, ctx, logger);
@@ -72,14 +63,11 @@ export async function handleStripeWebhook(
     await markEventFailed(ctx, event.id, 'Stripe event processing failed');
     throw error;
   }
-
   return jsonResponse({ success: true, message: 'Processed' }, ctx.requestId);
 }
-
 // =============================================
 // STRIPE SIGNATURE VERIFICATION
 // =============================================
-
 /**
  * Verify Stripe webhook signature using Web Crypto API.
  * Stripe uses HMAC-SHA256: t=timestamp,v1=signature
@@ -93,21 +81,17 @@ async function verifyStripeSignature(
   const parts = signatureHeader.split(',');
   const timestamp = parts.find((p) => p.startsWith('t='))?.slice(2);
   const signatureHex = parts.find((p) => p.startsWith('v1='))?.slice(3);
-
   if (!timestamp || !signatureHex) {
     throw new UnauthorizedError('Invalid stripe-signature format');
   }
-
   // Reject if timestamp is too old (5 minute tolerance)
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - Number(timestamp)) > 300) {
     throw new UnauthorizedError('Stripe webhook timestamp too old');
   }
-
   // Compute expected signature
   const payload = `${timestamp}.${rawBody}`;
   const encoder = new TextEncoder();
-
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
@@ -115,26 +99,21 @@ async function verifyStripeSignature(
     false,
     ['sign'],
   );
-
   const signatureBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
   const expectedHex = Array.from(new Uint8Array(signatureBytes))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
-
   // Timing-safe comparison
   if (expectedHex.length !== signatureHex.length) {
     throw new UnauthorizedError('Invalid Stripe webhook signature');
   }
-
   let mismatch = 0;
   for (let i = 0; i < expectedHex.length; i++) {
     mismatch |= (expectedHex.charCodeAt(i) ?? 0) ^ (signatureHex.charCodeAt(i) ?? 0);
   }
-
   if (mismatch !== 0) {
     throw new UnauthorizedError('Invalid Stripe webhook signature');
   }
-
   // Parse the event body
   try {
     return JSON.parse(rawBody) as StripeEvent;
@@ -142,11 +121,9 @@ async function verifyStripeSignature(
     throw new BadRequestError('Invalid JSON in Stripe webhook body');
   }
 }
-
 // =============================================
 // EVENT PROCESSING
 // =============================================
-
 async function processStripeEvent(
   event: StripeEvent,
   ctx: WebhookContext,
@@ -156,30 +133,26 @@ async function processStripeEvent(
     case 'customer.subscription.created':
       await handleSubscriptionCreated(event, ctx, logger);
       break;
-
     case 'customer.subscription.updated':
       await handleSubscriptionUpdated(event, ctx, logger);
       break;
-
     case 'customer.subscription.deleted':
       await handleSubscriptionDeleted(event, ctx, logger);
       break;
-
     case 'invoice.paid':
       await handleInvoicePaid(event, ctx, logger);
       break;
-
     case 'invoice.payment_failed':
       await handleInvoicePaymentFailed(event, ctx, logger);
       break;
-
+    case 'checkout.session.completed':
+      await handleCheckoutCompleted(event, ctx, logger);
+      break;
     default:
       logger.info('Unhandled Stripe event type', { eventType: event.type });
   }
 }
-
 // ── Subscription Created ──
-
 async function handleSubscriptionCreated(
   event: StripeEvent,
   ctx: WebhookContext,
@@ -191,10 +164,8 @@ async function handleSubscriptionCreated(
     logger.warn('Subscription created without org_id metadata', { subscriptionId: sub.id });
     return;
   }
-
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(ctx.env.DATABASE_URL);
-
   await sql(
     `UPDATE organisations SET
       stripe_customer_id = $1,
@@ -212,16 +183,13 @@ async function handleSubscriptionCreated(
       orgId,
     ],
   );
-
   logger.info('Subscription created', { orgId, subscriptionId: sub.id });
   void writeWebhookAuditLog(ctx, orgId, 'org.subscription_changed', 'organisations', orgId, {
     subscriptionId: sub.id,
     status: 'active',
   });
 }
-
 // ── Subscription Updated ──
-
 async function handleSubscriptionUpdated(
   event: StripeEvent,
   ctx: WebhookContext,
@@ -230,12 +198,9 @@ async function handleSubscriptionUpdated(
   const sub = event.data.object as unknown as StripeSubscription;
   const orgId = sub.metadata?.['org_id'];
   if (!orgId) return;
-
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(ctx.env.DATABASE_URL);
-
   const status = mapStripeStatus(sub.status);
-
   await sql(
     `UPDATE organisations SET
       subscription_status = $1,
@@ -250,13 +215,10 @@ async function handleSubscriptionUpdated(
       orgId,
     ],
   );
-
   logger.info('Subscription updated', { orgId, status });
   void writeWebhookAuditLog(ctx, orgId, 'org.subscription_changed', 'organisations', orgId, { status });
 }
-
 // ── Subscription Deleted ──
-
 async function handleSubscriptionDeleted(
   event: StripeEvent,
   ctx: WebhookContext,
@@ -265,10 +227,8 @@ async function handleSubscriptionDeleted(
   const sub = event.data.object as unknown as StripeSubscription;
   const orgId = sub.metadata?.['org_id'];
   if (!orgId) return;
-
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(ctx.env.DATABASE_URL);
-
   await sql(
     `UPDATE organisations SET
       subscription_status = 'cancelled',
@@ -276,35 +236,28 @@ async function handleSubscriptionDeleted(
      WHERE org_id = $1`,
     [orgId],
   );
-
   logger.info('Subscription cancelled', { orgId, subscriptionId: sub.id });
   void writeWebhookAuditLog(ctx, orgId, 'org.subscription_changed', 'organisations', orgId);
 }
-
 // ── Invoice Paid ──
-
 async function handleInvoicePaid(
   event: StripeEvent,
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
   const invoice = event.data.object as unknown as StripeInvoice;
-
   // Resolve org via Stripe customer ID
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(ctx.env.DATABASE_URL);
-
   const rows = await sql(
     `SELECT org_id FROM organisations WHERE stripe_customer_id = $1 LIMIT 1`,
     [invoice.customer],
   );
-
   const orgId = (rows[0] as Record<string, unknown> | undefined)?.['org_id'] as string | undefined;
   if (!orgId) {
     logger.warn('Invoice paid for unknown customer', { customerId: invoice.customer });
     return;
   }
-
   // Confirm payment — clear any payment issue flags
   await sql(
     `UPDATE organisations SET
@@ -314,34 +267,27 @@ async function handleInvoicePaid(
      WHERE org_id = $1`,
     [orgId],
   );
-
   logger.info('Invoice paid', { orgId, invoiceId: invoice.id });
   void writeWebhookAuditLog(ctx, orgId, 'org.subscription_changed', 'organisations', orgId, {
     invoiceId: invoice.id,
     amount: invoice.amount_paid,
   });
 }
-
 // ── Invoice Payment Failed ──
-
 async function handleInvoicePaymentFailed(
   event: StripeEvent,
   ctx: WebhookContext,
   logger: Logger,
 ): Promise<void> {
   const invoice = event.data.object as unknown as StripeInvoice;
-
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(ctx.env.DATABASE_URL);
-
   const rows = await sql(
     `SELECT org_id FROM organisations WHERE stripe_customer_id = $1 LIMIT 1`,
     [invoice.customer],
   );
-
   const orgId = (rows[0] as Record<string, unknown> | undefined)?.['org_id'] as string | undefined;
   if (!orgId) return;
-
   await sql(
     `UPDATE organisations SET
       subscription_status = 'past_due',
@@ -350,17 +296,58 @@ async function handleInvoicePaymentFailed(
      WHERE org_id = $1`,
     [orgId],
   );
-
   logger.info('Invoice payment failed', { orgId, invoiceId: invoice.id });
   void writeWebhookAuditLog(ctx, orgId, 'org.subscription_changed', 'organisations', orgId, {
     invoiceId: invoice.id,
   });
 }
+// ── Checkout Completed ──
+async function handleCheckoutCompleted(
+  event: StripeEvent,
+  ctx: WebhookContext,
+  logger: Logger,
+): Promise<void> {
+  const session = event.data.object as unknown as {
+    customer: string;
+    subscription: string;
+    metadata?: Record<string, string>;
+  };
 
+  // The org_id is on the subscription metadata, not the session
+  // But we can link via customer ID which was set during checkout
+  const { neon } = await import('@neondatabase/serverless');
+  const sql = neon(ctx.env.DATABASE_URL);
+
+  const rows = await sql(
+    `SELECT org_id FROM organisations WHERE stripe_customer_id = $1 LIMIT 1`,
+    [session.customer],
+  );
+
+  const orgId = (rows[0] as Record<string, unknown> | undefined)?.['org_id'] as string | undefined;
+  if (!orgId) {
+    logger.warn('Checkout completed for unknown customer', { customerId: session.customer });
+    return;
+  }
+
+  await sql(
+    `UPDATE organisations SET
+      stripe_subscription_id = $1,
+      subscription_status = 'active',
+      tier = 'team',
+      updated_at = NOW()
+     WHERE org_id = $2`,
+    [session.subscription, orgId],
+  );
+
+  logger.info('Checkout completed', { orgId, subscriptionId: session.subscription });
+  void writeWebhookAuditLog(ctx, orgId, 'org.subscription_changed', 'organisations', orgId, {
+    event: 'checkout_completed',
+    subscriptionId: session.subscription,
+  });
+}
 // =============================================
 // HELPERS
 // =============================================
-
 function mapStripeStatus(stripeStatus: string): string {
   switch (stripeStatus) {
     case 'active': return 'active';
@@ -374,11 +361,9 @@ function mapStripeStatus(stripeStatus: string): string {
     default: return stripeStatus;
   }
 }
-
 // =============================================
 // STRIPE TYPES (minimal — only what we use)
 // =============================================
-
 interface StripeEvent {
   readonly id: string;
   readonly type: string;
@@ -386,7 +371,6 @@ interface StripeEvent {
     readonly object: Record<string, unknown>;
   };
 }
-
 interface StripeSubscription {
   readonly id: string;
   readonly customer: string;
@@ -401,7 +385,6 @@ interface StripeSubscription {
     }>;
   };
 }
-
 interface StripeInvoice {
   readonly id: string;
   readonly customer: string;

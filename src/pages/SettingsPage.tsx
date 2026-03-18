@@ -40,6 +40,7 @@ import {
   X,
   RefreshCw,
   LogOut,
+  CreditCard,
 } from 'lucide-react';
 import { useClerk } from '@clerk/clerk-react';
 import { useFetch } from '@hooks/useFetch';
@@ -64,6 +65,19 @@ interface OrgResponse {
 }
 
 type SaveStatus = 'idle' | 'saving' | 'success' | 'error';
+
+interface BillingStatus {
+  status: string;
+  subscription_status: string;
+  subscription_plan: string | null;
+  subscription_current_period_end: string | null;
+  trial_ends_at: string | null;
+  trial_days_remaining: number | null;
+  trial_expired: boolean;
+  has_subscription: boolean;
+  needs_upgrade: boolean;
+  has_payment_method: boolean;
+}
 
 interface SectionState {
   status: SaveStatus;
@@ -848,6 +862,9 @@ export function SettingsPage(): JSX.Element {
               </div>
             )}
 
+            {/* Billing */}
+            {isManagerOrAdmin && <BillingSection />}
+
             {/* Sign Out */}
             <section className="bg-iv-surface border border-iv-border rounded-xl p-4">
               <div className="flex items-center justify-between">
@@ -877,5 +894,176 @@ export function SettingsPage(): JSX.Element {
   );
 }
 
+// =============================================
+// BILLING SECTION (Admin/Manager only)
+// =============================================
+
+function BillingSection(): JSX.Element {
+  const { data: billingData, loading: billingLoading } =
+    useFetch<{ data: BillingStatus }>('/api/v1/billing/status');
+
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
+
+  const billing = billingData?.data ?? null;
+
+  const handleCheckout = useCallback(async () => {
+    setCheckoutLoading(true);
+    setBillingError(null);
+    try {
+      const { secureFetch } = await import('@hooks/useFetch');
+      const response = await secureFetch<{ data: { checkout_url: string } }>(
+        '/api/v1/billing/checkout',
+        { method: 'POST' },
+      );
+      if (response?.data?.checkout_url) {
+        window.location.href = response.data.checkout_url;
+      }
+    } catch (err) {
+      setBillingError(err instanceof Error ? err.message : 'Failed to start checkout');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }, []);
+
+  const handlePortal = useCallback(async () => {
+    setPortalLoading(true);
+    setBillingError(null);
+    try {
+      const { secureFetch } = await import('@hooks/useFetch');
+      const response = await secureFetch<{ data: { portal_url: string } }>(
+        '/api/v1/billing/portal',
+        { method: 'POST' },
+      );
+      if (response?.data?.portal_url) {
+        window.location.href = response.data.portal_url;
+      }
+    } catch (err) {
+      setBillingError(err instanceof Error ? err.message : 'Failed to open billing portal');
+    } finally {
+      setPortalLoading(false);
+    }
+  }, []);
+
+  if (billingLoading || !billing) {
+    return (
+      <section className="bg-iv-surface border border-iv-border rounded-xl p-4">
+        <SectionHeader
+          icon={<CreditCard className="w-4 h-4 text-iv-accent" />}
+          title="Billing"
+          description="Subscription and payment management."
+        />
+        <div className="flex items-center gap-2 text-iv-muted">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm">Loading billing status…</span>
+        </div>
+      </section>
+    );
+  }
+
+  const isActive = billing.status === 'active';
+  const isTrialing = billing.status === 'trialing';
+  const isExpired = billing.status === 'expired';
+
+  return (
+    <section className="bg-iv-surface border border-iv-border rounded-xl p-4">
+      <SectionHeader
+        icon={<CreditCard className="w-4 h-4 text-iv-accent" />}
+        title="Billing"
+        description="Subscription and payment management."
+      />
+
+      {/* Status banner */}
+      {isTrialing && (
+        <div className="p-3 rounded-lg bg-iv-accent/10 border border-iv-accent/20 mb-4">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-iv-accent flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-iv-accent">Free Trial Active</p>
+              <p className="text-2xs text-iv-muted mt-0.5">
+                {billing.trial_days_remaining !== null && billing.trial_days_remaining > 0
+                  ? `${billing.trial_days_remaining} days remaining — full access to all features`
+                  : 'Trial ending soon — subscribe to continue'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isActive && (
+        <div className="p-3 rounded-lg bg-iv-accent/10 border border-iv-accent/20 mb-4">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-iv-accent flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-iv-accent">Active Subscription</p>
+              <p className="text-2xs text-iv-muted mt-0.5">
+                InspectVoice Team — £99/month
+                {billing.subscription_current_period_end && (
+                  <> · Renews {new Date(billing.subscription_current_period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isExpired && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 mb-4">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-red-400">Trial Expired</p>
+              <p className="text-2xs text-iv-muted mt-0.5">
+                Subscribe to continue using InspectVoice
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {billingError && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 mb-4">
+          <p className="text-xs text-red-400">{billingError}</p>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex flex-wrap items-center gap-3">
+        {!isActive && (
+          <button
+            type="button"
+            onClick={() => void handleCheckout()}
+            disabled={checkoutLoading}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-iv-accent text-white rounded-lg text-sm font-medium hover:bg-iv-accent/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {checkoutLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <CreditCard className="w-4 h-4" />
+            )}
+            {checkoutLoading ? 'Redirecting…' : 'Subscribe — £99/month'}
+          </button>
+        )}
+
+        {billing.has_payment_method && (
+          <button
+            type="button"
+            onClick={() => void handlePortal()}
+            disabled={portalLoading}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm font-medium text-iv-text hover:bg-iv-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {portalLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Settings className="w-4 h-4" />
+            )}
+            {portalLoading ? 'Opening…' : 'Manage Billing'}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
 export default SettingsPage;
 

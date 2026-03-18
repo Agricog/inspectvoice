@@ -340,6 +340,7 @@ if (annualFreq > 0) {
       { status: 500, headers: { 'Content-Type': 'application/json' } },
     );
   }
+}
 
 // =============================================
 // POST /api/v1/route-planner/optimise

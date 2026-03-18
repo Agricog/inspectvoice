@@ -40,6 +40,12 @@ export interface Env {
 
   // ── Route Planner ──
   readonly MAPBOX_ACCESS_TOKEN: string;
+  
+  // ── Billing ──
+  readonly STRIPE_SECRET_KEY: string;
+  readonly STRIPE_PRICE_ID: string;
+  readonly STRIPE_WEBHOOK_SECRET: string;
+  readonly FRONTEND_URL: string;
 
   // ── Feature 16: Client Portal Clerk (separate Clerk application) ──
   readonly PORTAL_CLERK_JWKS_URL: string;

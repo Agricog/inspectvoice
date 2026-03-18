@@ -442,12 +442,9 @@ function OrganisationSection({
 }): JSX.Element {
   const [orgName, setOrgName] = useState(org.name ?? '');
   const [primaryColor, setPrimaryColor] = useState(org.primary_color ?? '#22C55E');
+ const orgMeta = (org as unknown as Record<string, unknown>).metadata as Record<string, unknown> | null | undefined;
   const [logoBase64, setLogoBase64] = useState<string | null>(
-    (org as Record<string, unknown>).metadata &&
-    typeof (org as Record<string, unknown>).metadata === 'object' &&
-    (org as Record<string, unknown>).metadata !== null
-      ? (((org as Record<string, unknown>).metadata as Record<string, unknown>).logo_base64 as string | null) ?? null
-      : null,
+    orgMeta?.logo_base64 as string | null ?? null,
   );
   const [logoPreview, setLogoPreview] = useState<string | null>(logoBase64);
   const [sectionState, setSectionState] = useState<SectionState>(INITIAL_SECTION_STATE);
@@ -455,7 +452,7 @@ function OrganisationSection({
   useEffect(() => {
     setOrgName(org.name ?? '');
     setPrimaryColor(org.primary_color ?? '#22C55E');
-    const meta = (org as Record<string, unknown>).metadata as Record<string, unknown> | null | undefined;
+    const meta = (org as unknown as Record<string, unknown>).metadata as Record<string, unknown> | null | undefined;
     const savedLogo = meta?.logo_base64 as string | null ?? null;
     setLogoBase64(savedLogo);
     setLogoPreview(savedLogo);
@@ -489,7 +486,7 @@ function OrganisationSection({
   const handleSave = useCallback(async () => {
     setSectionState({ status: 'saving', message: '' });
     try {
-      const existingMeta = (org as Record<string, unknown>).metadata as Record<string, unknown> | null ?? {};
+      const existingMeta = (org as unknown as Record<string, unknown>).metadata as Record<string, unknown> | null ?? {};
       await onSave({
         name: orgName.trim(),
         primary_color: primaryColor.trim(),

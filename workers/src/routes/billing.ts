@@ -41,7 +41,9 @@ async function stripeRequest(
   if (!response.ok) {
     const error = data['error'] as Record<string, unknown> | undefined;
     const message = typeof error?.['message'] === 'string' ? error['message'] : 'Stripe API error';
-    throw new AppError('EXTERNAL_SERVICE_ERROR', message, 502);
+    const code = typeof error?.['code'] === 'string' ? error['code'] : 'unknown';
+    console.error(JSON.stringify({ level: 'error', service: 'stripe', path, status: response.status, code, message, detail: error }));
+    throw new AppError('EXTERNAL_SERVICE_ERROR', `Stripe: ${message}`, 500);
   }
 
   return data;

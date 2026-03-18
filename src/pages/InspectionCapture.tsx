@@ -1305,8 +1305,14 @@ export default function InspectionCapture(): JSX.Element {
 
         {captureState.voiceTranscript && (
           <div className="p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]">
-            <p className="text-xs iv-muted mb-1">Transcript</p>
-            <p className="text-sm iv-text whitespace-pre-wrap">{captureState.voiceTranscript}</p>
+            <p className="text-xs iv-muted mb-1">Transcript <span className="text-2xs">(tap to edit)</span></p>
+            <textarea
+              value={captureState.voiceTranscript}
+              onChange={(e) => setCaptureState((prev) => ({ ...prev, voiceTranscript: e.target.value }))}
+              rows={3}
+              className="w-full bg-transparent text-sm iv-text resize-y border-none outline-none focus:ring-0 p-0"
+              aria-label="Edit transcript"
+            />
           </div>
         )}
 

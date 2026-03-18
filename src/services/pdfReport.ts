@@ -122,6 +122,7 @@ export interface ReportData {
   assets: Asset[];
   orgName: string;
   orgLogoBase64?: string;
+  orgBrandColour?: string;
   /** Photo counts per inspection_item ID (from pendingPhotos in offlineStore) */
   photoCountsByItem?: Record<string, number>;
   /** Actual photo base64 data per inspection_item ID for embedding in PDF */
@@ -173,7 +174,24 @@ function sanitiseForPdf(text: string): string {
   }
   return cleaned;
 }
+function hexToRgb(hex: string): ReturnType<typeof rgb> {
+  const cleaned = hex.replace('#', '');
+  const r = parseInt(cleaned.substring(0, 2), 16) / 255;
+  const g = parseInt(cleaned.substring(2, 4), 16) / 255;
+  const b = parseInt(cleaned.substring(4, 6), 16) / 255;
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return COLOUR_ACCENT;
+  return rgb(r, g, b);
+}
 
+function hexToBgRgb(hex: string): ReturnType<typeof rgb> {
+  const cleaned = hex.replace('#', '');
+  const r = parseInt(cleaned.substring(0, 2), 16) / 255;
+  const g = parseInt(cleaned.substring(2, 4), 16) / 255;
+  const b = parseInt(cleaned.substring(4, 6), 16) / 255;
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return COLOUR_HEADER_BG;
+  // Darken for header background: mix with near-black
+  return rgb(r * 0.25, g * 0.25, b * 0.25);
+}
 function safe(text: string | null | undefined): string {
   return sanitiseForPdf(text ?? '');
 }
@@ -365,12 +383,13 @@ function drawHorizontalRule(cursor: Cursor): Cursor {
 // SECTION RENDERERS
 // =============================================
 
-function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cursor {
+async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData): Promise<Cursor> {
   const { inspection, site } = data;
-
-  cursor.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 180, width: PAGE_WIDTH, height: 180, color: COLOUR_HEADER_BG });
+  const brandColour = data.orgBrandColour ? hexToRgb(data.orgBrandColour) : COLOUR_ACCENT;
+  const headerBg = data.orgBrandColour ? hexToBgRgb(data.orgBrandColour) : COLOUR_HEADER_BG;
+  cursor.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 180, width: PAGE_WIDTH, height: 180, color: headerBg });
   cursor.page.drawText(sanitiseForPdf(data.orgName || 'InspectVoice'), {
-    x: MARGIN_LEFT, y: PAGE_HEIGHT - 60, size: 12, font: fonts.bold, color: COLOUR_ACCENT,
+    x: MARGIN_LEFT, y: PAGE_HEIGHT - 60, size: 12, font: fonts.bold, color: brandColour,
   });
   cursor.page.drawText('INSPECTION REPORT', {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 90, size: FONT_SIZE_TITLE, font: fonts.bold, color: COLOUR_WHITE,
@@ -378,7 +397,7 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
 
   const typeLabel = INSPECTION_TYPE_LABELS[inspection.inspection_type];
   cursor.page.drawText(typeLabel, {
-    x: MARGIN_LEFT, y: PAGE_HEIGHT - 118, size: 16, font: fonts.regular, color: COLOUR_GREEN,
+    x: MARGIN_LEFT, y: PAGE_HEIGHT - 118, size: 16, font: fonts.regular, color: brandColour,
   });
 
   const typeDesc = INSPECTION_TYPE_DESCRIPTIONS[inspection.inspection_type];
@@ -435,7 +454,30 @@ function renderCoverPage(cursor: Cursor, fonts: PDFFonts, data: ReportData): Cur
 
   const gridRows = Math.ceil(infoItems.length / 2);
   y -= gridRows * (FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER * 2 + 4) + 20;
-
+  // Embed org logo on cover page (top-right of header)
+  if (data.orgLogoBase64) {
+    try {
+      const logoClean = data.orgLogoBase64.includes(',')
+        ? data.orgLogoBase64.split(',')[1] ?? data.orgLogoBase64
+        : data.orgLogoBase64;
+      const logoBytes = Uint8Array.from(atob(logoClean), (c) => c.charCodeAt(0));
+      const isJpeg = data.orgLogoBase64.includes('image/jpeg') || data.orgLogoBase64.includes('image/jpg');
+      const logoImage = isJpeg
+        ? await doc.embedJpg(logoBytes)
+        : await doc.embedPng(logoBytes);
+      const maxLogoW = 80;
+      const maxLogoH = 50;
+      const scaled = logoImage.scaleToFit(maxLogoW, maxLogoH);
+      cursor.page.drawImage(logoImage, {
+        x: PAGE_WIDTH - MARGIN_RIGHT - scaled.width,
+        y: PAGE_HEIGHT - 30 - scaled.height,
+        width: scaled.width,
+        height: scaled.height,
+      });
+    } catch (logoErr) {
+      console.warn('[PDF] Failed to embed org logo:', logoErr);
+    }
+  }
   if (inspection.closure_recommended || inspection.immediate_action_required) {
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: y - 40, width: CONTENT_WIDTH, height: 40, color: COLOUR_RED_BG, borderColor: COLOUR_RED, borderWidth: 1 });
     const warningText = inspection.closure_recommended
@@ -865,7 +907,7 @@ export async function generateInspectionReport(data: ReportData): Promise<Genera
   drawFooter(firstPage, fonts, reportId, 1);
   let cursor: Cursor = { y: CONTENT_TOP, page: firstPage, pageNumber: 1 };
 
-  cursor = renderCoverPage(cursor, fonts, data);
+  cursor = await renderCoverPage(doc, cursor, fonts, data);
   cursor = addPage(doc, cursor, fonts, reportId);
   cursor = renderExecutiveSummary(doc, cursor, fonts, data, reportId);
   cursor = renderSiteDetails(doc, cursor, fonts, data, reportId);

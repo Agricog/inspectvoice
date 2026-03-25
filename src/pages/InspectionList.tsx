@@ -664,7 +664,7 @@ export function InspectionList(): JSX.Element {
         for (const item of localItems) {
           await inspectionItemsStore.delete(item.id);
         }
-        await inspectionsStore.delete(inspectionId);
+        await inspectionsStore.forceDelete(inspectionId);
       } catch {
         // Local cache miss is fine — server is already clean
       }

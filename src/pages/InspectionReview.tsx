@@ -915,7 +915,7 @@ export default function InspectionReview(): JSX.Element {
                 if (!photosByItem[photo.inspection_item_id]) {
                   photosByItem[photo.inspection_item_id] = [];
                 }
-                photosByItem[photo.inspection_item_id].push(base64);
+                photosByItem[photo.inspection_item_id]!.push(base64);
               }
             } catch {
               // Skip individual photo — PDF still generates

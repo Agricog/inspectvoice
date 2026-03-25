@@ -865,7 +865,6 @@ export default function InspectionReview(): JSX.Element {
               overall_condition: serverItem.overall_condition ?? localItem.overall_condition,
               risk_rating: serverItem.risk_rating ?? localItem.risk_rating,
               checklist_data: ((localItem as unknown as Record<string, unknown>).checklist_data as ChecklistData | null) ?? ((serverItem as unknown as Record<string, unknown>).checklist_data as ChecklistData | null) ?? null,
-              checklist_data: (localItem as Record<string, unknown>).checklist_data ?? (serverItem as Record<string, unknown>).checklist_data ?? null,
             };
           });
 

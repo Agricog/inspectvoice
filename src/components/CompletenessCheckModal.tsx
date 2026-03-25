@@ -518,7 +518,21 @@ export default function CompletenessCheckModal({
           `/api/v1/inspections/${inspection.id}/completeness-check`,
           { method: 'POST', retries: 0 },
         );
-        setResult(json.data);
+
+        // Guard: if server says "no assets" but we have items locally,
+        // the sync hasn't completed yet — use local checks instead
+        const serverSaysNoAssets = json.data.issues.some(
+          (i: CompletenessIssue) => i.code === 'NO_ASSETS',
+        );
+        if (serverSaysNoAssets && items.length > 0) {
+          const localResult = await runOfflineChecks(
+            inspection, items, inspectorSummary, closureRecommended, closureReason,
+          );
+          setResult(localResult);
+          setIsOffline(true);
+        } else {
+          setResult(json.data);
+        }
         setLoading(false);
       } catch {
         // Any failure (404 = not synced, 500, network) → fall back to local checks

@@ -357,15 +357,6 @@ function AssetResultCard({
                 <span className="text-xs iv-muted">Audio captured — transcript will be available after sync and processing</span>
               </div>
             </div>
-            <div>
-              <p className="text-xs iv-muted flex items-center gap-1 mb-1">
-                <Mic className="w-3 h-3" />
-                Voice Transcript
-              </p>
-              <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
-                {item.voice_transcript}
-              </p>
-            </div>
           )}
 
           {/* Inspector notes */}

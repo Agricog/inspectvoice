@@ -57,6 +57,7 @@ import type {
   Site,
   Asset,
   DefectDetail,
+  ChecklistData,
 } from '@/types';
 import { getAssetTypeConfig } from '@config/assetTypes';
 
@@ -727,6 +728,41 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
           console.warn('[PDF] Failed to embed photo:', photoErr);
         }
       }
+    }
+
+    // ── Checklist ──
+    const checklist = (item as unknown as Record<string, unknown>).checklist_data as ChecklistData | null;
+    if (checklist && (checklist.standard.length > 0 || checklist.custom.length > 0)) {
+      cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
+      const allChecks = [
+        ...checklist.standard.map((c) => ({ label: c.label, completed: c.completed, isCustom: false })),
+        ...checklist.custom.map((c) => ({ label: c.label, completed: c.completed, isCustom: true })),
+      ];
+      const completedCount = allChecks.filter((c) => c.completed).length;
+      cursor.page.drawText(`Inspection Checklist (${completedCount}/${allChecks.length}):`, {
+        x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_DARK_GREY,
+      });
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 2 };
+
+      for (const check of allChecks) {
+        cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER + 2);
+        const tick = check.completed ? '[x]' : '[ ]';
+        const prefix = check.isCustom ? `${tick} (Custom) ` : `${tick} `;
+        const checkColour = check.completed ? COLOUR_GREEN : COLOUR_MID_GREY;
+        cursor.page.drawText(sanitiseForPdf(`${prefix}${check.label}`), {
+          x: MARGIN_LEFT + 12, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.regular, color: checkColour,
+        });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
+      }
+
+      if (checklist.dismissed.length > 0) {
+        cursor.page.drawText(`${checklist.dismissed.length} item(s) marked N/A`, {
+          x: MARGIN_LEFT + 12, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY,
+        });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
+      }
+
+      cursor = { ...cursor, y: cursor.y - 4 };
     }
 
     if (item.voice_transcript) {

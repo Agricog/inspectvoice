@@ -323,14 +323,22 @@ export const inspections = {
     const db = await getDB();
     const existing = await db.get(IDB_STORE_NAMES.INSPECTIONS, id);
     if (!existing) return false;
-
     if (existing.data.status !== 'draft') {
       console.warn('[OfflineStore] Can only delete draft inspections.');
       return false;
     }
-
     await db.delete(IDB_STORE_NAMES.INSPECTIONS, id);
     return true;
+  },
+
+  /**
+   * Force-delete a local inspection record regardless of status.
+   * Used after the server has confirmed deletion — this just clears
+   * the local IndexedDB cache to prevent ghost records.
+   */
+  async forceDelete(id: string): Promise<void> {
+    const db = await getDB();
+    await db.delete(IDB_STORE_NAMES.INSPECTIONS, id);
   },
 
   /** Get count of all local inspections */
@@ -339,7 +347,6 @@ export const inspections = {
     return db.count(IDB_STORE_NAMES.INSPECTIONS);
   },
 };
-
 // =============================================
 // INSPECTION ITEMS
 // =============================================

@@ -367,11 +367,23 @@ export async function getInspection(
     { orderBy: 'timestamp', orderDirection: 'asc' },
   );
 
+  // Fetch photos grouped by inspection_item_id for PDF embedding
+  const photos = await db.rawQuery<Record<string, unknown>>(
+    `SELECT id, inspection_item_id, r2_url, mime_type, is_reference_photo
+     FROM photos
+     WHERE inspection_item_id IN (
+       SELECT id FROM inspection_items WHERE inspection_id = $1
+     )
+     ORDER BY created_at ASC`,
+    [id],
+  );
+
   return jsonResponse({
     success: true,
     data: {
       ...inspection,
       items,
+      photos,
     },
   }, ctx.requestId);
 }

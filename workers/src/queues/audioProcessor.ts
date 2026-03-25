@@ -188,50 +188,61 @@ async function processAudioMessage(
     return;
   }
 
-  // ── Step 4: Claude AI analysis ──
-  const analysisResult = await analyseTranscript(
-    {
-      transcript: transcription.transcript,
-      assetCode,
-      assetType,
-      inspectionType: context.inspectionType,
-      requestId: msg.requestId,
-    },
-    env.ANTHROPIC_API_KEY,
-  );
+  // ── Step 4: Save transcript immediately (before AI analysis) ──
+  // This ensures the transcript is preserved even if AI analysis fails.
+  await storeTranscriptOnly(sql, msg.orgId, inspectionItemId, transcription, logger);
 
-  // ── Step 5: Store results ──
-  await storeAnalysisResults(
-    sql, msg.orgId, inspectionItemId, transcription, analysisResult, logger,
-  );
-
-  // ── Step 6: Create defect records ──
-  if (analysisResult.defects.length > 0) {
-    await createDefectRecords(
-      sql,
-      msg.orgId,
-      context.siteId,
-      context.inspectionId,
-      assetId,
-      inspectionItemId,
-      analysisResult,
-      logger,
+  // ── Step 5: Claude AI analysis (non-fatal — transcript already saved) ──
+  try {
+    const analysisResult = await analyseTranscript(
+      {
+        transcript: transcription.transcript,
+        assetCode,
+        assetType,
+        inspectionType: context.inspectionType,
+        requestId: msg.requestId,
+      },
+      env.ANTHROPIC_API_KEY,
     );
+
+    // ── Step 6: Store AI results (overwrites transcript-only record with full analysis) ──
+    await storeAnalysisResults(
+      sql, msg.orgId, inspectionItemId, transcription, analysisResult, logger,
+    );
+
+    // ── Step 7: Create defect records ──
+    if (analysisResult.defects.length > 0) {
+      await createDefectRecords(
+        sql,
+        msg.orgId,
+        context.siteId,
+        context.inspectionId,
+        assetId,
+        inspectionItemId,
+        analysisResult,
+        logger,
+      );
+    }
+
+    // ── Step 8: Update inspection risk counts ──
+    await updateInspectionRiskCounts(sql, msg.orgId, inspectionItemId, logger);
+
+    logger.info('Audio processing complete', {
+      inspectionItemId,
+      transcriptionMethod: transcription.method,
+      escalationReasons: transcription.escalationReasons,
+      overallCondition: analysisResult.overallCondition,
+      riskRating: analysisResult.riskRating,
+      defectCount: analysisResult.defects.length,
+      tokenUsage: analysisResult.tokenUsage,
+    });
+  } catch (aiError) {
+    // AI analysis failed but transcript is already saved — non-fatal
+    logger.warn('AI analysis failed — transcript preserved', {
+      inspectionItemId,
+      error: aiError instanceof Error ? aiError.message : 'Unknown error',
+    });
   }
-
-  // ── Step 7: Update inspection risk counts ──
-  await updateInspectionRiskCounts(sql, msg.orgId, inspectionItemId, logger);
-
-  logger.info('Audio processing complete', {
-    inspectionItemId,
-    transcriptionMethod: transcription.method,
-    escalationReasons: transcription.escalationReasons,
-    overallCondition: analysisResult.overallCondition,
-    riskRating: analysisResult.riskRating,
-    defectCount: analysisResult.defects.length,
-    tokenUsage: analysisResult.tokenUsage,
-  });
-}
 
 // =============================================
 // TIERED TRANSCRIPTION

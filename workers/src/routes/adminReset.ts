@@ -5,6 +5,10 @@
  * Wipes all org data in dependency order. Admin only.
  * Used for demo preparation — gives a clean slate.
  *
+ * Tables use two different org_id types:
+ *   - Most tables: text (stores Clerk org ID directly)
+ *   - incidents, sealed_exports: uuid (stores organisations.id)
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 import type { RouteParams, RequestContext } from '../types';
@@ -15,7 +19,6 @@ export async function resetDemoData(
   _params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
-  // Admin only
   if (!['admin', 'org:admin'].includes(ctx.userRole)) {
     return new Response(
       JSON.stringify({
@@ -30,56 +33,60 @@ export async function resetDemoData(
   const orgId = ctx.orgId;
 
   try {
-      // ── Leaf tables first (no dependents) ──
-      await sql`DELETE FROM defect_library_entry_version WHERE entry_id IN (SELECT id FROM defect_library_entry WHERE org_id = ${orgId})`;
-      await sql`DELETE FROM defect_library_entry WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM defect_field_audit WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM normalisation_log WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM normalisation_usage WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM sealed_exports WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM notification_log WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM notification_recipients WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM performance_share_links WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM audit_log WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM webhook_events WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM recall_asset_matches WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM inspector_metrics_period WHERE org_id = ${orgId}`;
-      await sql`DELETE FROM asset_baseline_history WHERE org_id = ${orgId}`;
+    // ── Resolve UUID org ID for tables that use uuid type ──
+    const orgRows = await sql`SELECT id FROM organisations WHERE org_id = ${orgId}`;
+    const dbOrgUuid = orgRows[0]?.id as string | undefined;
 
-      // ── Photos (FK → inspection_items) ──
-      await sql`DELETE FROM photos WHERE inspection_item_id IN (
-        SELECT id FROM inspection_items WHERE inspection_id IN (
-          SELECT id FROM inspections WHERE org_id = ${orgId}
-        )
-      )`;
+    // ── Leaf tables (text org_id, no dependents) ──
+    await sql`DELETE FROM defect_library_entry_version WHERE entry_id IN (SELECT id FROM defect_library_entry WHERE org_id = ${orgId})`;
+    await sql`DELETE FROM defect_library_entry WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM defect_field_audit WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM normalisation_log WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM normalisation_usage WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM notification_log WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM notification_recipients WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM performance_share_links WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM audit_log WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM recall_asset_matches WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM inspector_metrics_period WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM asset_baseline_history WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM make_safe_actions WHERE org_id = ${orgId}`;
+    await sql`DELETE FROM manufacturer_recalls WHERE org_id = ${orgId}`;
 
-      // ── Make-safe actions (FK → defects) ──
-      await sql`DELETE FROM make_safe_actions WHERE org_id = ${orgId}`;
+    // ── UUID org_id tables (incidents + sealed_exports) ──
+    if (dbOrgUuid) {
+      await sql`DELETE FROM sealed_exports WHERE org_id = ${dbOrgUuid}::uuid`;
+      await sql`DELETE FROM incidents WHERE org_id = ${dbOrgUuid}::uuid`;
+    }
 
-      // ── Incidents ──
-      await sql`DELETE FROM incidents WHERE org_id = ${orgId}`;
-
-      // ── Defects (FK → inspection_items) ──
-      await sql`DELETE FROM defects WHERE org_id = ${orgId}`;
-
-      // ── Inspection items (FK → inspections + assets) ──
-      await sql`DELETE FROM inspection_items WHERE inspection_id IN (
+    // ── Photos (no org_id — FK chain via inspection_items → inspections) ──
+    await sql`DELETE FROM photos WHERE inspection_item_id IN (
+      SELECT id FROM inspection_items WHERE inspection_id IN (
         SELECT id FROM inspections WHERE org_id = ${orgId}
-      )`;
+      )
+    )`;
 
-      // ── Inspections (FK → sites) ──
-      await sql`DELETE FROM inspections WHERE org_id = ${orgId}`;
+    // ── Defects (text org_id, FK → inspection_items) ──
+    await sql`DELETE FROM defects WHERE org_id = ${orgId}`;
 
-      // ── Site assignments (FK → sites) ──
-      await sql`DELETE FROM site_assignments WHERE site_id IN (
-        SELECT id FROM sites WHERE org_id = ${orgId}
-      )`;
+    // ── Inspection items (no org_id — FK chain via inspections) ──
+    await sql`DELETE FROM inspection_items WHERE inspection_id IN (
+      SELECT id FROM inspections WHERE org_id = ${orgId}
+    )`;
 
-      // ── Assets (FK → sites, blocked by inspection_items) ──
-      await sql`DELETE FROM assets WHERE org_id = ${orgId}`;
+    // ── Inspections (text org_id, FK → sites) ──
+    await sql`DELETE FROM inspections WHERE org_id = ${orgId}`;
 
-      // ── Sites (blocked by inspections, assets, site_assignments) ──
-      await sql`DELETE FROM sites WHERE org_id = ${orgId}`;
+    // ── Site assignments (text org_id, FK → sites) ──
+    await sql`DELETE FROM site_assignments WHERE site_id IN (
+      SELECT id FROM sites WHERE org_id = ${orgId}
+    )`;
+
+    // ── Assets (text org_id, blocked by inspection_items) ──
+    await sql`DELETE FROM assets WHERE org_id = ${orgId}`;
+
+    // ── Sites (text org_id, blocked by inspections, assets, site_assignments) ──
+    await sql`DELETE FROM sites WHERE org_id = ${orgId}`;
 
     return new Response(
       JSON.stringify({

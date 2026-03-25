@@ -11,7 +11,8 @@
  * - Sort by date, status, risk rating
  * - Paginated results (server-side)
  * - Risk rating and status badges
- * - Delete draft/review inspections (with confirmation)
+ * - Delete any inspection (admin, needed for demo prep)
+ * - On delete: clears server AND local IndexedDB to prevent ghost records
  * - Responsive: cards on mobile, table on desktop
  * - Loading, error, and empty states
  * - Links to inspection review/capture
@@ -22,9 +23,13 @@
  *   - Trash icon on desktop row, red button on mobile card
  *   - Confirmation dialog before delete, auto-refreshes list
  *
+ * FIX: 25 Mar 2026
+ *   - Delete now clears IndexedDB cache (inspections + inspection_items)
+ *     to prevent ghost records on site detail and other cached pages.
+ *   - All inspection statuses deletable (admin demo prep).
+ *
  * API: GET /api/inspections?page=1&limit=20&status=...&type=...&search=...&sort=...&order=...
  */
-
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -51,6 +56,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useFetch } from '@hooks/useFetch';
+import { inspections as inspectionsStore, inspectionItems as inspectionItemsStore } from '@services/offlineStore';
 import type { Inspection } from '@/types/entities';
 import {
   InspectionStatus,
@@ -141,11 +147,9 @@ function RiskBadge({ rating }: { rating: RiskRating | null }): JSX.Element {
 
 function DefectSummary({ inspection }: { inspection: InspectionListItem }): JSX.Element {
   const { very_high_risk_count, high_risk_count, medium_risk_count, low_risk_count, total_defects } = inspection;
-
   if (total_defects === 0) {
     return <span className="text-xs text-iv-muted-2">No defects</span>;
   }
-
   return (
     <div className="flex items-center gap-1.5">
       {very_high_risk_count > 0 && (
@@ -189,7 +193,6 @@ function SortButton({
   onSort: (field: SortField) => void;
 }): JSX.Element {
   const isActive = currentSort === field;
-
   return (
     <button
       type="button"
@@ -212,7 +215,6 @@ function SortButton({
     </button>
   );
 }
-
 
 // =============================================
 // FILTER BAR
@@ -361,7 +363,6 @@ function Pagination({
   );
 }
 
-
 // =============================================
 // INSPECTION CARD (Mobile)
 // =============================================
@@ -378,9 +379,7 @@ function InspectionCard({
     month: 'short',
     year: 'numeric',
   });
-
   const canDelete = isDeletable(inspection.status);
-
   const actionUrl = inspection.status === InspectionStatus.DRAFT
     ? `/sites/${inspection.site_id}/inspections/${inspection.id}/capture`
     : `/sites/${inspection.site_id}/inspections/${inspection.id}/review`;
@@ -462,7 +461,7 @@ function InspectionCard({
             type="button"
             onClick={() => onDelete(inspection.id)}
             className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-red-500/10 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-colors"
-            title="Delete draft"
+            title="Delete inspection"
           >
             <Trash2 className="w-3 h-3" />
           </button>
@@ -488,9 +487,7 @@ function InspectionRow({
     month: 'short',
     year: 'numeric',
   });
-
   const canDelete = isDeletable(inspection.status);
-
   const actionUrl = inspection.status === InspectionStatus.DRAFT
     ? `/sites/${inspection.site_id}/inspections/${inspection.id}/capture`
     : `/sites/${inspection.site_id}/inspections/${inspection.id}/review`;
@@ -556,7 +553,7 @@ function InspectionRow({
               type="button"
               onClick={() => onDelete(inspection.id)}
               className="iv-btn-icon text-red-400 hover:text-red-300 hover:bg-red-500/15"
-              title="Delete draft"
+              title="Delete inspection"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -566,7 +563,6 @@ function InspectionRow({
     </tr>
   );
 }
-
 
 // =============================================
 // MAIN PAGE COMPONENT
@@ -604,13 +600,11 @@ export function InspectionList(): JSX.Element {
     params.set('limit', String(PAGE_SIZE));
     params.set('sort', sortField);
     params.set('order', sortOrder);
-
     if (filters.search.trim()) params.set('search', filters.search.trim());
     if (filters.status) params.set('status', filters.status);
     if (filters.type) params.set('type', filters.type);
     if (filters.dateFrom) params.set('from', filters.dateFrom);
     if (filters.dateTo) params.set('to', filters.dateTo);
-
     return `/api/v1/inspections?${params.toString()}`;
   }, [page, sortField, sortOrder, filters]);
 
@@ -657,12 +651,24 @@ export function InspectionList(): JSX.Element {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  // -- Delete draft inspection --
-  const handleDeleteDraft = useCallback(async (inspectionId: string) => {
+  // -- Delete inspection (clears server + IndexedDB) --
+  const handleDeleteInspection = useCallback(async (inspectionId: string) => {
     if (!window.confirm('Delete this inspection and all associated data? This cannot be undone.')) return;
     try {
       const { secureFetch } = await import('@hooks/useFetch');
       await secureFetch(`/api/v1/inspections/${inspectionId}`, { method: 'DELETE' });
+
+      // Clear from local IndexedDB so ghost records don't appear on site detail etc.
+      try {
+        const localItems = await inspectionItemsStore.getByInspection(inspectionId);
+        for (const item of localItems) {
+          await inspectionItemsStore.delete(item.id);
+        }
+        await inspectionsStore.delete(inspectionId);
+      } catch {
+        // Local cache miss is fine — server is already clean
+      }
+
       refetch();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to delete inspection';
@@ -670,7 +676,7 @@ export function InspectionList(): JSX.Element {
     }
   }, [refetch]);
 
-  const inspections = data?.data ?? [];
+  const inspectionList = data?.data ?? [];
   const pagination = data?.pagination ?? { page: 1, limit: PAGE_SIZE, total: 0, total_pages: 0 };
 
   return (
@@ -696,7 +702,6 @@ export function InspectionList(): JSX.Element {
               </p>
             </div>
           </div>
-
           <button
             type="button"
             onClick={refetch}
@@ -735,7 +740,7 @@ export function InspectionList(): JSX.Element {
           </div>
         )}
 
-        {!loading && !error && inspections.length === 0 && (
+        {!loading && !error && inspectionList.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-iv-muted">
             <Inbox className="w-10 h-10 mb-3 text-iv-muted-2" />
             <p className="text-sm font-medium text-iv-text mb-1">
@@ -755,7 +760,7 @@ export function InspectionList(): JSX.Element {
           </div>
         )}
 
-        {!error && inspections.length > 0 && (
+        {!error && inspectionList.length > 0 && (
           <>
             <div className="hidden lg:block bg-iv-surface border border-iv-border rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
@@ -773,8 +778,8 @@ export function InspectionList(): JSX.Element {
                     </tr>
                   </thead>
                   <tbody>
-                    {inspections.map((inspection) => (
-                      <InspectionRow key={inspection.id} inspection={inspection} onDelete={handleDeleteDraft} />
+                    {inspectionList.map((inspection) => (
+                      <InspectionRow key={inspection.id} inspection={inspection} onDelete={handleDeleteInspection} />
                     ))}
                   </tbody>
                 </table>
@@ -782,8 +787,8 @@ export function InspectionList(): JSX.Element {
             </div>
 
             <div className="lg:hidden space-y-3">
-              {inspections.map((inspection) => (
-                <InspectionCard key={inspection.id} inspection={inspection} onDelete={handleDeleteDraft} />
+              {inspectionList.map((inspection) => (
+                <InspectionCard key={inspection.id} inspection={inspection} onDelete={handleDeleteInspection} />
               ))}
             </div>
 

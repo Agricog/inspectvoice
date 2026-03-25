@@ -839,6 +839,9 @@ export default function InspectionReview(): JSX.Element {
       }
 
       // ── Step 2: Fetch fresh items from API (includes server-side transcripts) ──
+      // Merge strategy: server provides transcripts (from Whisper pipeline),
+      // local provides defects, notes, and condition (may not have synced yet).
+      // Always take the richer value from either source.
       let pdfItems = items;
       try {
         const { secureFetch } = await import('@hooks/useFetch');
@@ -847,12 +850,37 @@ export default function InspectionReview(): JSX.Element {
         }>(`/api/v1/inspections/${inspectionId}`);
 
         if (response?.data?.items && response.data.items.length > 0) {
-          pdfItems = response.data.items;
-          // Also update the local display so review page shows transcripts
-          setItems(response.data.items);
+          const serverItems = response.data.items;
+          const localItemMap = new Map(items.map((i) => [i.id, i]));
+
+          pdfItems = serverItems.map((serverItem) => {
+            const localItem = localItemMap.get(serverItem.id);
+            if (!localItem) return serverItem;
+
+            return {
+              ...serverItem,
+              // Server transcript (from Whisper) takes priority over local
+              voice_transcript: serverItem.voice_transcript || localItem.voice_transcript,
+              // Local defects are source of truth — server may not have them yet
+              defects: localItem.defects.length > 0 ? localItem.defects : serverItem.defects,
+              // Preserve local notes and condition if server hasn't received them
+              inspector_notes: serverItem.inspector_notes || localItem.inspector_notes,
+              overall_condition: serverItem.overall_condition ?? localItem.overall_condition,
+              risk_rating: serverItem.risk_rating ?? localItem.risk_rating,
+            };
+          });
+
+          // Also include any local items not yet on the server
+          for (const [localId, localItem] of localItemMap) {
+            if (!serverItems.some((si) => si.id === localId)) {
+              pdfItems.push(localItem);
+            }
+          }
+
+          setItems(pdfItems);
         }
       } catch {
-        // API fetch failed — fall back to local items
+        // API fetch failed — fall back to local items (which have all captured data)
       }
 
       // ── Step 3: Load photos for embedding ──

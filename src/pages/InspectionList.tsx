@@ -90,9 +90,9 @@ type SortOrder = 'asc' | 'desc';
 
 const PAGE_SIZE = 20;
 
-/** Drafts and reviews can be deleted; signed/exported are permanent BS EN 1176-7 records */
-function isDeletable(status: InspectionStatus): boolean {
-  return status === InspectionStatus.DRAFT || status === InspectionStatus.REVIEW;
+/** All inspections can be deleted by admin (needed for demo prep) */
+function isDeletable(_status: InspectionStatus): boolean {
+  return true;
 }
 
 const STATUS_STYLES: Record<InspectionStatus, { bg: string; text: string }> = {
@@ -659,8 +659,7 @@ export function InspectionList(): JSX.Element {
 
   // -- Delete draft inspection --
   const handleDeleteDraft = useCallback(async (inspectionId: string) => {
-    if (!window.confirm('Delete this draft inspection? This cannot be undone.')) return;
-
+    if (!window.confirm('Delete this inspection and all associated data? This cannot be undone.')) return;
     try {
       const { secureFetch } = await import('@hooks/useFetch');
       await secureFetch(`/api/v1/inspections/${inspectionId}`, { method: 'DELETE' });

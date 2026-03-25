@@ -859,14 +859,12 @@ export default function InspectionReview(): JSX.Element {
 
             return {
               ...serverItem,
-              // Server transcript (from Whisper) takes priority over local
               voice_transcript: serverItem.voice_transcript || localItem.voice_transcript,
-              // Local defects are source of truth — server may not have them yet
               defects: localItem.defects.length > 0 ? localItem.defects : serverItem.defects,
-              // Preserve local notes and condition if server hasn't received them
               inspector_notes: serverItem.inspector_notes || localItem.inspector_notes,
               overall_condition: serverItem.overall_condition ?? localItem.overall_condition,
               risk_rating: serverItem.risk_rating ?? localItem.risk_rating,
+              checklist_data: (localItem as Record<string, unknown>).checklist_data ?? (serverItem as Record<string, unknown>).checklist_data ?? null,
             };
           });
 

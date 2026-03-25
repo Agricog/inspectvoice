@@ -1,36 +1,19 @@
 /**
  * InspectVoice — PDF Report Generator (Client-Side)
- * Batch 16 — generates professional BS EN 1176-compliant inspection reports.
+ * Premium BS EN 1176-compliant inspection report output.
  * Uses pdf-lib (never jspdf) per build standard.
  *
- * Report sections:
- *   1. Cover page — site name, inspection type, date, inspector, org branding
- *   2. Executive summary — risk counts, condition breakdown, closure warnings
- *   3. Site details — location, contact, compliance info
- *   4. Asset inspection results — per-asset condition, defects, notes, voice transcripts, embedded photos
- *   5. Defect register — all defects in tabular format
- *   6. Sign-off — inspector declaration, name, signature timestamp
- *   7. Footer — page numbers, report ID, confidentiality notice
+ * Report structure (each major section starts on a fresh page):
+ *   Page 1:  Cover page — org branding, site, inspector, metadata
+ *   Page 2:  Table of Contents
+ *   Page 3:  1.0 Executive Summary — risk boxes, condition breakdown, closure warnings
+ *   Page 4:  2.0 Site Details — location, contact, compliance info
+ *   Page 5:  3.0 Inspection Methodology — what was checked and how
+ *   Page 6+: 4.0 Asset Inspection Results — one asset per page start
+ *   Page N:  5.0 Defect Register — tabular summary of all defects
+ *   Page N+1: 6.0 Declaration & Sign-Off — inspector declaration, signature
  *
- * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
- *
- * FIX: 3 Mar 2026
- *   - Added photoCountsByItem to ReportData for photo cross-referencing per asset
- *   - Renders "Photos: N captured" in accent green per asset when photos exist
- *
- * FIX: 4 Mar 2026
- *   - Added sanitiseForPdf() to strip non-WinAnsi characters from all dynamic text.
- *     pdf-lib StandardFonts only support WinAnsi encoding (Windows-1252). Any character
- *     outside that range (emoji, CJK, extended Unicode from Whisper/AI output) throws
- *     a silent error that was being swallowed by the catch handler.
- *   - Replaced \u26A0 (warning triangle) with '!!' — not in WinAnsi range.
- *   - Added console.error in downloadReport for debugging.
- *
- * FIX: 16 Mar 2026
- *   - Photos now embedded inline in the PDF per asset section.
- *     Photos are loaded as base64 from IndexedDB (pendingPhotos) and passed
- *     via photosByItem. Displayed as a grid (3 per row, 160x120) under each asset.
- *   - renderAssetResults is now async to support pdf-lib embedJpg().
+ * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 import {
   PDFDocument,
@@ -64,7 +47,6 @@ import { getAssetTypeConfig } from '@config/assetTypes';
 // =============================================
 // CONFIGURATION
 // =============================================
-
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
 const MARGIN_LEFT = 50;
@@ -98,11 +80,11 @@ const COLOUR_ORANGE_BG = rgb(0.99, 0.95, 0.92);
 const COLOUR_RED_BG = rgb(0.99, 0.93, 0.93);
 const COLOUR_ACCENT = rgb(0.13, 0.77, 0.37);
 const COLOUR_HEADER_BG = rgb(0.12, 0.14, 0.18);
+const COLOUR_SECTION_BG = rgb(0.97, 0.97, 0.97);
 
 // =============================================
 // TYPES
 // =============================================
-
 interface PDFFonts {
   regular: PDFFont;
   bold: PDFFont;
@@ -124,9 +106,7 @@ export interface ReportData {
   orgName: string;
   orgLogoBase64?: string;
   orgBrandColour?: string;
-  /** Photo counts per inspection_item ID (from pendingPhotos in offlineStore) */
   photoCountsByItem?: Record<string, number>;
-  /** Actual photo base64 data per inspection_item ID for embedding in PDF */
   photosByItem?: Record<string, string[]>;
 }
 
@@ -139,7 +119,6 @@ export interface GeneratedReport {
 // =============================================
 // WINANSI SANITISATION
 // =============================================
-
 const WINANSI_EXTRAS = new Set<number>([
   0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6,
   0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
@@ -175,6 +154,7 @@ function sanitiseForPdf(text: string): string {
   }
   return cleaned;
 }
+
 function hexToRgb(hex: string): ReturnType<typeof rgb> {
   const cleaned = hex.replace('#', '');
   const r = parseInt(cleaned.substring(0, 2), 16) / 255;
@@ -190,9 +170,9 @@ function hexToBgRgb(hex: string): ReturnType<typeof rgb> {
   const g = parseInt(cleaned.substring(2, 4), 16) / 255;
   const b = parseInt(cleaned.substring(4, 6), 16) / 255;
   if (isNaN(r) || isNaN(g) || isNaN(b)) return COLOUR_HEADER_BG;
-  // Darken for header background: mix with near-black
   return rgb(r * 0.25, g * 0.25, b * 0.25);
 }
+
 function safe(text: string | null | undefined): string {
   return sanitiseForPdf(text ?? '');
 }
@@ -200,7 +180,6 @@ function safe(text: string | null | undefined): string {
 // =============================================
 // HELPERS
 // =============================================
-
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
   try {
@@ -292,7 +271,6 @@ function buildFilename(site: Site, inspection: Inspection): string {
 // =============================================
 // PAGE MANAGEMENT
 // =============================================
-
 function addPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, reportId: string): Cursor {
   const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   const pageNumber = cursor.pageNumber + 1;
@@ -329,19 +307,30 @@ function drawFooter(page: PDFPage, fonts: PDFFonts, reportId: string, pageNumber
 // =============================================
 // DRAWING HELPERS
 // =============================================
-
-function drawSectionHeading(cursor: Cursor, fonts: PDFFonts, title: string): Cursor {
+function drawSectionHeading(cursor: Cursor, fonts: PDFFonts, sectionNumber: string, title: string): Cursor {
   const lineHeight = FONT_SIZE_HEADING * LINE_HEIGHT_MULTIPLIER;
-  cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - lineHeight + 2, width: 3, height: lineHeight, color: COLOUR_ACCENT });
-  cursor.page.drawText(title.toUpperCase(), {
-    x: MARGIN_LEFT + 10, y: cursor.y - FONT_SIZE_HEADING + 2, size: FONT_SIZE_HEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
+  const fullTitle = `${sectionNumber}  ${title}`.toUpperCase();
+  cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - lineHeight + 2, width: 4, height: lineHeight, color: COLOUR_ACCENT });
+  cursor.page.drawText(sanitiseForPdf(fullTitle), {
+    x: MARGIN_LEFT + 12, y: cursor.y - FONT_SIZE_HEADING + 2, size: FONT_SIZE_HEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
   });
   cursor.page.drawLine({
-    start: { x: MARGIN_LEFT, y: cursor.y - lineHeight - 2 },
-    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y - lineHeight - 2 },
+    start: { x: MARGIN_LEFT, y: cursor.y - lineHeight - 4 },
+    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y - lineHeight - 4 },
     thickness: 0.5, color: COLOUR_LIGHT_GREY,
   });
-  return { ...cursor, y: cursor.y - lineHeight - 12 };
+  return { ...cursor, y: cursor.y - lineHeight - 16 };
+}
+
+function drawSectionIntro(cursor: Cursor, fonts: PDFFonts, text: string): Cursor {
+  const lines = wrapText(text, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH);
+  for (const line of lines) {
+    cursor.page.drawText(line, {
+      x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.italic, color: COLOUR_MID_GREY,
+    });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+  }
+  return { ...cursor, y: cursor.y - 8 };
 }
 
 function drawLabelValue(cursor: Cursor, fonts: PDFFonts, label: string, value: string, labelWidth: number = 140): Cursor {
@@ -377,17 +366,17 @@ function drawHorizontalRule(cursor: Cursor): Cursor {
     end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y },
     thickness: 0.5, color: COLOUR_LIGHT_GREY,
   });
-  return { ...cursor, y: cursor.y - 8 };
+  return { ...cursor, y: cursor.y - 10 };
 }
 
 // =============================================
-// SECTION RENDERERS
+// COVER PAGE
 // =============================================
-
 async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData): Promise<Cursor> {
   const { inspection, site } = data;
   const brandColour = data.orgBrandColour ? hexToRgb(data.orgBrandColour) : COLOUR_ACCENT;
   const headerBg = data.orgBrandColour ? hexToBgRgb(data.orgBrandColour) : COLOUR_HEADER_BG;
+
   cursor.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 180, width: PAGE_WIDTH, height: 180, color: headerBg });
   cursor.page.drawText(sanitiseForPdf(data.orgName || 'InspectVoice'), {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 60, size: 12, font: fonts.bold, color: brandColour,
@@ -395,12 +384,10 @@ async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts
   cursor.page.drawText('INSPECTION REPORT', {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 90, size: FONT_SIZE_TITLE, font: fonts.bold, color: COLOUR_WHITE,
   });
-
   const typeLabel = INSPECTION_TYPE_LABELS[inspection.inspection_type];
   cursor.page.drawText(typeLabel, {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 118, size: 16, font: fonts.regular, color: brandColour,
   });
-
   const typeDesc = INSPECTION_TYPE_DESCRIPTIONS[inspection.inspection_type];
   const descLines = wrapText(typeDesc, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH);
   for (let i = 0; i < descLines.length; i++) {
@@ -409,26 +396,39 @@ async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts
       size: FONT_SIZE_BODY, font: fonts.italic, color: rgb(0.7, 0.7, 0.7),
     });
   }
-
   cursor.page.drawText('Conducted in accordance with BS EN 1176-7:2020', {
     x: MARGIN_LEFT, y: PAGE_HEIGHT - 170, size: FONT_SIZE_SMALL, font: fonts.italic, color: rgb(0.6, 0.6, 0.6),
   });
 
+  if (data.orgLogoBase64) {
+    try {
+      const logoClean = data.orgLogoBase64.includes(',')
+        ? data.orgLogoBase64.split(',')[1] ?? data.orgLogoBase64
+        : data.orgLogoBase64;
+      const logoBytes = Uint8Array.from(atob(logoClean), (c) => c.charCodeAt(0));
+      const isJpeg = data.orgLogoBase64.includes('image/jpeg') || data.orgLogoBase64.includes('image/jpg');
+      const logoImage = isJpeg ? await doc.embedJpg(logoBytes) : await doc.embedPng(logoBytes);
+      const scaled = logoImage.scaleToFit(80, 50);
+      cursor.page.drawImage(logoImage, {
+        x: PAGE_WIDTH - MARGIN_RIGHT - scaled.width,
+        y: PAGE_HEIGHT - 30 - scaled.height,
+        width: scaled.width, height: scaled.height,
+      });
+    } catch { /* Logo embed failed */ }
+  }
+
   let y = PAGE_HEIGHT - 220;
   cursor.page.drawText(sanitiseForPdf(site.name), { x: MARGIN_LEFT, y, size: 18, font: fonts.bold, color: COLOUR_DARK_GREY });
   y -= 24;
-
   const addressLines = wrapText(site.address, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
   for (const line of addressLines) {
     cursor.page.drawText(line, { x: MARGIN_LEFT, y, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_MID_GREY });
     y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   }
-
   if (site.postcode) {
     cursor.page.drawText(sanitiseForPdf(site.postcode), { x: MARGIN_LEFT, y, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_MID_GREY });
     y -= FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   }
-
   y -= 20;
 
   const infoItems: Array<[string, string]> = [
@@ -441,7 +441,6 @@ async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts
     ['Surface', safe(inspection.surface_conditions) || '-'],
     ['Assets', `${data.items.length} inspected`],
   ];
-
   const colWidth = CONTENT_WIDTH / 2;
   for (let i = 0; i < infoItems.length; i++) {
     const [label, value] = infoItems[i]!;
@@ -452,33 +451,9 @@ async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts
     cursor.page.drawText(label, { x, y: rowY, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_MID_GREY });
     cursor.page.drawText(sanitiseForPdf(value), { x, y: rowY - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_BLACK });
   }
-
   const gridRows = Math.ceil(infoItems.length / 2);
   y -= gridRows * (FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER * 2 + 4) + 20;
-  // Embed org logo on cover page (top-right of header)
-  if (data.orgLogoBase64) {
-    try {
-      const logoClean = data.orgLogoBase64.includes(',')
-        ? data.orgLogoBase64.split(',')[1] ?? data.orgLogoBase64
-        : data.orgLogoBase64;
-      const logoBytes = Uint8Array.from(atob(logoClean), (c) => c.charCodeAt(0));
-      const isJpeg = data.orgLogoBase64.includes('image/jpeg') || data.orgLogoBase64.includes('image/jpg');
-      const logoImage = isJpeg
-        ? await doc.embedJpg(logoBytes)
-        : await doc.embedPng(logoBytes);
-      const maxLogoW = 80;
-      const maxLogoH = 50;
-      const scaled = logoImage.scaleToFit(maxLogoW, maxLogoH);
-      cursor.page.drawImage(logoImage, {
-        x: PAGE_WIDTH - MARGIN_RIGHT - scaled.width,
-        y: PAGE_HEIGHT - 30 - scaled.height,
-        width: scaled.width,
-        height: scaled.height,
-      });
-    } catch (logoErr) {
-      console.warn('[PDF] Failed to embed org logo:', logoErr);
-    }
-  }
+
   if (inspection.closure_recommended || inspection.immediate_action_required) {
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: y - 40, width: CONTENT_WIDTH, height: 40, color: COLOUR_RED_BG, borderColor: COLOUR_RED, borderWidth: 1 });
     const warningText = inspection.closure_recommended
@@ -491,26 +466,95 @@ async function renderCoverPage(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts
   return { ...cursor, y };
 }
 
+// =============================================
+// TABLE OF CONTENTS
+// =============================================
+function renderTableOfContents(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
+  cursor = addPage(doc, cursor, fonts, reportId);
+
+  cursor.page.drawText('TABLE OF CONTENTS', {
+    x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_HEADING, size: FONT_SIZE_HEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
+  });
+  cursor.page.drawLine({
+    start: { x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_HEADING * LINE_HEIGHT_MULTIPLIER - 4 },
+    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y - FONT_SIZE_HEADING * LINE_HEIGHT_MULTIPLIER - 4 },
+    thickness: 0.5, color: COLOUR_LIGHT_GREY,
+  });
+  cursor = { ...cursor, y: cursor.y - FONT_SIZE_HEADING * LINE_HEIGHT_MULTIPLIER - 24 };
+
+  const tocItems: Array<[string, string]> = [
+    ['1.0', 'Executive Summary'],
+    ['2.0', 'Site Details'],
+    ['3.0', 'Inspection Methodology'],
+    ['4.0', 'Asset Inspection Results'],
+  ];
+
+  const sortedItems = [...data.items].sort((a, b) => a.asset_code.localeCompare(b.asset_code));
+  for (let i = 0; i < sortedItems.length; i++) {
+    const item = sortedItems[i]!;
+    const config = getAssetTypeConfig(item.asset_type);
+    const typeName = config?.name ?? item.asset_type;
+    tocItems.push([`4.${i + 1}`, `${item.asset_code} - ${typeName}`]);
+  }
+
+  const allDefects = data.items.flatMap((i) => i.defects);
+  if (allDefects.length > 0) {
+    tocItems.push(['5.0', 'Defect Register']);
+    tocItems.push(['6.0', 'Declaration & Sign-Off']);
+  } else {
+    tocItems.push(['5.0', 'Declaration & Sign-Off']);
+  }
+
+  const lineHeight = FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 6;
+  for (const [number, title] of tocItems) {
+    const isSubSection = number.includes('.') && !number.endsWith('.0');
+    const indent = isSubSection ? 20 : 0;
+    const font = isSubSection ? fonts.regular : fonts.bold;
+    const colour = isSubSection ? COLOUR_MID_GREY : COLOUR_DARK_GREY;
+
+    cursor.page.drawText(sanitiseForPdf(number), {
+      x: MARGIN_LEFT + indent, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_ACCENT,
+    });
+    cursor.page.drawText(sanitiseForPdf(title), {
+      x: MARGIN_LEFT + indent + 40, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font, color: colour,
+    });
+
+    const titleWidth = font.widthOfTextAtSize(sanitiseForPdf(title), FONT_SIZE_BODY);
+    const dotsStart = MARGIN_LEFT + indent + 40 + titleWidth + 8;
+    const dotsEnd = PAGE_WIDTH - MARGIN_RIGHT;
+    if (dotsEnd > dotsStart + 20) {
+      let dotX = dotsStart;
+      while (dotX < dotsEnd) {
+        cursor.page.drawText('.', { x: dotX, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_LIGHT_GREY });
+        dotX += 4;
+      }
+    }
+    cursor = { ...cursor, y: cursor.y - lineHeight };
+  }
+
+  return cursor;
+}
+
+// =============================================
+// 1.0 EXECUTIVE SUMMARY
+// =============================================
 function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
-  cursor = ensureSpace(doc, cursor, fonts, reportId, 200);
-  cursor = drawSectionHeading(cursor, fonts, 'Executive Summary');
+  cursor = addPage(doc, cursor, fonts, reportId);
+  cursor = drawSectionHeading(cursor, fonts, '1.0', 'Executive Summary');
+  cursor = drawSectionIntro(cursor, fonts,
+    'Overview of inspection findings including risk severity distribution, asset condition breakdown, and any immediate action requirements.',
+  );
 
   const { inspection, items } = data;
-
   const boxWidth = CONTENT_WIDTH / 4 - 4;
   const boxHeight = 50;
-  // Count risk severities from actual defect data (inspection-level counts may be unpopulated offline)
-  const allDefects = items.flatMap((i) => i.defects);
-  const veryHighCount = allDefects.filter((d) => d.risk_rating === RiskRating.VERY_HIGH).length;
-  const highCount = allDefects.filter((d) => d.risk_rating === RiskRating.HIGH).length;
-  const mediumCount = allDefects.filter((d) => d.risk_rating === RiskRating.MEDIUM).length;
-  const lowCount = allDefects.filter((d) => d.risk_rating === RiskRating.LOW).length;
 
+  const allDefects = items.flatMap((i) => i.defects);
   const riskData: Array<[string, number, ReturnType<typeof rgb>, ReturnType<typeof rgb>]> = [
-    ['Very High', veryHighCount, COLOUR_RED, COLOUR_RED_BG],
-    ['High', highCount, COLOUR_ORANGE, COLOUR_ORANGE_BG],
-    ['Medium', mediumCount, COLOUR_YELLOW, COLOUR_YELLOW_BG],
-    ['Low', lowCount, COLOUR_GREEN, COLOUR_GREEN_BG],
+    ['Very High', allDefects.filter((d) => d.risk_rating === RiskRating.VERY_HIGH).length, COLOUR_RED, COLOUR_RED_BG],
+    ['High', allDefects.filter((d) => d.risk_rating === RiskRating.HIGH).length, COLOUR_ORANGE, COLOUR_ORANGE_BG],
+    ['Medium', allDefects.filter((d) => d.risk_rating === RiskRating.MEDIUM).length, COLOUR_YELLOW, COLOUR_YELLOW_BG],
+    ['Low', allDefects.filter((d) => d.risk_rating === RiskRating.LOW).length, COLOUR_GREEN, COLOUR_GREEN_BG],
   ];
 
   for (let i = 0; i < riskData.length; i++) {
@@ -523,10 +567,9 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
     const labelWidth = fonts.regular.widthOfTextAtSize(label, FONT_SIZE_SMALL);
     cursor.page.drawText(label, { x: x + (boxWidth - labelWidth) / 2, y: cursor.y - 40, size: FONT_SIZE_SMALL, font: fonts.regular, color: textCol });
   }
+  cursor = { ...cursor, y: cursor.y - boxHeight - 20 };
 
-  cursor = { ...cursor, y: cursor.y - boxHeight - 16 };
-
-  const conditionCounts = {
+  const cc = {
     good: items.filter((i) => i.overall_condition === ConditionRating.GOOD).length,
     fair: items.filter((i) => i.overall_condition === ConditionRating.FAIR).length,
     poor: items.filter((i) => i.overall_condition === ConditionRating.POOR).length,
@@ -535,25 +578,21 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
 
   cursor = drawLabelValue(cursor, fonts, 'Assets Inspected', String(items.length));
   cursor = drawLabelValue(cursor, fonts, 'Total Defects', String(allDefects.length));
-  cursor = drawLabelValue(cursor, fonts, 'Condition Breakdown',
-    `Good: ${conditionCounts.good} / Fair: ${conditionCounts.fair} / Poor: ${conditionCounts.poor} / Dangerous: ${conditionCounts.dangerous}`);
+  cursor = drawLabelValue(cursor, fonts, 'Condition Breakdown', `Good: ${cc.good} / Fair: ${cc.fair} / Poor: ${cc.poor} / Dangerous: ${cc.dangerous}`);
 
   if (inspection.immediate_action_required) {
     cursor = drawLabelValue(cursor, fonts, 'Immediate Action', 'REQUIRED - see defect register');
   }
-
   if (inspection.closure_recommended && inspection.closure_reason) {
     cursor = drawLabelValue(cursor, fonts, 'Closure Reason', safe(inspection.closure_reason));
   }
 
   if (inspection.inspector_summary) {
-    cursor = ensureSpace(doc, cursor, fonts, reportId, 60);
-    cursor = { ...cursor, y: cursor.y - 8 };
+    cursor = { ...cursor, y: cursor.y - 12 };
     cursor.page.drawText('Inspector Summary', {
       x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_SUBHEADING, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
     });
     cursor = { ...cursor, y: cursor.y - FONT_SIZE_SUBHEADING * LINE_HEIGHT_MULTIPLIER - 4 };
-
     const summaryLines = wrapText(inspection.inspector_summary, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
     for (const line of summaryLines) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
@@ -562,16 +601,18 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
     }
   }
 
-  cursor = { ...cursor, y: cursor.y - 12 };
   return cursor;
 }
 
+// =============================================
+// 2.0 SITE DETAILS
+// =============================================
 function renderSiteDetails(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
-  cursor = ensureSpace(doc, cursor, fonts, reportId, 160);
-  cursor = drawSectionHeading(cursor, fonts, 'Site Details');
+  cursor = addPage(doc, cursor, fonts, reportId);
+  cursor = drawSectionHeading(cursor, fonts, '2.0', 'Site Details');
+  cursor = drawSectionIntro(cursor, fonts, 'Location, access, and contact information for the inspected site.');
 
   const { site } = data;
-
   cursor = drawLabelValue(cursor, fonts, 'Site Name', safe(site.name));
   cursor = drawLabelValue(cursor, fonts, 'Address', `${safe(site.address)}${site.postcode ? ', ' + safe(site.postcode) : ''}`);
   cursor = drawLabelValue(cursor, fonts, 'Coordinates', `${site.latitude.toFixed(6)}, ${site.longitude.toFixed(6)}`);
@@ -580,16 +621,77 @@ function renderSiteDetails(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, da
   if (site.contact_email) cursor = drawLabelValue(cursor, fonts, 'Email', safe(site.contact_email));
   if (site.access_notes) cursor = drawLabelValue(cursor, fonts, 'Access Notes', safe(site.access_notes));
 
-  cursor = { ...cursor, y: cursor.y - 12 };
   return cursor;
 }
 
+// =============================================
+// 3.0 INSPECTION METHODOLOGY
+// =============================================
+function renderMethodology(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
+  cursor = addPage(doc, cursor, fonts, reportId);
+  cursor = drawSectionHeading(cursor, fonts, '3.0', 'Inspection Methodology');
+  cursor = drawSectionIntro(cursor, fonts, 'This section describes the inspection approach, standards applied, and scope of assessment.');
+
+  const typeLabel = INSPECTION_TYPE_LABELS[data.inspection.inspection_type];
+  const typeDesc = INSPECTION_TYPE_DESCRIPTIONS[data.inspection.inspection_type];
+
+  cursor = drawLabelValue(cursor, fonts, 'Inspection Type', typeLabel);
+  cursor = { ...cursor, y: cursor.y - 4 };
+  const descLines = wrapText(typeDesc, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
+  for (const line of descLines) {
+    cursor.page.drawText(line, { x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_DARK_GREY });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+  }
+  cursor = { ...cursor, y: cursor.y - 12 };
+
+  cursor = drawLabelValue(cursor, fonts, 'Standards Applied', 'BS EN 1176-1:2017, BS EN 1176-7:2020, BS EN 1177:2018');
+  cursor = { ...cursor, y: cursor.y - 8 };
+
+  const scopeText =
+    'Each asset was assessed for structural integrity, surface condition, entrapment hazards, ' +
+    'impact surfacing adequacy, clearance zones, and compliance with the applicable parts of BS EN 1176. ' +
+    'A structured checklist was completed for each asset based on its type. Voice observations, ' +
+    'photographic evidence, and manual notes were captured on site. Defects were classified by risk ' +
+    'severity (Very High, High, Medium, Low) with recommended remedial actions and timeframes.';
+  const scopeLines = wrapText(scopeText, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
+  for (const line of scopeLines) {
+    cursor.page.drawText(line, { x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_DARK_GREY });
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+  }
+  cursor = { ...cursor, y: cursor.y - 16 };
+
+  // Risk severity key
+  cursor.page.drawText('Risk Severity Key', {
+    x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_SUBHEADING, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
+  });
+  cursor = { ...cursor, y: cursor.y - FONT_SIZE_SUBHEADING * LINE_HEIGHT_MULTIPLIER - 8 };
+
+  const riskKey: Array<[string, string, ReturnType<typeof rgb>, ReturnType<typeof rgb>]> = [
+    ['Very High', 'Immediate closure or restricted access required. Risk of serious injury.', COLOUR_RED, COLOUR_RED_BG],
+    ['High', 'Action required within 48 hours. Significant safety concern.', COLOUR_ORANGE, COLOUR_ORANGE_BG],
+    ['Medium', 'Action required within 1 month. Monitor and schedule repair.', COLOUR_YELLOW, COLOUR_YELLOW_BG],
+    ['Low', 'Routine maintenance. Address at next scheduled service.', COLOUR_GREEN, COLOUR_GREEN_BG],
+  ];
+
+  for (const [label, desc, textCol, bgCol] of riskKey) {
+    const rowHeight = 24;
+    cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - rowHeight, width: CONTENT_WIDTH, height: rowHeight, color: bgCol });
+    drawBadge(cursor.page, fonts, label, MARGIN_LEFT + 6, cursor.y - 16, textCol, bgCol);
+    const badgeWidth = fonts.bold.widthOfTextAtSize(sanitiseForPdf(label), FONT_SIZE_SMALL) + 20;
+    cursor.page.drawText(sanitiseForPdf(desc), {
+      x: MARGIN_LEFT + badgeWidth + 12, y: cursor.y - 16, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY,
+    });
+    cursor = { ...cursor, y: cursor.y - rowHeight - 4 };
+  }
+
+  return cursor;
+}
+
+// =============================================
+// 4.0 ASSET INSPECTION RESULTS
+// =============================================
 async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Promise<Cursor> {
-  cursor = ensureSpace(doc, cursor, fonts, reportId, 80);
-  cursor = drawSectionHeading(cursor, fonts, 'Asset Inspection Results');
-
   const { items, assets } = data;
-
   const assetMap = new Map<string, Asset>();
   for (const asset of assets) {
     assetMap.set(asset.id, asset);
@@ -603,50 +705,48 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
     const asset = assetMap.get(item.asset_id ?? '') ?? assetMap.get(item.asset_code);
     const config = getAssetTypeConfig(item.asset_type);
     const typeName = config?.name ?? item.asset_type;
+    const subSection = `4.${idx + 1}`;
 
-    // Start a new page if less than 1/3 page remaining — prevents ugly bridging
-    const minSpaceForNewAsset = 280;
-    if (cursor.y - minSpaceForNewAsset < CONTENT_BOTTOM) {
-      cursor = addPage(doc, cursor, fonts, reportId);
+    // Each asset starts on a fresh page
+    cursor = addPage(doc, cursor, fonts, reportId);
+
+    if (idx === 0) {
+      cursor = drawSectionHeading(cursor, fonts, '4.0', 'Asset Inspection Results');
+      cursor = drawSectionIntro(cursor, fonts,
+        `Detailed findings for each of the ${items.length} asset(s) inspected, including condition assessment, checklist completion, photographic evidence, voice observations, and identified defects.`,
+      );
+      cursor = { ...cursor, y: cursor.y - 8 };
     }
 
-    const headerHeight = 22;
-    cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - headerHeight, width: CONTENT_WIDTH, height: headerHeight, color: rgb(0.95, 0.95, 0.95) });
-    cursor.page.drawText(sanitiseForPdf(`${item.asset_code} - ${typeName}`), {
-      x: MARGIN_LEFT + 6, y: cursor.y - 15, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
+    // Asset sub-heading
+    const headerHeight = 26;
+    cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - headerHeight, width: CONTENT_WIDTH, height: headerHeight, color: COLOUR_SECTION_BG, borderColor: COLOUR_LIGHT_GREY, borderWidth: 0.5 });
+    cursor.page.drawText(sanitiseForPdf(`${subSection}  ${item.asset_code} - ${typeName}`), {
+      x: MARGIN_LEFT + 8, y: cursor.y - 17, size: FONT_SIZE_SUBHEADING, font: fonts.bold, color: COLOUR_DARK_GREY,
     });
-
     if (item.overall_condition) {
       const condLabel = CONDITION_LABELS[item.overall_condition];
-      drawBadge(cursor.page, fonts, condLabel, PAGE_WIDTH - MARGIN_RIGHT - 80, cursor.y - 16, conditionColour(item.overall_condition), riskBgColour(item.risk_rating));
+      drawBadge(cursor.page, fonts, condLabel, PAGE_WIDTH - MARGIN_RIGHT - 80, cursor.y - 18, conditionColour(item.overall_condition), riskBgColour(item.risk_rating));
     }
-
-    cursor = { ...cursor, y: cursor.y - headerHeight - 8 };
+    cursor = { ...cursor, y: cursor.y - headerHeight - 10 };
 
     if (config?.complianceStandard) {
       cursor.page.drawText(sanitiseForPdf(config.complianceStandard), { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_ACCENT });
-      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 4 };
     }
 
+    // Asset details
     if (asset) {
       const detailLines: Array<[string, string]> = [];
-
       const mfgParts = [asset.manufacturer, asset.model, asset.serial_number].filter(Boolean);
-      if (mfgParts.length > 0) {
-        detailLines.push(['Equipment', sanitiseForPdf(mfgParts.join(' / '))]);
-      }
-
-      if (asset.install_date) {
-        detailLines.push(['Installed', formatDate(asset.install_date)]);
-      }
-
+      if (mfgParts.length > 0) detailLines.push(['Equipment', sanitiseForPdf(mfgParts.join(' / '))]);
+      if (asset.install_date) detailLines.push(['Installed', formatDate(asset.install_date)]);
       if (asset.purchase_cost_gbp || asset.expected_lifespan_years) {
         const parts: string[] = [];
         if (asset.purchase_cost_gbp) parts.push(`Cost: £${String(asset.purchase_cost_gbp)}`);
         if (asset.expected_lifespan_years) parts.push(`Expected lifespan: ${String(asset.expected_lifespan_years)} years`);
         detailLines.push(['Investment', parts.join(' / ')]);
       }
-
       if (asset.surface_type || asset.fall_height_mm || asset.impact_attenuation_required_mm) {
         const safetyParts: string[] = [];
         if (asset.surface_type) safetyParts.push(`Surface: ${sanitiseForPdf(asset.surface_type)}`);
@@ -654,10 +754,7 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
         if (asset.impact_attenuation_required_mm) safetyParts.push(`Surfacing depth: ${String(asset.impact_attenuation_required_mm)}mm`);
         detailLines.push(['Safety', safetyParts.join(' / ')]);
       }
-
-      if (asset.maintenance_notes) {
-        detailLines.push(['Maintenance', sanitiseForPdf(asset.maintenance_notes)]);
-      }
+      if (asset.maintenance_notes) detailLines.push(['Maintenance', sanitiseForPdf(asset.maintenance_notes)]);
 
       for (const [label, value] of detailLines) {
         cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER + 4);
@@ -665,75 +762,53 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
         cursor.page.drawText(labelText, {
           x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_MID_GREY,
         });
-        const labelWidth = fonts.bold.widthOfTextAtSize(labelText, FONT_SIZE_SMALL) + 6;
-        const valueLines = wrapText(value, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 12 - labelWidth);
-        for (let vIdx = 0; vIdx < valueLines.length; vIdx++) {
-          cursor.page.drawText(valueLines[vIdx] ?? '', {
-            x: MARGIN_LEFT + 6 + labelWidth, y: cursor.y - FONT_SIZE_SMALL - (vIdx * FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER),
+        const lw = fonts.bold.widthOfTextAtSize(labelText, FONT_SIZE_SMALL) + 6;
+        const vLines = wrapText(value, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 12 - lw);
+        for (let vIdx = 0; vIdx < vLines.length; vIdx++) {
+          cursor.page.drawText(vLines[vIdx] ?? '', {
+            x: MARGIN_LEFT + 6 + lw, y: cursor.y - FONT_SIZE_SMALL - (vIdx * FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER),
             size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY,
           });
         }
-        cursor = { ...cursor, y: cursor.y - (Math.max(1, valueLines.length) * FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER) - 2 };
+        cursor = { ...cursor, y: cursor.y - (Math.max(1, vLines.length) * FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER) - 2 };
       }
     }
 
-    // Photo count
+    cursor = { ...cursor, y: cursor.y - 4 };
+    cursor = drawHorizontalRule(cursor);
+
+    // Photos
     const photoCount = data.photoCountsByItem?.[item.id] ?? 0;
     if (photoCount > 0) {
-      const photoText = `Photos: ${String(photoCount)} captured`;
-      cursor.page.drawText(photoText, {
-        x: MARGIN_LEFT + 6,
-        y: cursor.y - FONT_SIZE_SMALL,
-        size: FONT_SIZE_SMALL,
-        font: fonts.regular,
-        color: COLOUR_ACCENT,
+      cursor.page.drawText(`Photos: ${String(photoCount)} captured`, {
+        x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_ACCENT,
       });
-      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 4 };
     }
-
-    // Embed actual photos if available
     const itemPhotos = data.photosByItem?.[item.id];
     if (itemPhotos && itemPhotos.length > 0) {
       const photoWidth = 160;
       const photoHeight = 120;
       const photosPerRow = 3;
       const photoGap = 8;
-
       for (let pIdx = 0; pIdx < itemPhotos.length; pIdx++) {
         const col = pIdx % photosPerRow;
-        const isNewRow = col === 0;
-
-        if (isNewRow) {
-          cursor = ensureSpace(doc, cursor, fonts, reportId, photoHeight + 12);
-        }
-
+        if (col === 0) cursor = ensureSpace(doc, cursor, fonts, reportId, photoHeight + 12);
         const xPos = MARGIN_LEFT + 6 + col * (photoWidth + photoGap);
-
         try {
           const base64 = itemPhotos[pIdx]!;
           const imageBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
           const image = await doc.embedJpg(imageBytes);
           const scaled = image.scaleToFit(photoWidth, photoHeight);
-
-          cursor.page.drawImage(image, {
-            x: xPos,
-            y: cursor.y - scaled.height,
-            width: scaled.width,
-            height: scaled.height,
-          });
-
-          // Move cursor down after the last photo in a row (or last photo overall)
+          cursor.page.drawImage(image, { x: xPos, y: cursor.y - scaled.height, width: scaled.width, height: scaled.height });
           if (col === photosPerRow - 1 || pIdx === itemPhotos.length - 1) {
             cursor = { ...cursor, y: cursor.y - photoHeight - photoGap };
           }
-        } catch (photoErr) {
-          // Skip unembeddable photos (PNG, corrupt data) — log and continue
-          console.warn('[PDF] Failed to embed photo:', photoErr);
-        }
+        } catch { /* Skip unembeddable photos */ }
       }
     }
 
-    // ── Checklist ──
+    // Checklist
     const checklist = (item as unknown as Record<string, unknown>).checklist_data as ChecklistData | null;
     if (checklist && (checklist.standard.length > 0 || checklist.custom.length > 0)) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
@@ -746,7 +821,6 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
         x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_DARK_GREY,
       });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 2 };
-
       for (const check of allChecks) {
         cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER + 2);
         const tick = check.completed ? '[x]' : '[ ]';
@@ -757,24 +831,22 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
         });
         cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
       }
-
       if (checklist.dismissed.length > 0) {
         cursor.page.drawText(`${checklist.dismissed.length} item(s) marked N/A`, {
           x: MARGIN_LEFT + 12, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY,
         });
         cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
       }
-
-      cursor = { ...cursor, y: cursor.y - 4 };
+      cursor = { ...cursor, y: cursor.y - 6 };
     }
 
+    // Voice transcript
     if (item.voice_transcript) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, 40);
       cursor.page.drawText('Voice Observation:', { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_DARK_GREY });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
-
-      const transcriptLines = wrapText(item.voice_transcript, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
-      for (const line of transcriptLines) {
+      const tLines = wrapText(item.voice_transcript, fonts.italic, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
+      for (const line of tLines) {
         cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
         cursor.page.drawText(line, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.italic, color: COLOUR_DARK_GREY });
         cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
@@ -782,13 +854,13 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
       cursor = { ...cursor, y: cursor.y - 4 };
     }
 
+    // Inspector notes
     if (item.inspector_notes) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, 40);
       cursor.page.drawText('Inspector Notes:', { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_DARK_GREY });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
-
-      const noteLines = wrapText(item.inspector_notes, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
-      for (const line of noteLines) {
+      const nLines = wrapText(item.inspector_notes, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 12);
+      for (const line of nLines) {
         cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
         cursor.page.drawText(line, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_DARK_GREY });
         cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
@@ -796,29 +868,22 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
       cursor = { ...cursor, y: cursor.y - 4 };
     }
 
+    // Defects
     if (item.defects.length > 0) {
       cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
       cursor.page.drawText(`Defects (${item.defects.length}):`, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_ORANGE });
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 4 };
-
       for (const defect of item.defects) {
         cursor = renderDefectBlock(doc, cursor, fonts, defect, reportId);
       }
     }
-
-    if (idx < sortedItems.length - 1) {
-      cursor = ensureSpace(doc, cursor, fonts, reportId, 12);
-      cursor = drawHorizontalRule(cursor);
-    }
   }
 
-  cursor = { ...cursor, y: cursor.y - 12 };
   return cursor;
 }
 
 function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, defect: DefectDetail, reportId: string): Cursor {
   cursor = ensureSpace(doc, cursor, fonts, reportId, 60);
-
   const lineHeight = FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   const indent = MARGIN_LEFT + 12;
 
@@ -826,13 +891,11 @@ function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, de
   drawBadge(cursor.page, fonts, riskLabel, indent, cursor.y - FONT_SIZE_BODY - 1, riskColour(defect.risk_rating), riskBgColour(defect.risk_rating));
 
   const badgeOffset = fonts.bold.widthOfTextAtSize(sanitiseForPdf(riskLabel), FONT_SIZE_SMALL) + 20;
-
   const descLines = wrapText(defect.description, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 24 - badgeOffset);
   for (let i = 0; i < descLines.length; i++) {
     const xPos = i === 0 ? indent + badgeOffset : indent;
     cursor.page.drawText(descLines[i] ?? '', { x: xPos, y: cursor.y - FONT_SIZE_BODY - (i * lineHeight), size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_DARK_GREY });
   }
-
   cursor = { ...cursor, y: cursor.y - (Math.max(1, descLines.length) * lineHeight) - 2 };
 
   const metaItems: string[] = [];
@@ -850,19 +913,20 @@ function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, de
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
     }
   }
-
   cursor = { ...cursor, y: cursor.y - 6 };
   return cursor;
 }
 
-function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
+// =============================================
+// 5.0 DEFECT REGISTER
+// =============================================
+function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string, sectionNumber: string): Cursor {
   const allDefects: Array<{ assetCode: string; defect: DefectDetail }> = [];
   for (const item of data.items) {
     for (const defect of item.defects) {
       allDefects.push({ assetCode: item.asset_code, defect });
     }
   }
-
   if (allDefects.length === 0) return cursor;
 
   const riskOrder: Record<string, number> = {
@@ -870,9 +934,11 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
   };
   allDefects.sort((a, b) => (riskOrder[a.defect.risk_rating] ?? 4) - (riskOrder[b.defect.risk_rating] ?? 4));
 
-  // Defect register always starts on a fresh page
   cursor = addPage(doc, cursor, fonts, reportId);
-  cursor = drawSectionHeading(cursor, fonts, 'Defect Register');
+  cursor = drawSectionHeading(cursor, fonts, sectionNumber, 'Defect Register');
+  cursor = drawSectionIntro(cursor, fonts,
+    `Summary of all ${allDefects.length} defect(s) identified during inspection, ordered by risk severity.`,
+  );
 
   const colWidths = [50, 50, 190, 90, 70, 45];
   const headers = ['Asset', 'Risk', 'Description', 'Action', 'Timeframe', 'Cost'];
@@ -893,10 +959,8 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
   for (const { assetCode, defect } of allDefects) {
     cursor = ensureSpace(doc, cursor, fonts, reportId, rowHeight + 4);
     if (cursor.y > CONTENT_TOP - 5) cursor = drawTableHeader(cursor);
-
     const rowY = cursor.y;
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: rowY - rowHeight, width: CONTENT_WIDTH, height: rowHeight, color: riskBgColour(defect.risk_rating) });
-
     let xPos = MARGIN_LEFT + 4;
     cursor.page.drawText(truncateText(assetCode, fonts.mono, FONT_SIZE_SMALL, colWidths[0]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.mono, color: COLOUR_DARK_GREY });
     xPos += colWidths[0]!;
@@ -909,18 +973,19 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
     cursor.page.drawText(truncateText(ACTION_TIMEFRAME_LABELS[defect.action_timeframe] ?? '-', fonts.regular, FONT_SIZE_SMALL, colWidths[4]! - 8), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
     xPos += colWidths[4]!;
     cursor.page.drawText(sanitiseForPdf(COST_BAND_LABELS[defect.estimated_cost_band] ?? '-'), { x: xPos, y: rowY - 13, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY });
-
     cursor = { ...cursor, y: rowY - rowHeight };
   }
 
-  cursor = { ...cursor, y: cursor.y - 12 };
   return cursor;
 }
 
-function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
-  // Sign-off always starts on a fresh page
+// =============================================
+// 6.0 DECLARATION & SIGN-OFF
+// =============================================
+function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string, sectionNumber: string): Cursor {
   cursor = addPage(doc, cursor, fonts, reportId);
-  cursor = drawSectionHeading(cursor, fonts, 'Declaration & Sign-Off');
+  cursor = drawSectionHeading(cursor, fonts, sectionNumber, 'Declaration & Sign-Off');
+  cursor = drawSectionIntro(cursor, fonts, 'Formal declaration of inspection accuracy and compliance with BS EN 1176-7:2020.');
 
   const { inspection } = data;
 
@@ -933,24 +998,21 @@ function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: 
 
   const declLines = wrapText(declaration, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH);
   for (const line of declLines) {
-    cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
     cursor.page.drawText(line, { x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_DARK_GREY });
     cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
   }
 
-  cursor = { ...cursor, y: cursor.y - 20 };
+  cursor = { ...cursor, y: cursor.y - 24 };
 
   if (inspection.status === InspectionStatus.SIGNED || inspection.status === InspectionStatus.EXPORTED) {
     cursor = drawLabelValue(cursor, fonts, 'Signed By', safe(inspection.signed_by) || '-');
     cursor = drawLabelValue(cursor, fonts, 'Signed At', formatDateTime(inspection.signed_at));
-
-    cursor = { ...cursor, y: cursor.y - 20 };
+    cursor = { ...cursor, y: cursor.y - 24 };
     cursor.page.drawLine({ start: { x: MARGIN_LEFT, y: cursor.y }, end: { x: MARGIN_LEFT + 200, y: cursor.y }, thickness: 1, color: COLOUR_BLACK });
-    cursor.page.drawText('Inspector Signature', { x: MARGIN_LEFT, y: cursor.y - 12, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY });
+    cursor.page.drawText('Inspector Signature', { x: MARGIN_LEFT, y: cursor.y - 14, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY });
     cursor.page.drawLine({ start: { x: MARGIN_LEFT + 260, y: cursor.y }, end: { x: MARGIN_LEFT + 400, y: cursor.y }, thickness: 1, color: COLOUR_BLACK });
-    cursor.page.drawText('Date', { x: MARGIN_LEFT + 260, y: cursor.y - 12, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY });
-
-    cursor = { ...cursor, y: cursor.y - 30 };
+    cursor.page.drawText('Date', { x: MARGIN_LEFT + 260, y: cursor.y - 14, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY });
+    cursor = { ...cursor, y: cursor.y - 36 };
     cursor.page.drawText(
       'This report was digitally signed and is immutable. Any modifications will require a new inspection.',
       { x: MARGIN_LEFT, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY },
@@ -967,7 +1029,6 @@ function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: 
 // =============================================
 // MAIN GENERATOR
 // =============================================
-
 export async function generateInspectionReport(data: ReportData): Promise<GeneratedReport> {
   const doc = await PDFDocument.create();
   const reportId = data.inspection.id.substring(0, 8).toUpperCase();
@@ -991,13 +1052,21 @@ export async function generateInspectionReport(data: ReportData): Promise<Genera
   let cursor: Cursor = { y: CONTENT_TOP, page: firstPage, pageNumber: 1 };
 
   cursor = await renderCoverPage(doc, cursor, fonts, data);
-  cursor = addPage(doc, cursor, fonts, reportId);
+  cursor = renderTableOfContents(doc, cursor, fonts, data, reportId);
   cursor = renderExecutiveSummary(doc, cursor, fonts, data, reportId);
   cursor = renderSiteDetails(doc, cursor, fonts, data, reportId);
+  cursor = renderMethodology(doc, cursor, fonts, data, reportId);
   cursor = await renderAssetResults(doc, cursor, fonts, data, reportId);
-  cursor = renderDefectRegister(doc, cursor, fonts, data, reportId);
-  cursor = renderSignOff(doc, cursor, fonts, data, reportId);
 
+  const hasDefects = data.items.some((i) => i.defects.length > 0);
+  if (hasDefects) {
+    cursor = renderDefectRegister(doc, cursor, fonts, data, reportId, '5.0');
+    cursor = renderSignOff(doc, cursor, fonts, data, reportId, '6.0');
+  } else {
+    cursor = renderSignOff(doc, cursor, fonts, data, reportId, '5.0');
+  }
+
+  // Final pass: "Page X of Y"
   const totalPages = doc.getPageCount();
   for (let i = 0; i < totalPages; i++) {
     const page = doc.getPage(i);

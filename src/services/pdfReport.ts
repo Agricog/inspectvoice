@@ -604,8 +604,11 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
     const config = getAssetTypeConfig(item.asset_type);
     const typeName = config?.name ?? item.asset_type;
 
-    const estimatedHeight = 80 + (item.defects.length * 50) + (item.inspector_notes ? 40 : 0);
-    cursor = ensureSpace(doc, cursor, fonts, reportId, Math.min(estimatedHeight, 200));
+    // Start a new page if less than 1/3 page remaining — prevents ugly bridging
+    const minSpaceForNewAsset = 280;
+    if (cursor.y - minSpaceForNewAsset < CONTENT_BOTTOM) {
+      cursor = addPage(doc, cursor, fonts, reportId);
+    }
 
     const headerHeight = 22;
     cursor.page.drawRectangle({ x: MARGIN_LEFT, y: cursor.y - headerHeight, width: CONTENT_WIDTH, height: headerHeight, color: rgb(0.95, 0.95, 0.95) });
@@ -867,7 +870,8 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
   };
   allDefects.sort((a, b) => (riskOrder[a.defect.risk_rating] ?? 4) - (riskOrder[b.defect.risk_rating] ?? 4));
 
-  cursor = ensureSpace(doc, cursor, fonts, reportId, 80);
+  // Defect register always starts on a fresh page
+  cursor = addPage(doc, cursor, fonts, reportId);
   cursor = drawSectionHeading(cursor, fonts, 'Defect Register');
 
   const colWidths = [50, 50, 190, 90, 70, 45];
@@ -914,7 +918,8 @@ function renderDefectRegister(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts,
 }
 
 function renderSignOff(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, data: ReportData, reportId: string): Cursor {
-  cursor = ensureSpace(doc, cursor, fonts, reportId, 180);
+  // Sign-off always starts on a fresh page
+  cursor = addPage(doc, cursor, fonts, reportId);
   cursor = drawSectionHeading(cursor, fonts, 'Declaration & Sign-Off');
 
   const { inspection } = data;

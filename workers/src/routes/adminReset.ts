@@ -30,31 +30,26 @@ export async function resetDemoData(
   const orgId = ctx.orgId;
 
   try {
-    // Delete in dependency order — children before parents
-    // 1. Defect library entries
-    await sql`DELETE FROM defect_library WHERE org_id = ${orgId}`;
-    // 2. Normalisation history
-    await sql`DELETE FROM normalisation_history WHERE org_id = ${orgId}`;
-    // 3. Sealed exports
-    await sql`DELETE FROM sealed_exports WHERE org_id = ${orgId}`;
-    // 4. Notification log
-    await sql`DELETE FROM notification_log WHERE org_id = ${orgId}`;
-    // 5. Make-safe actions (references defects)
-    await sql`DELETE FROM make_safe_actions WHERE org_id = ${orgId}`;
-    // 6. Incidents
-    await sql`DELETE FROM incidents WHERE org_id = ${orgId}`;
-    // 7. Defects (references inspection_items)
-    await sql`DELETE FROM defects WHERE org_id = ${orgId}`;
-    // 8. Inspection items (references inspections + assets)
-    await sql`DELETE FROM inspection_items WHERE org_id = ${orgId}`;
-    // 9. Inspections (references sites)
-    await sql`DELETE FROM inspections WHERE org_id = ${orgId}`;
-    // 10. Inspector metrics
-    await sql`DELETE FROM inspector_metrics_period WHERE org_id = ${orgId}`;
-    // 11. Assets (references sites)
-    await sql`DELETE FROM assets WHERE org_id = ${orgId}`;
-    // 12. Sites
-    await sql`DELETE FROM sites WHERE org_id = ${orgId}`;
+      // Delete in dependency order — children before parents
+      await sql`DELETE FROM defect_library_entry_version WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM defect_library_entry WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM defect_field_audit WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM normalisation_log WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM normalisation_usage WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM sealed_exports WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM notification_log WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM performance_share_links WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM photos WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM make_safe_actions WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM incidents WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM defects WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM inspection_items WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM inspections WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM inspector_metrics_period WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM asset_baseline_history WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM assets WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM sites WHERE org_id = ${orgId}`;
+      await sql`DELETE FROM audit_log WHERE org_id = ${orgId}`;
 
     return new Response(
       JSON.stringify({

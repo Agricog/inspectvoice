@@ -624,11 +624,53 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
       cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
     }
 
-    if (asset?.manufacturer) {
+    if (asset) {
+      const detailLines: Array<[string, string]> = [];
+
       const mfgParts = [asset.manufacturer, asset.model, asset.serial_number].filter(Boolean);
-      const mfgText = sanitiseForPdf(mfgParts.join(' / '));
-      cursor.page.drawText(mfgText, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_MID_GREY });
-      cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+      if (mfgParts.length > 0) {
+        detailLines.push(['Equipment', sanitiseForPdf(mfgParts.join(' / '))]);
+      }
+
+      if (asset.install_date) {
+        detailLines.push(['Installed', formatDate(asset.install_date)]);
+      }
+
+      if (asset.purchase_cost_gbp || asset.expected_lifespan_years) {
+        const parts: string[] = [];
+        if (asset.purchase_cost_gbp) parts.push(`Cost: £${String(asset.purchase_cost_gbp)}`);
+        if (asset.expected_lifespan_years) parts.push(`Expected lifespan: ${String(asset.expected_lifespan_years)} years`);
+        detailLines.push(['Investment', parts.join(' / ')]);
+      }
+
+      if (asset.surface_type || asset.fall_height_mm || asset.impact_attenuation_required_mm) {
+        const safetyParts: string[] = [];
+        if (asset.surface_type) safetyParts.push(`Surface: ${sanitiseForPdf(asset.surface_type)}`);
+        if (asset.fall_height_mm) safetyParts.push(`Fall height: ${String(asset.fall_height_mm)}mm`);
+        if (asset.impact_attenuation_required_mm) safetyParts.push(`Surfacing depth: ${String(asset.impact_attenuation_required_mm)}mm`);
+        detailLines.push(['Safety', safetyParts.join(' / ')]);
+      }
+
+      if (asset.maintenance_notes) {
+        detailLines.push(['Maintenance', sanitiseForPdf(asset.maintenance_notes)]);
+      }
+
+      for (const [label, value] of detailLines) {
+        cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER + 4);
+        const labelText = sanitiseForPdf(label + ':');
+        cursor.page.drawText(labelText, {
+          x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_MID_GREY,
+        });
+        const labelWidth = fonts.bold.widthOfTextAtSize(labelText, FONT_SIZE_SMALL) + 6;
+        const valueLines = wrapText(value, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 12 - labelWidth);
+        for (let vIdx = 0; vIdx < valueLines.length; vIdx++) {
+          cursor.page.drawText(valueLines[vIdx] ?? '', {
+            x: MARGIN_LEFT + 6 + labelWidth, y: cursor.y - FONT_SIZE_SMALL - (vIdx * FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER),
+            size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_DARK_GREY,
+          });
+        }
+        cursor = { ...cursor, y: cursor.y - (Math.max(1, valueLines.length) * FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER) - 2 };
+      }
     }
 
     // Photo count

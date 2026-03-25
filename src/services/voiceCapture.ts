@@ -1079,19 +1079,26 @@ export function createVoiceCapture(
  * Call once when InspectionCapture page mounts.
  */
 export function warmUpSpeechApi(lang: string = 'en-GB'): void {
+  if (typeof window === 'undefined') return;
   try {
     const Ctor =
       (window as unknown as Record<string, unknown>)['SpeechRecognition'] ??
       (window as unknown as Record<string, unknown>)['webkitSpeechRecognition'];
     if (!Ctor || typeof Ctor !== 'function') return;
-
     const r = new (Ctor as new () => SpeechRecognitionInstance)();
     r.continuous = false;
     r.interimResults = false;
     r.lang = lang;
-    r.onstart = () => { try { r.abort(); } catch { /* */ } };
-    r.onerror = () => {};
-    r.onend = () => {};
+    // Safety timeout — if start() hangs (iPad PWA edge case), force abort
+    const safetyTimer = setTimeout(() => {
+      try { r.abort(); } catch { /* */ }
+    }, 2000);
+    r.onstart = () => {
+      clearTimeout(safetyTimer);
+      try { r.abort(); } catch { /* */ }
+    };
+    r.onerror = () => { clearTimeout(safetyTimer); };
+    r.onend = () => { clearTimeout(safetyTimer); };
     r.start();
   } catch {
     // Speech API not available — silent

@@ -59,6 +59,7 @@ import {
 import { inspections, inspectionItems, assetsCache, sitesCache, pendingPhotos } from '@services/offlineStore';
 import { syncService } from '@services/syncService';
 import { captureError } from '@utils/errorTracking';
+import { getAuthToken } from '@utils/authToken';
 import {
   InspectionStatus,
   INSPECTION_TYPE_LABELS,
@@ -855,17 +856,73 @@ export default function InspectionReview(): JSX.Element {
       }
 
       // ── Step 3: Load photos for embedding ──
+      // Try local IndexedDB first, fall back to server if empty
       const photosByItem: Record<string, string[]> = {};
+      let hasLocalPhotos = false;
+
       for (const item of pdfItems) {
         try {
-          const photos = await pendingPhotos.getByItem(item.id);
-          if (photos.length > 0) {
-            photosByItem[item.id] = photos
+          const localPhotos = await pendingPhotos.getByItem(item.id);
+          if (localPhotos.length > 0) {
+            photosByItem[item.id] = localPhotos
               .filter((p) => !p.is_reference_photo)
               .map((p) => p.base64Data);
+            hasLocalPhotos = true;
           }
         } catch {
-          // Skip — photos won't embed but report still generates
+          // Local photos not available
+        }
+      }
+
+      // Fallback: fetch photos from server (handles PWA reinstall, cross-device)
+      if (!hasLocalPhotos && inspectionId) {
+        try {
+          const { secureFetch: sFetch } = await import('@hooks/useFetch');
+          const inspResp = await sFetch<{
+            data: {
+              photos?: Array<{
+                inspection_item_id: string;
+                r2_url: string;
+                is_reference_photo: boolean;
+              }>;
+            };
+          }>(`/api/v1/inspections/${inspectionId}`);
+
+          const serverPhotos = (inspResp?.data?.photos ?? []).filter(
+            (p) => !p.is_reference_photo,
+          );
+
+          const token = await getAuthToken();
+          const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+
+          for (const photo of serverPhotos) {
+            try {
+              const photoUrl = `${apiBase}${photo.r2_url}`;
+              const photoResp = await fetch(photoUrl, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+              });
+              if (!photoResp.ok) continue;
+              const blob = await photoResp.blob();
+              const base64 = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const result = reader.result as string;
+                  resolve(result.split(',')[1] ?? '');
+                };
+                reader.readAsDataURL(blob);
+              });
+              if (base64) {
+                if (!photosByItem[photo.inspection_item_id]) {
+                  photosByItem[photo.inspection_item_id] = [];
+                }
+                photosByItem[photo.inspection_item_id].push(base64);
+              }
+            } catch {
+              // Skip individual photo — PDF still generates
+            }
+          }
+        } catch {
+          // Server photos unavailable — PDF generates without photos
         }
       }
 

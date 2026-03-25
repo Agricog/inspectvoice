@@ -300,6 +300,9 @@ export interface InspectionItem {
   latitude: number | null;
   longitude: number | null;
 
+  /** Checklist completion data (saved from capture) */
+  checklist_data: ChecklistData | null;
+
   /** Timing */
   timestamp: string;
   readonly created_at: string;
@@ -380,6 +383,13 @@ export interface Defect extends Timestamps {
   severity: RiskRating;
   remedial_action: string;
   action_timeframe: ActionTimeframe;
+
+  /** Checklist state saved per inspection item */
+export interface ChecklistData {
+  standard: Array<{ label: string; description: string; completed: boolean }>;
+  custom: Array<{ label: string; completed: boolean }>;
+  dismissed: Array<{ label: string; description: string }>;
+}
 
   /** Assignment */
   status: DefectStatus;

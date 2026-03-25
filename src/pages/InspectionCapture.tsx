@@ -381,7 +381,7 @@ export default function InspectionCapture(): JSX.Element {
     const caps = checkBrowserCapabilities();
     setBrowserCaps(caps);
     // Only warm up Speech API on browsers that support it (iPad Safari does not)
-    if (caps.speechRecognition) {
+    if (caps.webSpeechApi) {
       try {
         warmUpSpeechApi('en-GB');
       } catch {

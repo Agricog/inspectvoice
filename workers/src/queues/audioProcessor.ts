@@ -243,7 +243,7 @@ async function processAudioMessage(
       error: aiError instanceof Error ? aiError.message : 'Unknown error',
     });
   }
-
+}
 // =============================================
 // TIERED TRANSCRIPTION
 // =============================================

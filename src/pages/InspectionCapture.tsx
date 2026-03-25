@@ -378,8 +378,16 @@ export default function InspectionCapture(): JSX.Element {
     : null;
 
   useEffect(() => {
-    setBrowserCaps(checkBrowserCapabilities());
-    warmUpSpeechApi('en-GB');
+    const caps = checkBrowserCapabilities();
+    setBrowserCaps(caps);
+    // Only warm up Speech API on browsers that support it (iPad Safari does not)
+    if (caps.speechRecognition) {
+      try {
+        warmUpSpeechApi('en-GB');
+      } catch {
+        // Swallow — speech is a progressive enhancement
+      }
+    }
   }, []);
 
   useEffect(() => {

@@ -868,6 +868,20 @@ export default function InspectionCapture(): JSX.Element {
         inspector_confirmed: existing?.inspector_confirmed ?? false,
         inspector_notes: captureState.notes || null,
         inspector_risk_override: existing?.inspector_risk_override ?? null,
+        checklist_data: {
+          standard: checklistPoints.map((point, idx) => ({
+            label: point.label,
+            description: point.description,
+            completed: Boolean(captureState.checklistCompleted[idx]),
+          })).filter((_, idx) => !dismissedSet.has(idx)),
+          custom: captureState.customChecklist.map((c) => ({
+            label: c.label,
+            completed: c.completed,
+          })),
+          dismissed: checklistPoints
+            .filter((_, idx) => dismissedSet.has(idx))
+            .map((point) => ({ label: point.label, description: point.description })),
+        },
         latitude: existing?.latitude ?? null,
         longitude: existing?.longitude ?? null,
         timestamp: existing?.timestamp ?? now,

@@ -260,6 +260,7 @@ function AssetResultCard({
   const [expanded, setExpanded] = useState(false);
   const typeName = resolveAssetTypeName(item.asset_type, item.asset_id ?? '', customTypeNames);
   const hasTranscript = Boolean(item.voice_transcript);
+  const hasAudioPending = !hasTranscript && item.transcription_method === 'web_speech_api';
   const hasNotes = Boolean(item.inspector_notes);
   const defectCount = item.defects.length;
 
@@ -335,6 +336,27 @@ function AssetResultCard({
 
           {/* Transcript */}
           {hasTranscript && (
+            <div>
+              <p className="text-xs iv-muted flex items-center gap-1 mb-1">
+                <Mic className="w-3 h-3" />
+                Voice Transcript
+              </p>
+              <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
+                {item.voice_transcript}
+              </p>
+            </div>
+          )}
+          {hasAudioPending && (
+            <div>
+              <p className="text-xs iv-muted flex items-center gap-1 mb-1">
+                <Mic className="w-3 h-3" />
+                Voice Recording
+              </p>
+              <div className="text-sm bg-[#1C2029] p-2 rounded-lg flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 text-[#22C55E] animate-spin" />
+                <span className="text-xs iv-muted">Audio captured — transcript will be available after sync and processing</span>
+              </div>
+            </div>
             <div>
               <p className="text-xs iv-muted flex items-center gap-1 mb-1">
                 <Mic className="w-3 h-3" />
@@ -810,14 +832,40 @@ export default function InspectionReview(): JSX.Element {
 
   // ---- PDF download ----
   const handleDownloadPdf = useCallback(async () => {
-    if (!inspection || !site) return;
+    if (!inspection || !site || !inspectionId) return;
     setGeneratingPdf(true);
     setPdfError(null);
 
     try {
-      // Load actual photo base64 data for PDF embedding
+      // ── Step 1: Sync pending data (uploads audio to R2, triggers transcription) ──
+      try {
+        await syncService.syncNow();
+        // Brief wait for transcription pipeline to process
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      } catch {
+        // Non-blocking — continue with local data if sync fails
+      }
+
+      // ── Step 2: Fetch fresh items from API (includes server-side transcripts) ──
+      let pdfItems = items;
+      try {
+        const { secureFetch } = await import('@hooks/useFetch');
+        const response = await secureFetch<{
+          data: Inspection & { items: InspectionItem[] };
+        }>(`/api/v1/inspections/${inspectionId}`);
+
+        if (response?.data?.items && response.data.items.length > 0) {
+          pdfItems = response.data.items;
+          // Also update the local display so review page shows transcripts
+          setItems(response.data.items);
+        }
+      } catch {
+        // API fetch failed — fall back to local items
+      }
+
+      // ── Step 3: Load photos for embedding ──
       const photosByItem: Record<string, string[]> = {};
-      for (const item of items) {
+      for (const item of pdfItems) {
         try {
           const photos = await pendingPhotos.getByItem(item.id);
           if (photos.length > 0) {
@@ -830,7 +878,7 @@ export default function InspectionReview(): JSX.Element {
         }
       }
 
-      // Extract org branding for PDF customisation
+      // ── Step 4: Load org branding ──
       let orgLogoBase64: string | undefined;
       let orgBrandColour: string | undefined;
       try {
@@ -845,9 +893,10 @@ export default function InspectionReview(): JSX.Element {
         // Non-blocking — PDF generates without branding
       }
 
+      // ── Step 5: Generate PDF with freshest data ──
       const reportData: ReportData = {
         inspection,
-        items,
+        items: pdfItems,
         site,
         assets: siteAssets,
         orgName: organization?.name || 'InspectVoice',
@@ -864,7 +913,7 @@ export default function InspectionReview(): JSX.Element {
     } finally {
       setGeneratingPdf(false);
     }
-  }, [inspection, items, site, siteAssets, organization, photoCountsByItem]);
+  }, [inspection, inspectionId, items, site, siteAssets, organization, photoCountsByItem]);
 
   // =============================================
   // RENDER: LOADING / ERROR

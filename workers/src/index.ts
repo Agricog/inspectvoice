@@ -148,6 +148,7 @@ import {
 } from './routes/magicLinks';
 // ── Billing ──
 import { getBillingStatus, createCheckoutSession, createPortalSession } from './routes/billing';
+import { resetDemoData } from './routes/adminReset';
 // ── Webhook Handlers ──
 import { handleStripeWebhook } from './routes/webhooks/stripe';
 import { handleClerkWebhook } from './routes/webhooks/clerk';
@@ -216,6 +217,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET',  '/api/v1/billing/status', getBillingStatus],
   ['POST', '/api/v1/billing/checkout', createCheckoutSession],
   ['POST', '/api/v1/billing/portal', createPortalSession],
+  ['DELETE', '/api/v1/admin/reset-demo-data', resetDemoData],
   // ── Dashboard ──
   ['GET', '/api/v1/dashboard/stats', getDashboardStats],
   // ── Notifications ──

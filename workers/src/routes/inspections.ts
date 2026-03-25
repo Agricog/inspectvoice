@@ -611,14 +611,23 @@ export async function deleteInspection(
   const existing = await db.findByIdOrThrow<Record<string, unknown>>('inspections', id, 'Inspection');
   const currentStatus = existing['status'] as string;
 
-  // Only draft and review inspections can be deleted
-  if (IMMUTABLE_STATUSES.has(currentStatus)) {
+  // Admin can delete any inspection (needed for demo prep)
+  // Non-admin can only delete draft/review
+  if (IMMUTABLE_STATUSES.has(currentStatus) && !['admin', 'org:admin'].includes(ctx.userRole)) {
     throw new ConflictError(
       `Cannot delete a ${currentStatus} inspection. Signed and exported inspections are permanent records.`,
     );
   }
 
   // Delete child records first (tenant-isolated via subquery), then the inspection
+  await db.rawExecute(
+    `DELETE FROM photos WHERE inspection_item_id IN (SELECT id FROM inspection_items WHERE inspection_id = $1)`,
+    [id],
+  );
+  await db.rawExecute(
+    `DELETE FROM defects WHERE inspection_id = $1 AND org_id = $2`,
+    [id, ctx.orgId],
+  );
   await db.rawExecute(
     `DELETE FROM inspection_items WHERE inspection_id IN (SELECT id FROM inspections WHERE id = $1 AND org_id = $2)`,
     [id, ctx.orgId],

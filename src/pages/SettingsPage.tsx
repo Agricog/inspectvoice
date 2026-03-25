@@ -39,6 +39,7 @@ import {
   Plus,
   X,
   RefreshCw,
+  Trash2,
   LogOut,
   CreditCard,
 } from 'lucide-react';
@@ -739,6 +740,137 @@ function InspectionPreferences({
 }
 
 // =============================================
+// RESET DEMO DATA SECTION (Admin only)
+// =============================================
+function ResetDemoDataSection(): JSX.Element {
+  const [confirmText, setConfirmText] = useState('');
+  const [sectionState, setSectionState] = useState<SectionState>(INITIAL_SECTION_STATE);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const canReset = confirmText.trim().toUpperCase() === 'RESET';
+
+  const handleReset = useCallback(async () => {
+    if (!canReset) return;
+    setSectionState({ status: 'saving', message: '' });
+    try {
+      const { secureFetch } = await import('@hooks/useFetch');
+      await secureFetch('/api/v1/admin/reset-demo-data', { method: 'DELETE' });
+
+      // Clear all IndexedDB stores
+      const dbNames = ['inspectvoice-offline'];
+      for (const dbName of dbNames) {
+        try {
+          const dbReq = indexedDB.open(dbName);
+          await new Promise<void>((resolve) => {
+            dbReq.onsuccess = () => {
+              const db = dbReq.result;
+              const storeNames = Array.from(db.objectStoreNames);
+              if (storeNames.length > 0) {
+                const tx = db.transaction(storeNames, 'readwrite');
+                for (const store of storeNames) {
+                  tx.objectStore(store).clear();
+                }
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+              } else {
+                resolve();
+              }
+            };
+            dbReq.onerror = () => resolve();
+          });
+        } catch {
+          // Continue — server data is already wiped
+        }
+      }
+
+      setSectionState({ status: 'success', message: 'All data cleared' });
+      setConfirmText('');
+      setShowConfirm(false);
+      // Reload after brief delay so UI reflects empty state
+      setTimeout(() => window.location.reload(), 1500);
+    } catch {
+      setSectionState({ status: 'error', message: 'Failed to reset data' });
+    }
+  }, [canReset]);
+
+  return (
+    <section className="bg-iv-surface border border-red-500/20 rounded-xl p-4">
+      <SectionHeader
+        icon={<Trash2 className="w-4 h-4 text-red-400" />}
+        title="Reset Demo Data"
+        description="Permanently delete all sites, assets, inspections, defects, and library entries. Used for demo preparation."
+      />
+      {!showConfirm ? (
+        <button
+          type="button"
+          onClick={() => setShowConfirm(true)}
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-sm font-medium hover:bg-red-500/20 transition-colors"
+        >
+          <Trash2 className="w-4 h-4" />
+          Reset All Data
+        </button>
+      ) : (
+        <div className="space-y-3">
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-400 font-medium mb-1">This action cannot be undone</p>
+            <p className="text-xs text-iv-muted">
+              This will permanently delete all sites, assets, inspections, defects, library entries,
+              and performance metrics for your organisation. Your profile, credentials, and
+              organisation settings will be preserved.
+            </p>
+          </div>
+          <FormField label="Type RESET to confirm" htmlFor="reset-confirm">
+            <input
+              id="reset-confirm"
+              type="text"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder="RESET"
+              className="w-full sm:w-48 px-3 py-2 bg-iv-surface-2 border border-red-500/30 rounded-lg text-sm text-iv-text placeholder:text-iv-muted-2 focus:outline-none focus:ring-2 focus:ring-red-500/40 focus:border-red-500/40 transition-colors font-mono"
+              autoComplete="off"
+            />
+          </FormField>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void handleReset()}
+              disabled={!canReset || sectionState.status === 'saving'}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {sectionState.status === 'saving' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              {sectionState.status === 'saving' ? 'Resetting…' : 'Confirm Reset'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowConfirm(false); setConfirmText(''); }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-iv-surface-2 border border-iv-border rounded-lg text-sm font-medium text-iv-text hover:bg-iv-surface transition-colors"
+            >
+              Cancel
+            </button>
+            {sectionState.status === 'success' && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
+                <CheckCircle className="w-3.5 h-3.5" />
+                {sectionState.message}
+              </span>
+            )}
+            {sectionState.status === 'error' && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-red-400">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                {sectionState.message}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// =============================================
 // MAIN SETTINGS COMPONENT
 // =============================================
 
@@ -864,6 +996,9 @@ export function SettingsPage(): JSX.Element {
 
             {/* Billing */}
             {isManagerOrAdmin && <BillingSection />}
+
+            {/* Reset Demo Data (Admin only) */}
+            {user.role === UserRole.ADMIN && <ResetDemoDataSection />}
 
             {/* Sign Out */}
             <section className="bg-iv-surface border border-iv-border rounded-xl p-4">

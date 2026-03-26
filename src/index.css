@@ -16,6 +16,48 @@
     scroll-behavior: smooth;
   }
 
+  /* =============================================
+   * LIGHT THEME (default — optimised for outdoor / sunlight use)
+   * High contrast, white backgrounds, dark text
+   * ============================================= */
+  :root {
+    --iv-bg: 255 255 255;           /* #FFFFFF */
+    --iv-surface: 248 249 250;      /* #F8F9FA */
+    --iv-surface-2: 241 243 245;    /* #F1F3F5 */
+    --iv-surface-3: 233 236 239;    /* #E9ECEF */
+    --iv-border: 213 218 225;       /* #D5DAE1 */
+    --iv-border-light: 190 197 208; /* #BEC5D0 */
+    --iv-text: 17 24 39;            /* #111827 */
+    --iv-muted: 75 85 99;           /* #4B5563 */
+    --iv-muted-2: 156 163 175;      /* #9CA3AF */
+    --iv-accent: 22 163 74;         /* #16A34A — darker green for white bg contrast */
+    --iv-accent-hover: 21 128 61;   /* #15803D */
+    --iv-blue: 37 99 235;           /* #2563EB */
+    --iv-blue-hover: 29 78 216;     /* #1D4ED8 */
+    --iv-shadow: 0 0 0;             /* black shadows for light theme */
+  }
+
+  /* =============================================
+   * DARK THEME (for evening / office use)
+   * Original InspectVoice dark palette
+   * ============================================= */
+  .dark {
+    --iv-bg: 12 15 20;              /* #0C0F14 */
+    --iv-surface: 21 25 32;         /* #151920 */
+    --iv-surface-2: 28 32 41;       /* #1C2029 */
+    --iv-surface-3: 35 40 48;       /* #232830 */
+    --iv-border: 42 47 58;          /* #2A2F3A */
+    --iv-border-light: 54 60 74;    /* #363C4A */
+    --iv-text: 232 236 241;         /* #E8ECF1 */
+    --iv-muted: 122 132 148;        /* #7A8494 */
+    --iv-muted-2: 90 100 116;       /* #5A6474 */
+    --iv-accent: 34 197 94;         /* #22C55E */
+    --iv-accent-hover: 22 163 74;   /* #16A34A */
+    --iv-blue: 59 130 246;          /* #3B82F6 */
+    --iv-blue-hover: 37 99 235;     /* #2563EB */
+    --iv-shadow: 0 0 0;             /* black shadows for dark theme */
+  }
+
   body {
     @apply bg-iv-bg text-iv-text font-sans;
     min-height: 100dvh;
@@ -23,7 +65,7 @@
     overflow-x: hidden;
   }
 
-  /* Scrollbar styling for dark theme */
+  /* Scrollbar — adapts to theme */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -41,12 +83,11 @@
     @apply bg-iv-border-light;
   }
 
-  /* Focus visible for keyboard navigation — accessibility */
+  /* Focus visible for keyboard navigation */
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-iv-accent;
   }
 
-  /* Remove default focus ring for mouse users */
   :focus:not(:focus-visible) {
     outline: none;
   }
@@ -72,7 +113,7 @@
   }
 
   .iv-btn-primary {
-    @apply iv-btn bg-iv-accent text-iv-bg
+    @apply iv-btn bg-iv-accent text-white
            hover:bg-iv-accent-hover active:scale-[0.98]
            focus-visible:outline-iv-accent;
   }
@@ -144,7 +185,6 @@
     @apply iv-badge bg-risk-low/15 text-risk-low;
   }
 
-  /* Status badges */
   .iv-badge-draft {
     @apply iv-badge bg-iv-blue/15 text-iv-blue;
   }
@@ -170,7 +210,6 @@
 }
 
 @layer utilities {
-  /* Safe area padding for notched devices */
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
@@ -179,7 +218,6 @@
     padding-top: env(safe-area-inset-top, 0px);
   }
 
-  /* Truncate multiline */
   .line-clamp-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;

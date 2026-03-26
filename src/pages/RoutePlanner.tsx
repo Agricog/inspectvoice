@@ -837,7 +837,7 @@ export default function RoutePlanner(): JSX.Element {
         </div>
 
         {/* ── RIGHT PANEL: Map ── */}
-        <div className={`flex-1 relative min-w-0 ${mobileView === 'map' ? 'flex' : 'hidden md:flex'}`}>
+        <div className={`flex-1 relative min-w-0 ${mobileView === 'map' ? 'block' : 'hidden md:block'}`}>
           <MapGL
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}

@@ -2,35 +2,36 @@ import type { Config } from 'tailwindcss';
 
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        /* InspectVoice Dark Theme — Professional inspection platform */
+        /* InspectVoice — Theme-aware colours via CSS custom properties */
         iv: {
-          bg: '#0C0F14',
-          surface: '#151920',
-          'surface-2': '#1C2029',
-          'surface-3': '#232830',
-          border: '#2A2F3A',
-          'border-light': '#363C4A',
-          text: '#E8ECF1',
-          muted: '#7A8494',
-          'muted-2': '#5A6474',
-          accent: '#22C55E',        /* Green — safety/compliance */
-          'accent-hover': '#16A34A',
-          'accent-muted': '#22C55E1A',
-          blue: '#3B82F6',          /* Info/navigation */
-          'blue-hover': '#2563EB',
-          'blue-muted': '#3B82F61A',
+          bg: 'rgb(var(--iv-bg) / <alpha-value>)',
+          surface: 'rgb(var(--iv-surface) / <alpha-value>)',
+          'surface-2': 'rgb(var(--iv-surface-2) / <alpha-value>)',
+          'surface-3': 'rgb(var(--iv-surface-3) / <alpha-value>)',
+          border: 'rgb(var(--iv-border) / <alpha-value>)',
+          'border-light': 'rgb(var(--iv-border-light) / <alpha-value>)',
+          text: 'rgb(var(--iv-text) / <alpha-value>)',
+          muted: 'rgb(var(--iv-muted) / <alpha-value>)',
+          'muted-2': 'rgb(var(--iv-muted-2) / <alpha-value>)',
+          accent: 'rgb(var(--iv-accent) / <alpha-value>)',
+          'accent-hover': 'rgb(var(--iv-accent-hover) / <alpha-value>)',
+          'accent-muted': 'rgb(var(--iv-accent) / 0.1)',
+          blue: 'rgb(var(--iv-blue) / <alpha-value>)',
+          'blue-hover': 'rgb(var(--iv-blue-hover) / <alpha-value>)',
+          'blue-muted': 'rgb(var(--iv-blue) / 0.1)',
         },
-        /* Risk rating colours — BS EN compliant severity scale */
+        /* Risk rating colours — fixed across themes for safety compliance */
         risk: {
-          'very-high': '#EF4444',   /* Red — immediate closure */
-          high: '#F97316',          /* Orange — 48hr action */
-          medium: '#EAB308',        /* Amber — 1 month */
-          low: '#22C55E',           /* Green — routine */
+          'very-high': '#EF4444',
+          high: '#F97316',
+          medium: '#EAB308',
+          low: '#22C55E',
         },
-        /* Condition colours */
+        /* Condition colours — fixed across themes */
         condition: {
           good: '#22C55E',
           fair: '#EAB308',
@@ -49,8 +50,8 @@ export default {
         DEFAULT: '0.5rem',
       },
       boxShadow: {
-        'iv': '0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px -1px rgba(0, 0, 0, 0.3)',
-        'iv-lg': '0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.4)',
+        'iv': '0 1px 3px 0 rgb(var(--iv-shadow) / 0.1), 0 1px 2px -1px rgb(var(--iv-shadow) / 0.1)',
+        'iv-lg': '0 10px 15px -3px rgb(var(--iv-shadow) / 0.15), 0 4px 6px -4px rgb(var(--iv-shadow) / 0.15)',
         'iv-glow': '0 0 20px rgba(34, 197, 94, 0.15)',
       },
       animation: {

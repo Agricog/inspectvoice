@@ -252,6 +252,7 @@ function AssetResultCard({
   readOnly,
   defaultExpanded,
   photoCount,
+  onItemUpdate,
 }: {
   item: InspectionItem;
   siteId: string;

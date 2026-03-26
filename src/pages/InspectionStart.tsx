@@ -354,7 +354,7 @@ export default function InspectionStart(): JSX.Element {
                 className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
                   isSelected
                     ? 'border-[#22C55E] bg-[#22C55E]/10'
-                    : 'border-[#2A2F3A] bg-[#151920] hover:border-[#3A3F4A]'
+                    : 'border-iv-border bg-iv-surface hover:border-iv-border-light'
                 }`}
                 aria-pressed={isSelected}
               >
@@ -408,7 +408,7 @@ export default function InspectionStart(): JSX.Element {
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm transition-all ${
                     isSelected
                       ? 'border-[#22C55E] bg-[#22C55E]/10 text-[#22C55E]'
-                      : 'border-[#2A2F3A] bg-[#151920] iv-text hover:border-[#3A3F4A]'
+                      : 'border-iv-border bg-iv-surface iv-text hover:border-iv-border-light'
                   }`}
                   aria-pressed={isSelected}
                 >
@@ -434,7 +434,7 @@ export default function InspectionStart(): JSX.Element {
                   className={`px-3 py-2 rounded-lg border text-sm transition-all ${
                     isSelected
                       ? 'border-[#22C55E] bg-[#22C55E]/10 text-[#22C55E]'
-                      : 'border-[#2A2F3A] bg-[#151920] iv-text hover:border-[#3A3F4A]'
+                      : 'border-iv-border bg-iv-surface iv-text hover:border-iv-border-light'
                   }`}
                   aria-pressed={isSelected}
                 >
@@ -520,7 +520,7 @@ export default function InspectionStart(): JSX.Element {
                 return (
                   <div
                     key={asset.id}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]"
+                    className="flex items-center gap-3 p-3 rounded-lg bg-iv-surface-2 border border-iv-border"
                   >
                     <Package className="w-4 h-4 iv-muted flex-shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -560,13 +560,13 @@ export default function InspectionStart(): JSX.Element {
             </Link>
 
             {/* Confirm checkbox */}
-            <div className="border-t border-[#2A2F3A] pt-4">
+            <div className="border-t border-iv-border pt-4">
               <label className="flex items-start gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={assetsConfirmed}
                   onChange={(e) => setAssetsConfirmed(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0"
+                  className="mt-0.5 w-4 h-4 rounded border-iv-border bg-iv-surface text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0"
                 />
                 <div>
                   <p className="text-sm iv-text">

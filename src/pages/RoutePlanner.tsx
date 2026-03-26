@@ -253,7 +253,7 @@ function SiteListItem({
   return (
     <div
       className={`p-3 border-b border-[#2A2F3A] cursor-pointer transition-colors ${
-        isSelected ? 'bg-[#1C2029] border-l-2 border-l-iv-accent' : 'hover:bg-[#1C2029]/50'
+        isSelected ? 'bg-iv-surface-2 border-l-2 border-l-iv-accent' : 'hover:bg-iv-surface-2/50'
       } ${isDragging ? 'opacity-50' : ''}`}
       onClick={onSelect}
       draggable={onDragStart !== null}
@@ -723,7 +723,7 @@ export default function RoutePlanner(): JSX.Element {
                   type="checkbox"
                   checked={showUnassigned}
                   onChange={(e) => setShowUnassigned(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded border-[#2A2F3A] bg-[#151920] text-iv-accent focus:ring-iv-accent focus:ring-offset-0"
+                  className="w-3.5 h-3.5 rounded border-[#2A2F3A] bg-iv-surface text-iv-accent focus:ring-iv-accent focus:ring-offset-0"
                 />
                 <span className="text-xs iv-muted">Unassigned sites only</span>
               </label>
@@ -731,7 +731,7 @@ export default function RoutePlanner(): JSX.Element {
           </div>
 
           {/* Route controls */}
-          <div className="px-3 py-2 border-b border-[#2A2F3A] flex-shrink-0">
+          <div className="px-3 py-2 border-b border-iv-border flex-shrink-0">
             <div className="flex items-center gap-2 flex-wrap">
               {routeStops.length === 0 ? (
                 <button
@@ -837,13 +837,13 @@ export default function RoutePlanner(): JSX.Element {
         </div>
 
         {/* ── RIGHT PANEL: Map ── */}
-        <div className={`flex-1 relative ${mobileView === 'map' ? 'flex' : 'hidden md:flex'}`}>
+        <div className={`flex-1 relative min-w-0 ${mobileView === 'map' ? 'flex' : 'hidden md:flex'}`}>
           <MapGL
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}
             initialViewState={DEFAULT_VIEW}
             style={{ width: '100%', height: '100%' }}
-            mapStyle="mapbox://styles/mapbox/dark-v11"
+            mapStyle={document.documentElement.classList.contains('dark') ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
             attributionControl={false}
           >
             <NavigationControl position="top-right" />
@@ -900,7 +900,7 @@ export default function RoutePlanner(): JSX.Element {
 
           {/* Map overlay: route summary */}
           {routeData && (
-            <div className="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-64 bg-[#151920]/95 backdrop-blur-sm rounded-lg border border-[#2A2F3A] p-3">
+            <div className="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-64 bg-iv-surface/95 backdrop-blur-sm rounded-lg border border-[#2A2F3A] p-3">
               <div className="flex items-center gap-2 mb-1">
                 <Navigation className="w-4 h-4 text-iv-accent" />
                 <span className="text-sm font-medium iv-text">Route Planned</span>

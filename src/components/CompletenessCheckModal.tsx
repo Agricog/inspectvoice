@@ -422,7 +422,7 @@ function IssueCategoryGroup({
               ) : (
                 <AlertCircle className="w-3.5 h-3.5 text-[#EAB308] flex-shrink-0 mt-0.5" />
               )}
-              <span className={issue.severity === 'blocking' ? 'text-[#FCA5A5]' : 'text-[#FCD34D]'}>
+              <span className={issue.severity === 'blocking' ? 'text-[#EF4444]' : 'text-[#EAB308]'}>
                 {issue.message}
               </span>
             </div>
@@ -570,9 +570,9 @@ export default function CompletenessCheckModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-[#151920] w-full sm:max-w-lg sm:rounded-xl rounded-t-xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-iv-surface w-full sm:max-w-lg sm:rounded-xl rounded-t-xl max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 bg-[#151920] border-b border-[#2A2F3A] px-5 py-4 z-10">
+        <div className="sticky top-0 bg-[#151920] border-b border-iv-border px-5 py-4 z-10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {loading ? (

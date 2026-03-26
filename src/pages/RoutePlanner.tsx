@@ -404,6 +404,14 @@ export default function RoutePlanner(): JSX.Element {
   useEffect(() => {
     void loadSites();
   }, [loadSites]);
+  // Force map resize when mobile view switches to map
+  useEffect(() => {
+    if (mobileView === 'map' && mapRef.current) {
+      setTimeout(() => {
+        mapRef.current?.resize();
+      }, 100);
+    }
+  }, [mobileView]);
 
   // =============================================
   // MAP HELPERS

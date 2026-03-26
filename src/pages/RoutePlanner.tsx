@@ -676,7 +676,7 @@ export default function RoutePlanner(): JSX.Element {
         </div>
 
         {/* Mobile view toggle */}
-        <div className="flex md:hidden items-center gap-1 bg-[#1C2029] rounded-lg p-0.5">
+        <div className="flex md:hidden items-center gap-1 bg-iv-surface-2 rounded-lg p-0.5">
           <button
             type="button"
             onClick={() => setMobileView('list')}
@@ -716,7 +716,7 @@ export default function RoutePlanner(): JSX.Element {
                   className={`px-2 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
                     urgencyFilter === opt.value
                       ? 'bg-iv-accent/15 text-iv-accent'
-                      : 'bg-[#1C2029] iv-muted hover:text-iv-text'
+                      : 'bg-iv-surface-2 iv-muted hover:text-iv-text'
                   }`}
                 >
                   {opt.label}

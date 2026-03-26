@@ -181,7 +181,7 @@ function conditionBadgeClass(condition: ConditionRating | null): string {
     case ConditionRating.DANGEROUS:
       return 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30';
     default:
-      return 'bg-[#2A2F3A] iv-muted border-[#2A2F3A]';
+      return 'bg-iv-border iv-muted border-iv-border';
   }
 }
 
@@ -211,7 +211,7 @@ function riskDotColour(risk: string | null): string {
     case 'low':
       return 'bg-[#22C55E]';
     default:
-      return 'bg-[#2A2F3A]';
+      return 'bg-iv-border';
   }
 }
 
@@ -294,7 +294,7 @@ function AssetResultCard({
               item.overall_condition === ConditionRating.FAIR ? 'bg-[#EAB308]' :
               item.overall_condition === ConditionRating.POOR ? 'bg-[#F97316]' :
               item.overall_condition === ConditionRating.DANGEROUS ? 'bg-[#EF4444]' :
-              'bg-[#2A2F3A]'
+              'bg-iv-border'
             }`}
           />
           <div className="min-w-0">
@@ -322,7 +322,7 @@ function AssetResultCard({
       </button>
 
       {expanded && (
-        <div className="px-4 pb-4 border-t border-[#2A2F3A] space-y-3 pt-3">
+        <div className="px-4 pb-4 border-t border-iv-border space-y-3 pt-3">
           {/* Condition + Risk */}
           <div className="flex items-center gap-4">
             <div>
@@ -337,7 +337,7 @@ function AssetResultCard({
                       className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
                         item.overall_condition === r
                           ? conditionBadgeClass(r)
-                          : 'border-[#2A2F3A] bg-[#151920] iv-muted hover:border-[#3A3F4A]'
+                          : 'border-iv-border bg-iv-surface iv-muted hover:border-iv-border-light'
                       }`}
                     >
                       {CONDITION_LABELS[r]}
@@ -388,7 +388,7 @@ function AssetResultCard({
                 <Mic className="w-3 h-3" />
                 Voice Recording
               </p>
-              <div className="text-sm bg-[#1C2029] p-2 rounded-lg flex items-center gap-2">
+              <div className="text-sm bg-iv-surface-2 p-2 rounded-lg flex items-center gap-2">
                 <Loader2 className="w-3.5 h-3.5 text-[#22C55E] animate-spin" />
                 <span className="text-xs iv-muted">Audio captured — transcript will be available after sync and processing</span>
               </div>
@@ -411,7 +411,7 @@ function AssetResultCard({
                   aria-label="Edit inspector notes"
                 />
               ) : (
-                <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
+                <p className="text-sm iv-text bg-iv-surface-2 p-2 rounded-lg whitespace-pre-wrap">
                   {item.inspector_notes}
                 </p>
               )}
@@ -426,7 +426,7 @@ function AssetResultCard({
               </p>
               <div className="space-y-2">
                 {item.defects.map((defect: DefectDetail, idx: number) => (
-                  <div key={idx} className="text-sm iv-text bg-[#1C2029] p-3 rounded-lg">
+                  <div key={idx} className="text-sm iv-text bg-iv-surface-2 p-3 rounded-lg">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2 min-w-0 flex-1">
                         <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${riskDotColour(defect.risk_rating)}`} />
@@ -448,7 +448,7 @@ function AssetResultCard({
                             )}
                           </div>
                           {defect.remedial_action && (
-                            <div className="mt-2 pt-2 border-t border-[#2A2F3A]">
+                            <div className="mt-2 pt-2 border-t border-iv-border">
                               <p className="text-2xs iv-muted uppercase tracking-wider mb-0.5">Remedial Action</p>
                               <p className="text-sm iv-text">{defect.remedial_action}</p>
                             </div>
@@ -1534,7 +1534,7 @@ export default function InspectionReview(): JSX.Element {
               type="checkbox"
               checked={closureRecommended}
               onChange={(e) => setClosureRecommended(e.target.checked)}
-              className="w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#EF4444] focus:ring-[#EF4444] focus:ring-offset-0"
+              className="w-4 h-4 rounded border-iv-border bg-iv-surface text-[#EF4444] focus:ring-[#EF4444] focus:ring-offset-0"
             />
             <span className="text-sm iv-text">I recommend immediate closure or restricted access</span>
           </label>

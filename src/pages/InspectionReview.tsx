@@ -261,6 +261,7 @@ function AssetResultCard({
   readOnly?: boolean;
   defaultExpanded?: boolean;
   photoCount?: number;
+  onItemUpdate?: (itemId: string, updates: Partial<InspectionItem>) => void;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(defaultExpanded ?? false);
   const typeName = resolveAssetTypeName(item.asset_type, item.asset_id ?? '', customTypeNames);
@@ -325,9 +326,28 @@ function AssetResultCard({
           <div className="flex items-center gap-4">
             <div>
               <p className="text-xs iv-muted">Condition</p>
-              <p className={`text-sm font-medium ${conditionColour(item.overall_condition)}`}>
-                {item.overall_condition ? CONDITION_LABELS[item.overall_condition] : 'Not rated'}
-              </p>
+              {!readOnly && onItemUpdate ? (
+                <div className="flex gap-1 mt-1">
+                  {([ConditionRating.GOOD, ConditionRating.FAIR, ConditionRating.POOR, ConditionRating.DANGEROUS] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => onItemUpdate(item.id, { overall_condition: r })}
+                      className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                        item.overall_condition === r
+                          ? conditionBadgeClass(r)
+                          : 'border-[#2A2F3A] bg-[#151920] iv-muted hover:border-[#3A3F4A]'
+                      }`}
+                    >
+                      {CONDITION_LABELS[r]}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className={`text-sm font-medium ${conditionColour(item.overall_condition)}`}>
+                  {item.overall_condition ? CONDITION_LABELS[item.overall_condition] : 'Not rated'}
+                </p>
+              )}
             </div>
             {item.risk_rating && (
               <div>
@@ -346,9 +366,19 @@ function AssetResultCard({
                 <Mic className="w-3 h-3" />
                 Voice Transcript
               </p>
-              <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
-                {item.voice_transcript}
-              </p>
+              {!readOnly && onItemUpdate ? (
+                <textarea
+                  value={item.voice_transcript ?? ''}
+                  onChange={(e) => onItemUpdate(item.id, { voice_transcript: e.target.value })}
+                  rows={3}
+                  className="iv-input w-full text-sm resize-y"
+                  aria-label="Edit voice transcript"
+                />
+              ) : (
+                <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
+                  {item.voice_transcript}
+                </p>
+              )}
             </div>
           )}
           {hasAudioPending && (
@@ -371,9 +401,19 @@ function AssetResultCard({
                 <FileText className="w-3 h-3" />
                 Inspector Notes
               </p>
-              <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
-                {item.inspector_notes}
-              </p>
+              {!readOnly && onItemUpdate ? (
+                <textarea
+                  value={item.inspector_notes ?? ''}
+                  onChange={(e) => onItemUpdate(item.id, { inspector_notes: e.target.value })}
+                  rows={2}
+                  className="iv-input w-full text-sm resize-y"
+                  aria-label="Edit inspector notes"
+                />
+              ) : (
+                <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
+                  {item.inspector_notes}
+                </p>
+              )}
             </div>
           )}
 
@@ -668,6 +708,20 @@ export default function InspectionReview(): JSX.Element {
 
   const totalDefects = items.reduce((sum, i) => sum + i.defects.length, 0);
   const hasDangerous = conditionCounts.dangerous > 0 || riskCounts.veryHigh > 0;
+
+  // ---- Inline item editing ----
+  const handleItemUpdate = useCallback(
+    (itemId: string, updates: Partial<InspectionItem>) => {
+      setItems((prev) =>
+        prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item)),
+      );
+      // Persist to IndexedDB
+      void inspectionItems.update(itemId, updates).catch((err) => {
+        captureError(err, { module: 'InspectionReview', operation: 'inlineEdit' });
+      });
+    },
+    [],
+  );
 
   // ---- Per-field normalisation callback ----
   const handleFieldNormalised = useCallback(
@@ -1430,6 +1484,7 @@ export default function InspectionReview(): JSX.Element {
                 onFieldNormalised={handleFieldNormalised}
                   defaultExpanded
                   photoCount={photoCountsByItem[item.id] ?? 0}
+                  onItemUpdate={handleItemUpdate}
                 />
             ))}
         </div>

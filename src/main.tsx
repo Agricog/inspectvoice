@@ -22,6 +22,8 @@ import { initAnalytics } from '@utils/analytics';
 import { AuthTokenProvider } from '@components/AuthTokenProvider';
 import { App } from './App';
 import './index.css';
+import { initTheme } from '@services/theme';
+initTheme();
 
 // =============================================
 // 0. CLERK — validate publishable key

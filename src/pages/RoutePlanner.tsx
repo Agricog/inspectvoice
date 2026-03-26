@@ -846,14 +846,14 @@ export default function RoutePlanner(): JSX.Element {
 
         {/* ── RIGHT PANEL: Map ── */}
         <div
-  className={`flex-1 relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`}
-  style={{ width: '100%', height: '100%', minHeight: 'calc(100dvh - 14rem)' }}
+  className={`relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`}
+  style={{ flex: '1 1 0%', height: 'calc(100dvh - 12rem)' }}
 >
-          <MapGL
-            ref={mapRef}
-            mapboxAccessToken={MAPBOX_TOKEN}
-            initialViewState={DEFAULT_VIEW}
-            style={{ width: '100%', height: '100%' }}
+  <MapGL
+    ref={mapRef}
+    mapboxAccessToken={MAPBOX_TOKEN}
+    initialViewState={DEFAULT_VIEW}
+    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
             mapStyle={document.documentElement.classList.contains('dark') ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
             attributionControl={false}
           >

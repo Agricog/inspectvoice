@@ -142,7 +142,7 @@ export default function DefectTemplateFiller({
   return (
     <div className="space-y-2.5">
       {/* Live preview — assembled description with highlighted fills */}
-      <div className="p-2.5 rounded-lg bg-[#151920] border border-[#2A2F3A]">
+      <div className="p-2.5 rounded-lg bg-iv-surface border border-iv-border">
         <p className="text-2xs iv-muted mb-1.5 uppercase tracking-wider">Preview</p>
         <p className="text-sm leading-relaxed">
           {segments.map((seg, idx) => {

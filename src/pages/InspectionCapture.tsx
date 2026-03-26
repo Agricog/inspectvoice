@@ -1326,7 +1326,7 @@ export default function InspectionCapture(): JSX.Element {
         )}
 
         {captureState.voiceTranscript && (
-          <div className="p-3 rounded-lg bg-[#1C2029] border border-[#2A2F3A]">
+          <div className="p-3 rounded-lg bg-iv-surface-2 border border-iv-border">
             <p className="text-xs iv-muted mb-1">Transcript <span className="text-2xs">(tap to edit)</span></p>
             <textarea
               value={captureState.voiceTranscript}

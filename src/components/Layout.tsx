@@ -23,6 +23,8 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
+import { Sun, Moon } from 'lucide-react';
+import { toggleTheme, getTheme } from '@services/theme';
 
 interface NavItem {
   to: string;
@@ -42,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
 
 export function Layout(): JSX.Element {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [theme, setThemeState] = useState(getTheme());
   const { isOnline } = useOnlineStatus();
 
   const closeMobileMenu = useCallback(() => {
@@ -104,6 +107,16 @@ export function Layout(): JSX.Element {
 
           {/* Right side — status + mobile menu */}
           <div className="flex items-center gap-3 shrink-0">
+            {/* Theme toggle */}
+            <button
+              type="button"
+              onClick={() => setThemeState(toggleTheme())}
+              className="iv-btn-icon"
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Light mode (outdoor)' : 'Dark mode (office)'}
+            >
+              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
             {/* Online indicator (desktop) */}
             <div className="hidden md:flex items-center gap-1.5">
               {isOnline ? (

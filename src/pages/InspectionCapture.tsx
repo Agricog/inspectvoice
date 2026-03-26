@@ -148,7 +148,7 @@ function createEmptyCaptureState(): AssetCaptureState {
 
 function conditionBtnClass(rating: ConditionRating, isSelected: boolean): string {
   const base = 'px-3 py-2 rounded-lg border text-sm font-medium transition-all';
-  if (!isSelected) return `${base} border-iv-border bg-[#151920] iv-text hover:border-iv-border-light`;
+  if (!isSelected) return `${base} border-iv-border bg-iv-surface iv-text hover:border-iv-border-light`;
 
   switch (rating) {
     case ConditionRating.GOOD:

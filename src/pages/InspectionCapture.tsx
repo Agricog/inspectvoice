@@ -148,7 +148,7 @@ function createEmptyCaptureState(): AssetCaptureState {
 
 function conditionBtnClass(rating: ConditionRating, isSelected: boolean): string {
   const base = 'px-3 py-2 rounded-lg border text-sm font-medium transition-all';
-  if (!isSelected) return `${base} border-[#2A2F3A] bg-[#151920] iv-text hover:border-[#3A3F4A]`;
+  if (!isSelected) return `${base} border-iv-border bg-[#151920] iv-text hover:border-iv-border-light`;
 
   switch (rating) {
     case ConditionRating.GOOD:
@@ -1131,7 +1131,7 @@ export default function InspectionCapture(): JSX.Element {
                   ? 'bg-[#22C55E] text-white ring-2 ring-[#22C55E]/30'
                   : isDone
                     ? 'bg-[#22C55E]/20 text-[#22C55E]'
-                    : 'bg-[#2A2F3A] iv-muted hover:bg-[#3A3F4A]'
+                    : 'bg-[#2A2F3A] iv-muted hover:bg-iv-border-light'
               }`}
               aria-label={`Asset ${idx + 1}: ${a.asset_code}${isDone ? ' (completed)' : ''}`}
               title={a.asset_code}
@@ -1183,7 +1183,7 @@ export default function InspectionCapture(): JSX.Element {
               {checklistPoints.map((point, idx) => {
                 if (dismissedSet.has(idx)) return null;
                 return (
-                  <div key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#1C2029] group transition-colors">
+                  <div key={idx} className="flex items-start gap-3 p-2 rounded-lg hover:bg-iv-surface-2 group transition-colors">
                     <label className="flex items-start gap-3 flex-1 cursor-pointer">
                       <input
                         type="checkbox"
@@ -1223,7 +1223,7 @@ export default function InspectionCapture(): JSX.Element {
                       type="checkbox"
                       checked={item.completed}
                       onChange={() => handleToggleCustomCheck(item.id)}
-                      className="w-4 h-4 rounded border-[#2A2F3A] bg-[#151920] text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0 cursor-pointer"
+                      className="w-4 h-4 rounded border-[#2A2F3A] bg-iv-surface text-[#22C55E] focus:ring-[#22C55E] focus:ring-offset-0 cursor-pointer"
                     />
                     <p className={`text-sm flex-1 ${item.completed ? 'line-through iv-muted' : 'iv-text'}`}>
                       {item.label}
@@ -1540,7 +1540,7 @@ export default function InspectionCapture(): JSX.Element {
               onClick={handleFinish}
               disabled={!allDone}
               className={`flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                allDone ? 'bg-[#22C55E] text-white hover:bg-[#16A34A]' : 'bg-[#2A2F3A] iv-muted cursor-not-allowed'
+                allDone ? 'bg-[#22C55E] text-white hover:bg-[#16A34A]' : 'bg-iv-border iv-muted cursor-not-allowed'
               }`}
             >
               <ArrowRight className="w-4 h-4" />Finish &amp; Review

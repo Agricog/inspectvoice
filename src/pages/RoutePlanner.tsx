@@ -657,7 +657,7 @@ export default function RoutePlanner(): JSX.Element {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-8rem)]">
+    <div className="flex flex-col -mx-4 -mt-6 -mb-6 h-[calc(100dvh-4.5rem)]">
       <Helmet>
         <title>Route Planner | InspectVoice</title>
         <meta name="description" content="Plan today's inspection route with optimised stop order." />
@@ -845,7 +845,7 @@ export default function RoutePlanner(): JSX.Element {
         </div>
 
         {/* ── RIGHT PANEL: Map ── */}
-        <div className={`flex-1 relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`} style={{ height: 'calc(100dvh - 10rem)' }}>
+        <div className={`flex-1 relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`}>
           <MapGL
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}

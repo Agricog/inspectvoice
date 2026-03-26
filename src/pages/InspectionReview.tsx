@@ -459,7 +459,6 @@ function AssetResultCard({
                         <NormaliseButton
                           fieldName="defect_description"
                           originalText={defect.description}
-                          inspectionItemId={item.id}
                           onAccept={(normalisedText: string) =>
                             handleDefectNormalised(idx, normalisedText)
                           }

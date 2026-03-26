@@ -160,7 +160,7 @@ function SiteLocationMap({ latitude, longitude }: { latitude: number; longitude:
           mapboxAccessToken={MAPBOX_TOKEN}
           initialViewState={{ longitude, latitude, zoom: 15 }}
           style={{ width: '100%', height: '100%' }}
-          mapStyle="mapbox://styles/mapbox/dark-v11"
+          mapStyle={document.documentElement.classList.contains('dark') ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
           attributionControl={false}
           interactive={true}
           scrollZoom={false}

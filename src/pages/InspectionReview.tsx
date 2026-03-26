@@ -250,6 +250,8 @@ function AssetResultCard({
   customTypeNames,
   onFieldNormalised,
   readOnly,
+  defaultExpanded,
+  photoCount,
 }: {
   item: InspectionItem;
   siteId: string;
@@ -257,8 +259,10 @@ function AssetResultCard({
   customTypeNames: CustomTypeNameMap;
   onFieldNormalised: (itemId: string, fieldName: string, normalisedText: string) => void;
   readOnly?: boolean;
+  defaultExpanded?: boolean;
+  photoCount?: number;
 }): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded ?? false);
   const typeName = resolveAssetTypeName(item.asset_type, item.asset_id ?? '', customTypeNames);
   const hasTranscript = Boolean(item.voice_transcript);
   const hasAudioPending = !hasTranscript && item.transcription_method === 'web_speech_api';
@@ -424,6 +428,44 @@ function AssetResultCard({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Checklist */}
+          {(() => {
+            const checklist = (item as unknown as Record<string, unknown>).checklist_data as ChecklistData | null;
+            if (!checklist || (checklist.standard.length === 0 && checklist.custom.length === 0)) return null;
+            const allChecks = [
+              ...checklist.standard.map((c) => ({ label: c.label, completed: c.completed, isCustom: false })),
+              ...checklist.custom.map((c) => ({ label: c.label, completed: c.completed, isCustom: true })),
+            ];
+            const completedCount = allChecks.filter((c) => c.completed).length;
+            return (
+              <div>
+                <p className="text-xs iv-muted mb-2">
+                  Inspection Checklist ({completedCount}/{allChecks.length})
+                </p>
+                <div className="space-y-1">
+                  {allChecks.map((check, ci) => (
+                    <div key={ci} className="flex items-center gap-2 text-sm">
+                      <span className={check.completed ? 'text-[#22C55E]' : 'iv-muted'}>{check.completed ? '[x]' : '[ ]'}</span>
+                      <span className={`${check.completed ? 'iv-text' : 'iv-muted'}`}>
+                        {check.isCustom ? `(Custom) ${check.label}` : check.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {checklist.dismissed.length > 0 && (
+                  <p className="text-xs iv-muted mt-1">{checklist.dismissed.length} item(s) marked N/A</p>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Photo count */}
+          {(photoCount ?? 0) > 0 && (
+            <div className="flex items-center gap-2 text-xs text-[#22C55E]">
+              <span>Photos: {photoCount} captured</span>
             </div>
           )}
 
@@ -1192,6 +1234,8 @@ export default function InspectionReview(): JSX.Element {
                   customTypeNames={customTypeNames}
                   onFieldNormalised={handleFieldNormalised}
                   readOnly
+                  defaultExpanded
+                  photoCount={photoCountsByItem[item.id] ?? 0}
                 />
               ))}
           </div>
@@ -1384,7 +1428,9 @@ export default function InspectionReview(): JSX.Element {
                 inspectionId={inspectionId}
                 customTypeNames={customTypeNames}
                 onFieldNormalised={handleFieldNormalised}
-              />
+                  defaultExpanded
+                  photoCount={photoCountsByItem[item.id] ?? 0}
+                />
             ))}
         </div>
       </div>

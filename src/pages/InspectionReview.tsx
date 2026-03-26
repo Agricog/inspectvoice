@@ -283,7 +283,7 @@ function AssetResultCard({
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-[#1C2029] transition-colors"
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-iv-surface-2 transition-colors"
         aria-expanded={expanded}
       >
         <div className="flex items-center gap-3 min-w-0">
@@ -376,8 +376,8 @@ function AssetResultCard({
                   aria-label="Edit voice transcript"
                 />
               ) : (
-                <p className="text-sm iv-text bg-[#1C2029] p-2 rounded-lg whitespace-pre-wrap">
-                  {item.voice_transcript}
+                <p className="text-sm iv-text bg-iv-surface-2 p-2 rounded-lg whitespace-pre-wrap">
+                {item.voice_transcript}
                 </p>
               )}
             </div>

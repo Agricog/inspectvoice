@@ -845,12 +845,15 @@ export default function RoutePlanner(): JSX.Element {
         </div>
 
         {/* ── RIGHT PANEL: Map ── */}
-        <div className={`flex-1 relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`}>
+        <div
+  className={`flex-1 relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`}
+  style={{ width: '100%', height: '100%', minHeight: 'calc(100dvh - 14rem)' }}
+>
           <MapGL
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}
             initialViewState={DEFAULT_VIEW}
-            style={{ position: 'absolute', inset: 0 }}
+            style={{ width: '100%', height: '100%' }}
             mapStyle={document.documentElement.classList.contains('dark') ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
             attributionControl={false}
           >

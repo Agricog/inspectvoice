@@ -1111,10 +1111,16 @@ export default function InspectionCapture(): JSX.Element {
     }
   }, [currentIndex, totalAssets]);
 
-  const handleFinish = useCallback(() => {
+  const handleFinish = useCallback(async () => {
     voiceCaptureRef.current?.cancel();
+    // Auto-save current asset if there are unsaved changes
+    const hasUnsavedFindings = Object.keys(findingActions).length > 0;
+    const hasUnsavedCapture = !captureState.saved && (captureState.voiceTranscript || captureState.hasAudioRecording || captureState.notes || captureState.condition || captureState.manualDefects.length > 0);
+    if (hasUnsavedFindings || hasUnsavedCapture) {
+      await handleSaveAsset();
+    }
     navigate(`/sites/${siteId}/inspections/${inspectionId}/review`, { replace: true });
-  }, [navigate, siteId, inspectionId]);
+  }, [navigate, siteId, inspectionId, findingActions, captureState, handleSaveAsset]);
 
   const savedCount = assets.filter(
     (a) => existingItems.has(a.id) || existingItems.has(a.asset_code),

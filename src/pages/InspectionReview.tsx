@@ -442,7 +442,7 @@ function AssetResultCard({
                       <div className="flex items-start gap-2 min-w-0 flex-1">
                        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${riskDotColour(defect.risk_rating)}`} />
                         <div className="min-w-0 flex-1">
-                          {(defect as unknown as Record<string, unknown>)._recurring && (
+                          {Boolean((defect as unknown as Record<string, unknown>)._recurring) && (
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-[#F97316]/15 text-[#F97316] border border-[#F97316]/30">
                                 Recurring

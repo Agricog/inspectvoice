@@ -973,7 +973,7 @@ export default function InspectionCapture(): JSX.Element {
         inspector_confirmed: existing?.inspector_confirmed ?? false,
         inspector_notes: captureState.notes || null,
         inspector_risk_override: existing?.inspector_risk_override ?? null,
-        resolved_findings: previousFindings
+        ...({ resolved_findings: previousFindings
           .filter((f) => findingActions[f.id] === 'resolved')
           .map((f) => ({
             original_defect_id: f.id,
@@ -986,7 +986,7 @@ export default function InspectionCapture(): JSX.Element {
             inspector_name: f.inspector_name,
             consecutive_inspections: f.consecutive_inspections,
             resolved_at: new Date().toISOString(),
-          })),
+          })) } as unknown as Partial<InspectionItem>),
         checklist_data: {
           standard: checklistPoints.map((point, idx) => ({
             label: point.label,

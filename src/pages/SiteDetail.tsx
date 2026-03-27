@@ -303,12 +303,45 @@ export function SiteDetail(): JSX.Element {
         ]);
 
         if (!cachedSite) {
-          setError('Site not found.');
-          return;
+          // Try API fallback for site
+          try {
+            const siteResp = await secureFetch<{ data: Site }>(`/api/v1/sites/${id}`);
+            if (siteResp.data) {
+              await sitesCache.put(siteResp.data);
+              setSite(siteResp.data);
+            } else {
+              setError('Site not found.');
+              return;
+            }
+          } catch {
+            setError('Site not found.');
+            return;
+          }
+        } else {
+          setSite(cachedSite.data);
         }
 
-        setSite(cachedSite.data);
-        setAssets(cachedAssets.filter((a) => a.data.is_active !== false));
+        // Assets — use cache if available, otherwise fetch from API and cache
+        let activeAssets = cachedAssets.filter((a) => a.data.is_active !== false);
+        if (activeAssets.length === 0) {
+          try {
+            const assetsResp = await secureFetch<{ data: { assets: Array<Record<string, unknown>> } }>(
+              `/api/v1/sites/${id}/assets?limit=500`,
+            );
+            if (assetsResp.data?.assets && assetsResp.data.assets.length > 0) {
+              const fetched: CachedAsset[] = [];
+              for (const raw of assetsResp.data.assets) {
+                const asset = raw as unknown as import('@/types').Asset;
+                await assetsCache.put(asset);
+                fetched.push({ id: asset.id, data: asset, lastModified: Date.now() } as CachedAsset);
+              }
+              activeAssets = fetched.filter((a) => a.data.is_active !== false);
+            }
+          } catch {
+            // Offline — show empty, non-blocking
+          }
+        }
+        setAssets(activeAssets);
         setSiteInspections(cachedInspections);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to load site';

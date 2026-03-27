@@ -13,6 +13,10 @@
  * - Internal linking to product sections
  * - H1 → H2 → H3 hierarchy
  *
+ * UPDATED: March 2026 — reflects all built features including previous findings
+ * carry-forward, route planner, inspector performance, defect library, baseline
+ * photo comparison, offline auth resilience, premium PDF, and accurate pricing.
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
@@ -27,7 +31,6 @@ import {
   CheckCircle,
   ChevronDown,
   BarChart3,
-  Bell,
   Camera,
   Users,
   MapPin,
@@ -35,6 +38,11 @@ import {
   Zap,
   Lock,
   ArrowRight,
+  Navigation,
+  BookOpen,
+  History,
+  Sun,
+  Printer,
 } from 'lucide-react';
 
 // =============================================
@@ -46,7 +54,7 @@ const OG_IMAGE = `${SITE_URL}/og-inspectvoice.jpg`;
 
 const PAGE_TITLE = 'InspectVoice — AI Voice-Powered Playground Inspection Software UK | BS EN 1176';
 const PAGE_DESCRIPTION =
-  'Voice-driven playground inspection software for UK councils. BS EN 1176/1177 compliant, AI-powered defect capture, real-time hotlists, and auditable records. Replace paper inspections today.';
+  'Voice-driven playground inspection software for UK inspectors and councils. BS EN 1176/1177 compliant, AI-powered defect capture, previous findings carry-forward, route planning, and signed PDF reports on site. From £99/month.';
 
 // =============================================
 // FAQ DATA (defined before JSON_LD_GRAPH which references it)
@@ -56,62 +64,67 @@ const FAQ_DATA = [
   {
     question: 'What is InspectVoice and how does it work?',
     answer:
-      'InspectVoice is a voice-driven AI inspection platform designed specifically for UK playground safety inspections. Inspectors speak their observations while walking a site, and the AI transcribes, categorises severity levels, maps findings to BS EN 1176 references, and generates compliant inspection reports automatically. It replaces paper forms and manual data entry entirely.',
+      'InspectVoice is a voice-driven AI inspection platform designed specifically for UK playground safety inspections. Inspectors speak their observations while walking a site, and the AI transcribes, categorises severity levels, maps findings to BS EN 1176 references, and generates a signed PDF report before the inspector leaves site. It replaces paper forms, manual data entry, and office write-up entirely.',
   },
   {
     question: 'Is InspectVoice compliant with BS EN 1176 and BS EN 1177?',
     answer:
-      'Yes. InspectVoice is built around the full BS EN 1176 (Parts 1–11) and BS EN 1177 framework. The inspection schedule is pre-populated with the standard clause references, severity classifications align with industry practice (very high, high, medium, low, advisory), and all reports include the relevant BS EN references for every finding.',
+      'Yes. InspectVoice is built around the full BS EN 1176 (Parts 1–11) and BS EN 1177 framework. The inspection checklist is pre-populated with the standard clause references, severity classifications align with industry practice (very high, high, medium, low, advisory), and all reports include the relevant BS EN references for every finding.',
   },
   {
     question: 'Who is InspectVoice designed for?',
     answer:
-      'InspectVoice is designed primarily for UK local authority councils, housing associations, academy trusts, and any organisation responsible for maintaining public playground equipment. It serves playground inspectors, parks managers, health and safety officers, and facilities management teams.',
+      'InspectVoice is designed for private playground inspection companies, UK local authority councils, housing associations, academy trusts, and any organisation responsible for maintaining playground equipment. It serves RPII-registered inspectors, parks managers, health and safety officers, and facilities management teams.',
   },
   {
     question: 'How does voice-driven inspection capture save time?',
     answer:
-      'Traditional playground inspections require writing notes on paper, then transferring findings to a spreadsheet or database back at the office. InspectVoice eliminates this double-handling entirely. Inspectors speak naturally while walking the site, and the system produces a complete, categorised report in real time. Councils report time savings of 40–60% per inspection.',
+      'Traditional playground inspections require writing notes on paper or typing into forms, then transferring findings to a report back at the office. InspectVoice eliminates this double-handling entirely. Inspectors speak naturally while walking the site, the AI extracts structured defects with BS EN references, and a signed PDF report is ready before they reach the van. What used to take a 30-minute site visit plus 30–60 minutes of office admin now takes just the site visit.',
   },
   {
     question: 'What happens when a high-severity defect is found?',
     answer:
-      'When a very high or high severity defect is recorded, InspectVoice adds it to the priority hotlist immediately. The defect appears on the manager dashboard with severity badge, site location, asset details, and days open. Configurable email summaries ensure the right people are notified on daily, weekly, or monthly schedules.',
+      'When a very high or high severity defect is recorded, InspectVoice adds it to the priority hotlist immediately. The defect appears on the manager dashboard with severity badge, site location, asset details, and days open. If the defect was also reported on previous inspections, it is flagged as recurring with the number of consecutive visits it has been open — critical evidence for demonstrating due diligence.',
+  },
+  {
+    question: 'Do previous defects carry forward between inspections?',
+    answer:
+      'Yes. When an inspector starts capturing an asset, InspectVoice automatically pulls all unresolved defects from previous inspections on that equipment. Each one appears with the full original detail — description, BS EN reference, risk rating, remedial action. The inspector marks each as Resolved, Still Present, or Worsened. Still Present and Worsened defects carry into the new report with a recurring flag and a count of how many visits the defect has been open. This creates an auditable trail proving the defect was reported and not addressed.',
   },
   {
     question: 'Can InspectVoice track manufacturer recalls on playground equipment?',
     answer:
-      'Yes. InspectVoice includes a manufacturer recall management system. When a recall is entered, the deterministic matching engine scans your asset register and identifies affected equipment automatically. Matched assets show recall warnings on their detail pages, and the recall section appears in email digest summaries sent to stakeholders.',
+      'Yes. InspectVoice includes a manufacturer recall management system. When a recall is entered, the deterministic matching engine scans your asset register and identifies affected equipment automatically. Matched assets show recall warnings on their detail pages.',
   },
   {
     question: 'How does InspectVoice handle multiple sites?',
     answer:
-      'InspectVoice supports unlimited sites within an organisation. Each site has its own asset register, inspection schedule, and defect history. The manager dashboard provides a cross-site overview with the priority hotlist, upcoming inspections, and compliance statistics aggregated across all sites.',
+      'InspectVoice supports unlimited sites within an organisation. Each site has its own asset register, inspection schedule, and defect history. The route planner optimises your daily inspection route with turn-by-turn directions between sites, and the manager dashboard provides a cross-site overview with the priority hotlist and compliance statistics.',
   },
   {
     question: 'Is the data legally defensible for insurance and litigation purposes?',
     answer:
-      'Yes. Every inspection, defect, and action is timestamped, attributed to the logged-in user, and stored in an immutable audit log. Photo evidence is geotagged and timestamped. The deterministic matching engine for recalls stores a full match reason string explaining exactly why each asset was flagged. This audit trail is designed to withstand scrutiny in legal proceedings and insurance claims.',
-  },
-  {
-    question: 'What types of playground inspection does InspectVoice support?',
-    answer:
-      'InspectVoice supports all three inspection types defined in BS EN 1176-7: routine visual inspections (daily to weekly checks for obvious hazards), operational inspections (monthly to quarterly detailed equipment checks), and annual inspections (comprehensive assessments by qualified inspectors). Each type has its own configurable frequency and inspection template.',
+      'Yes. Every inspection, defect, and action is timestamped, attributed to the logged-in user, and stored in an immutable audit log. Photo evidence is geotagged and timestamped. Previous findings carry-forward creates a documented history showing when defects were first reported and how many inspections they remained unresolved. Sealed exports with cryptographic verification ensure reports cannot be tampered with after the fact. This audit trail is designed to withstand scrutiny in legal proceedings and insurance claims.',
   },
   {
     question: 'Does InspectVoice work offline or in areas with poor signal?',
     answer:
-      'InspectVoice is built as a progressive web app (PWA) with offline capability. Inspections started in areas with poor signal will continue to capture voice and photo data locally, then sync automatically when connectivity is restored. This is essential for rural playground sites where mobile coverage can be inconsistent.',
+      'InspectVoice is built as a progressive web app (PWA) with full offline capability. The app loads from cache even without any network connection, using a cached authentication session so inspectors can start working immediately. Inspections capture voice, photos, checklists, and defect data locally in IndexedDB, then sync automatically when connectivity is restored. This is essential for rural playground sites where mobile coverage is inconsistent.',
   },
   {
-    question: 'How much does InspectVoice cost for councils?',
+    question: 'How much does InspectVoice cost?',
     answer:
-      'InspectVoice pricing is based on the number of sites under management. Contact us for a tailored quote for your authority. We offer a free trial period so you can evaluate the platform with your inspection team before committing.',
+      'InspectVoice Team is £99 per month with a 30-day free trial. This includes up to 5 inspectors, unlimited inspections, 50 sites, 50GB storage, and email support. Unlike per-inspection pricing models used by other platforms (typically £3 per inspection), InspectVoice is a flat monthly fee — the more you inspect, the better value it gets. Enterprise pricing for larger organisations and councils is available on request.',
   },
   {
-    question: 'How does InspectVoice compare to paper-based or spreadsheet inspection systems?',
+    question: 'How does InspectVoice compare to other playground inspection apps?',
     answer:
-      'Paper forms and spreadsheets create several risks: illegible handwriting, lost records, delayed data entry, no real-time visibility of high-risk defects, and difficulty proving compliance in legal proceedings. InspectVoice eliminates all of these by capturing data digitally at the point of inspection, generating instant reports, and maintaining a complete audit trail with timestamps and user attribution.',
+      'Most playground inspection apps require manual typing or selecting from predefined lists. None combine voice capture, AI-powered defect extraction with automatic BS EN referencing, previous findings carry-forward, and instant signed PDF output. InspectVoice also includes route planning, a defect library that grows from real field usage, inspector performance tracking, and baseline photo comparison — features that other platforms in the UK playground sector do not offer.',
+  },
+  {
+    question: 'What types of playground inspection does InspectVoice support?',
+    answer:
+      'InspectVoice supports all three inspection types defined in BS EN 1176-7: routine visual inspections (daily to weekly checks for obvious hazards), operational inspections (monthly to quarterly detailed equipment checks), and annual inspections (comprehensive assessments by qualified inspectors). Each type has its own configurable checklist and inspection template.',
   },
 ];
 
@@ -145,19 +158,25 @@ const JSON_LD_GRAPH = {
       author: { '@type': 'Organization', name: 'Autaimate' },
       offers: {
         '@type': 'Offer',
-        price: '0',
+        price: '99',
         priceCurrency: 'GBP',
-        description: 'Free trial available. Contact for council pricing.',
+        description: 'Team plan from £99/month. 30-day free trial. Enterprise pricing on request.',
       },
       featureList: [
         'Voice-driven inspection capture',
         'BS EN 1176/1177 compliance',
-        'AI-powered defect detection',
-        'Real-time priority hotlist',
-        'Automated email summaries',
+        'AI-powered defect extraction',
+        'Previous findings carry-forward',
+        'Instant signed PDF reports',
+        'Route planning with optimised stop order',
+        'Inspector performance tracking',
+        'Defect library with field-driven growth',
+        'Baseline photo comparison',
         'Manufacturer recall tracking',
         'Multi-site asset register',
-        'Photo and evidence capture',
+        'Offline-first with cached authentication',
+        'Real-time priority hotlist',
+        'Sealed exports with cryptographic verification',
       ],
     },
     // 3. FAQPage
@@ -181,28 +200,28 @@ const JSON_LD_GRAPH = {
       step: [
         {
           '@type': 'HowToStep',
-          name: 'Select Site',
-          text: 'Open InspectVoice, select your site from the asset register, and start a new inspection.',
+          name: 'Plan Your Route',
+          text: 'Open the route planner to see today\'s sites ordered by due date. Tap optimise for the most efficient driving route with turn-by-turn directions.',
+        },
+        {
+          '@type': 'HowToStep',
+          name: 'Start Inspection',
+          text: 'Select your site, choose the inspection type (routine, operational, or annual), and begin. Previous findings for each asset load automatically.',
         },
         {
           '@type': 'HowToStep',
           name: 'Voice Capture',
-          text: 'Walk the site speaking observations aloud. InspectVoice transcribes, categorises severity, and maps to BS EN 1176 references automatically.',
+          text: 'Walk the site speaking observations aloud. InspectVoice transcribes, extracts defects with BS EN references, and assigns risk ratings automatically.',
         },
         {
           '@type': 'HowToStep',
-          name: 'Photo Evidence',
-          text: 'Capture photos of defects directly within the app. Images are geotagged and timestamped for evidential purposes.',
+          name: 'Review Previous Findings',
+          text: 'Mark carried-forward defects as Resolved, Still Present, or Worsened. Unresolved defects carry into the new report with recurring flags.',
         },
         {
           '@type': 'HowToStep',
-          name: 'Review and Sign',
-          text: 'Review the AI-generated inspection report, make any adjustments, and digitally sign to complete.',
-        },
-        {
-          '@type': 'HowToStep',
-          name: 'Automated Alerts',
-          text: 'High-severity defects trigger instant notifications. Summary emails are sent to stakeholders on your chosen schedule.',
+          name: 'Sign and Generate PDF',
+          text: 'Review the AI-generated report, make any adjustments, digitally sign, and download the professional PDF — all before leaving site.',
         },
       ],
     },
@@ -213,7 +232,7 @@ const JSON_LD_GRAPH = {
       url: 'https://autaimate.com',
       logo: `${SITE_URL}/autaimate-logo.png`,
       description:
-        'UK-based software company building automation tools for regulated industries including playground safety, electrical certification, and equipment compliance.',
+        'UK-based software company building voice-driven AI tools for regulated industries including playground safety, electrical certification, and equipment compliance.',
       contactPoint: {
         '@type': 'ContactPoint',
         contactType: 'sales',
@@ -238,7 +257,7 @@ const JSON_LD_GRAPH = {
       author: { '@type': 'Organization', name: 'Autaimate' },
       publisher: { '@type': 'Organization', name: 'Autaimate' },
       datePublished: '2026-01-15',
-      dateModified: '2026-02-26',
+      dateModified: '2026-03-27',
       description:
         'Comprehensive guide covering BS EN 1176, BS EN 1177, routine visual inspections, operational inspections, and annual inspections for UK local authority playgrounds.',
     },
@@ -291,80 +310,98 @@ const FEATURES = [
     icon: Mic,
     title: 'Voice-First Capture',
     description:
-      'Speak your observations naturally while walking the site. AI transcribes, categorises, and maps to BS EN 1176 references in real time.',
+      'Speak your observations naturally while walking the site. AI transcribes, extracts structured defects, and maps to BS EN 1176 references automatically.',
   },
   {
     icon: Shield,
     title: 'BS EN 1176/1177 Compliant',
     description:
-      'Pre-populated inspection schedules with full standard clause references. Severity classifications align with industry practice.',
+      'Pre-populated inspection checklists with full standard clause references. Severity classifications align with industry practice across all three inspection tiers.',
+  },
+  {
+    icon: History,
+    title: 'Previous Findings Carry-Forward',
+    description:
+      'Open defects from previous inspections appear automatically per asset. Mark as Resolved, Still Present, or Worsened. Recurring defects are flagged with visit count — critical evidence for councils.',
+  },
+  {
+    icon: Printer,
+    title: 'Instant Signed PDF Reports',
+    description:
+      'Professional PDF with table of contents, numbered sections, inspection methodology, risk severity key, and each asset on its own page. Ready before you leave site.',
+  },
+  {
+    icon: Navigation,
+    title: 'Route Planning',
+    description:
+      'See today\'s due and overdue sites on a map. Optimise your driving route with one tap and get turn-by-turn directions between sites.',
+  },
+  {
+    icon: Camera,
+    title: 'Baseline Photo Comparison',
+    description:
+      'Compare current photos against the baseline for each asset. Visual evidence of deterioration over time, with condition ratings tracked across inspections.',
+  },
+  {
+    icon: BookOpen,
+    title: 'Defect Library',
+    description:
+      'Common defects with BS EN references, risk ratings, and remedial actions. Grows organically from real field usage — custom defects auto-save for next time.',
+  },
+  {
+    icon: BarChart3,
+    title: 'Inspector Performance',
+    description:
+      'Track inspection throughput, defect detection rates, and completion times. Identify training needs and recognise top performers across your team.',
   },
   {
     icon: AlertTriangle,
     title: 'Priority Hotlist',
     description:
-      'Very high and high severity defects surface instantly on the manager dashboard. Never lose track of critical safety issues.',
-  },
-  {
-    icon: Bell,
-    title: 'Automated Email Summaries',
-    description:
-      'Daily, weekly, or monthly digest emails sent to stakeholders. Configurable per recipient with section preferences.',
-  },
-  {
-    icon: Camera,
-    title: 'Photo Evidence',
-    description:
-      'Capture geotagged, timestamped photos of defects. Evidence is linked to the inspection record for legal defensibility.',
-  },
-  {
-    icon: BarChart3,
-    title: 'Manager Dashboard',
-    description:
-      'Cross-site overview of compliance status, upcoming inspections, open defects, and the priority hotlist at a glance.',
-  },
-  {
-    icon: Bell,
-    title: 'Manufacturer Recall Tracking',
-    description:
-      'Deterministic matching engine identifies affected assets when recalls are entered. Warnings appear on asset details and in email digests.',
-  },
-  {
-    icon: FileText,
-    title: 'Auditable Records',
-    description:
-      'Every inspection, defect, and action is timestamped and attributed. Immutable audit log designed for legal and insurance scrutiny.',
-  },
-  {
-    icon: MapPin,
-    title: 'Multi-Site Management',
-    description:
-      'Unlimited sites with individual asset registers, inspection schedules, and defect histories. Aggregate reporting across your estate.',
+      'Very high and high severity defects surface instantly on the manager dashboard with days open, site location, and recurring flag. Never lose track of critical safety issues.',
   },
   {
     icon: Smartphone,
-    title: 'Works Offline',
+    title: 'Works Fully Offline',
     description:
-      'Progressive web app with offline capability. Capture inspections in rural areas with poor signal, sync when connected.',
+      'Opens from cache with no signal. Cached authentication means inspectors can start working immediately. All data syncs automatically when connectivity returns.',
+  },
+  {
+    icon: Sun,
+    title: 'Outdoor-Readable Design',
+    description:
+      'Light theme optimised for bright sunlight on site. Dark theme for office use. One-tap toggle persists your preference across sessions.',
   },
   {
     icon: Users,
-    title: 'Team Roles & Permissions',
+    title: 'Team Roles & Client Portal',
     description:
-      'Role-based access for inspectors, managers, and administrators. External stakeholders receive read-only summary emails.',
+      'Role-based access for inspectors, managers, and administrators. Client portal with magic links gives councils read-only access to their inspection data.',
+  },
+  {
+    icon: FileText,
+    title: 'Sealed Auditable Records',
+    description:
+      'Every inspection, defect, and action is timestamped and attributed. Sealed exports with cryptographic verification ensure reports cannot be tampered with.',
   },
   {
     icon: Lock,
     title: 'Enterprise Security',
     description:
-      'Clerk authentication with MFA, encrypted database connections, OWASP-compliant architecture, and GDPR-ready data handling.',
+      'Multi-factor authentication, encrypted database connections, OWASP-compliant architecture, and GDPR-ready data handling with DPIA documentation.',
+  },
+  {
+    icon: MapPin,
+    title: 'Multi-Site Management',
+    description:
+      'Unlimited sites with individual asset registers, inspection schedules, and defect histories. Aggregate reporting and cross-site compliance tracking.',
   },
 ];
 
 const STATS = [
-  { value: '40–60%', label: 'Time saved per inspection' },
+  { value: '60%', label: 'Less time per inspection' },
   { value: '100%', label: 'BS EN 1176 coverage' },
-  { value: '< 2 min', label: 'Defect to dashboard' },
+  { value: '£99', label: 'Per month, unlimited inspections' },
   { value: '0', label: 'Paper forms needed' },
 ];
 
@@ -412,52 +449,29 @@ export default function LandingPage() {
           SEO: HELMET — ALL 15 POINTS
           ============================================= */}
       <Helmet>
-        {/* Point 1: Title Tag (55-60 chars target — extended for keyword coverage) */}
         <title>{PAGE_TITLE}</title>
-
-        {/* Point 2: Meta Description (150-160 chars) */}
         <meta name="description" content={PAGE_DESCRIPTION} />
-
-        {/* Point 3: Canonical URL */}
         <link rel="canonical" href={SITE_URL} />
-
-        {/* Point 4: Robots */}
         <meta
           name="robots"
           content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
         />
-
-        {/* Point 5: Viewport */}
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
-
-        {/* Point 6: OG Title */}
         <meta property="og:type" content="website" />
         <meta property="og:title" content={PAGE_TITLE} />
-
-        {/* Point 7: OG Description */}
         <meta property="og:description" content={PAGE_DESCRIPTION} />
-
-        {/* Point 8: OG Image (1200x630) */}
         <meta property="og:image" content={OG_IMAGE} />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
         <meta property="og:url" content={SITE_URL} />
         <meta property="og:site_name" content="InspectVoice" />
-
-        {/* Point 9: Twitter Card */}
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:title" content={PAGE_TITLE} />
         <meta name="twitter:description" content={PAGE_DESCRIPTION} />
         <meta name="twitter:image" content={OG_IMAGE} />
-
-        {/* Point 10: Author & Brand */}
         <meta name="author" content="Autaimate" />
         <meta name="publisher" content="Autaimate" />
-
-        {/* Point 11: JSON-LD Schemas (8 types in @graph) */}
         <script type="application/ld+json">{JSON.stringify(JSON_LD_GRAPH)}</script>
-
-        {/* Additional */}
         <meta name="theme-color" content="#16a34a" />
         <html lang="en-GB" />
       </Helmet>
@@ -481,6 +495,9 @@ export default function LandingPage() {
               <a href="#how-it-works" className="hover:text-emerald-700 transition-colors">
                 How It Works
               </a>
+              <a href="#pricing" className="hover:text-emerald-700 transition-colors">
+                Pricing
+              </a>
               <a href="#compliance" className="hover:text-emerald-700 transition-colors">
                 Compliance
               </a>
@@ -501,7 +518,6 @@ export default function LandingPage() {
             HERO SECTION
             ============================================= */}
         <section className="relative overflow-hidden">
-          {/* Background texture */}
           <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-emerald-50/40" />
           <div
             className="absolute inset-0 opacity-[0.03]"
@@ -513,41 +529,40 @@ export default function LandingPage() {
           />
 
           <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-20 sm:pt-24 sm:pb-28">
-            {/* Point 14: Quick Answer Box */}
             <div
               id="quick-answer"
               className="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-full px-4 py-1.5 mb-8"
             >
               <Zap className="w-3.5 h-3.5 text-emerald-600" />
               <span className="text-xs font-semibold text-emerald-700 tracking-wide uppercase">
-                Voice-powered playground inspections for UK councils
+                Voice-powered playground inspections — signed PDF before you leave site
               </span>
             </div>
 
             <div className="max-w-3xl">
-              {/* H1 — unique, keyword-rich */}
               <h1
                 id="hero-heading"
                 className="text-4xl sm:text-5xl lg:text-[3.4rem] font-extrabold text-slate-900 leading-[1.1] tracking-tight"
               >
-                Replace paper inspections with{' '}
-                <span className="text-emerald-600">voice-driven AI</span>
+                Inspect. Speak. Done.{' '}
+                <span className="text-emerald-600">Report ready at the van.</span>
               </h1>
 
               <p className="mt-6 text-lg sm:text-xl text-slate-600 leading-relaxed max-w-2xl">
-                InspectVoice lets playground inspectors speak their findings while walking the site.
-                AI transcribes, categorises severity, maps to BS EN 1176 references, and generates
-                compliant reports — all in real time.
+                InspectVoice turns a 2-hour inspection-plus-report into a 30-minute site visit
+                with a professional signed PDF. Speak your findings, AI extracts the defects with
+                BS EN 1176 references, previous issues carry forward automatically. No office
+                write-up. No second pass.
               </p>
 
               <div className="mt-10 flex flex-col sm:flex-row gap-4">
-                <a
-                  href="#contact"
+                <Link
+                  to="/sign-up"
                   className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-7 py-3.5 rounded-lg transition-colors text-base"
                 >
-                  Request a Demo
+                  Start Free Trial
                   <ArrowRight className="w-4 h-4" />
-                </a>
+                </Link>
                 <a
                   href="#how-it-works"
                   className="inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-semibold px-7 py-3.5 rounded-lg border border-slate-200 transition-colors text-base"
@@ -565,6 +580,35 @@ export default function LandingPage() {
                   <p className="text-sm text-slate-500 mt-1">{stat.label}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        </section>
+
+        {/* =============================================
+            COMPETITOR COMPARISON
+            ============================================= */}
+        <section className="py-16 sm:py-20 bg-emerald-600">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-4">
+              Other platforms charge per inspection. We don't.
+            </h2>
+            <p className="text-emerald-100 text-lg max-w-2xl mx-auto mb-10">
+              Per-inspection pricing penalises thoroughness. The more you inspect, the more you pay.
+              InspectVoice is a flat monthly fee — inspect as often as you need.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-6 max-w-xl mx-auto">
+              <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
+                <p className="text-sm text-emerald-200 uppercase tracking-wider mb-2">Per-inspection pricing</p>
+                <p className="text-3xl font-extrabold text-white mb-1">£150+</p>
+                <p className="text-emerald-200 text-sm">50 inspections/month at £3 each</p>
+                <p className="text-emerald-200 text-xs mt-2">Cost rises with volume</p>
+              </div>
+              <div className="bg-white rounded-xl p-6 border-2 border-emerald-300 shadow-lg">
+                <p className="text-sm text-emerald-600 uppercase tracking-wider font-semibold mb-2">InspectVoice Team</p>
+                <p className="text-3xl font-extrabold text-slate-900 mb-1">£99<span className="text-lg font-normal text-slate-500">/month</span></p>
+                <p className="text-slate-600 text-sm">Unlimited inspections</p>
+                <p className="text-emerald-600 text-xs font-semibold mt-2">The more you inspect, the more you save</p>
+              </div>
             </div>
           </div>
         </section>
@@ -619,28 +663,28 @@ export default function LandingPage() {
               {[
                 {
                   step: '1',
-                  title: 'Select Site',
-                  desc: 'Choose your site from the asset register and start a new inspection.',
+                  title: 'Plan Route',
+                  desc: 'See today\'s due sites on the map. Tap optimise for the fastest driving route.',
                 },
                 {
                   step: '2',
                   title: 'Voice Capture',
-                  desc: 'Walk the site speaking observations. AI transcribes and categorises in real time.',
+                  desc: 'Walk the site speaking observations. AI transcribes and extracts defects in real time.',
                 },
                 {
                   step: '3',
-                  title: 'Photo Evidence',
-                  desc: 'Capture geotagged photos of defects linked to the inspection record.',
+                  title: 'Review Findings',
+                  desc: 'Previous defects appear automatically. Mark as Resolved, Still Present, or Worsened.',
                 },
                 {
                   step: '4',
-                  title: 'Review & Sign',
-                  desc: 'Review the AI-generated report, adjust if needed, and digitally sign.',
+                  title: 'Sign & PDF',
+                  desc: 'Review the report, digitally sign, and download the professional PDF on site.',
                 },
                 {
                   step: '5',
-                  title: 'Auto Alerts',
-                  desc: 'High-severity defects trigger instant notifications to stakeholders.',
+                  title: 'Drive Away',
+                  desc: 'Report is done. No office write-up. Defects are already on the manager dashboard.',
                 },
               ].map((item) => (
                 <div key={item.step} className="text-center">
@@ -656,9 +700,107 @@ export default function LandingPage() {
         </section>
 
         {/* =============================================
+            PRICING SECTION
+            ============================================= */}
+        <section id="pricing" className="py-20 sm:py-24 bg-slate-50">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center max-w-2xl mx-auto mb-16">
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                Simple, predictable pricing
+              </h2>
+              <p className="mt-4 text-lg text-slate-600">
+                No per-inspection fees. No hidden charges. One flat monthly price.
+              </p>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-8 max-w-3xl mx-auto">
+              {/* Team */}
+              <div className="bg-white rounded-2xl border-2 border-emerald-500 shadow-lg p-8 relative">
+                <div className="absolute -top-3 left-6 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+                  Most Popular
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-1">Team</h3>
+                <p className="text-sm text-slate-500 mb-6">For inspection companies</p>
+                <div className="mb-6">
+                  <span className="text-4xl font-extrabold text-slate-900">£99</span>
+                  <span className="text-slate-500">/month</span>
+                </div>
+                <ul className="space-y-3 text-sm text-slate-600 mb-8">
+                  {[
+                    'Up to 5 inspectors',
+                    'Unlimited inspections',
+                    'Up to 50 sites',
+                    '50GB storage',
+                    'Voice capture + AI defect extraction',
+                    'Previous findings carry-forward',
+                    'Instant signed PDF reports',
+                    'Route planner with optimisation',
+                    'Defect library',
+                    'Inspector performance tracking',
+                    'Baseline photo comparison',
+                    'Offline-first with cached auth',
+                    'Email support',
+                  ].map((item) => (
+                    <li key={item} className="flex items-start gap-2.5">
+                      <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/sign-up"
+                  className="block text-center bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-lg transition-colors"
+                >
+                  Start 30-Day Free Trial
+                </Link>
+                <p className="text-xs text-slate-400 text-center mt-3">No credit card required</p>
+              </div>
+
+              {/* Enterprise */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-8">
+                <h3 className="text-xl font-bold text-slate-900 mb-1">Enterprise</h3>
+                <p className="text-sm text-slate-500 mb-6">For councils &amp; large organisations</p>
+                <div className="mb-6">
+                  <span className="text-4xl font-extrabold text-slate-900">Custom</span>
+                </div>
+                <ul className="space-y-3 text-sm text-slate-600 mb-8">
+                  {[
+                    'Everything in Team',
+                    'Unlimited inspectors',
+                    'Unlimited sites',
+                    'Dedicated onboarding',
+                    'API access',
+                    'Custom report templates',
+                    'Client portal with magic links',
+                    'Sealed exports with verification',
+                    'Phone & WhatsApp support',
+                    '24/7 P1 incident response',
+                    'DPIA & DPA documentation',
+                    'Cyber Essentials mapped controls',
+                    'Named account manager',
+                  ].map((item) => (
+                    <li key={item} className="flex items-start gap-2.5">
+                      <CheckCircle className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <a
+                  href="#contact"
+                  className="block text-center bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 rounded-lg transition-colors"
+                >
+                  Contact Us
+                </a>
+                <p className="text-xs text-slate-400 text-center mt-3">Tailored to your authority</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* =============================================
             COMPLIANCE SECTION (Educational Content — contributes to 2,500+ words)
             ============================================= */}
-        <section id="compliance" className="py-20 sm:py-24 bg-slate-50">
+        <section id="compliance" className="py-20 sm:py-24">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight mb-12 text-center">
               The Complete Guide to UK Playground Inspection Compliance
@@ -735,7 +877,8 @@ export default function LandingPage() {
                 by severity. InspectVoice supports this by maintaining a full asset register where
                 every piece of equipment is catalogued with its manufacturer, model, installation
                 date, and inspection history. Voice observations are automatically linked to the
-                relevant asset, creating a continuous maintenance record.
+                relevant asset, and previous findings from earlier inspections appear automatically
+                so the inspector can verify whether issues have been resolved.
               </p>
 
               <h4>Tier 3: Annual Main Inspection</h4>
@@ -755,6 +898,21 @@ export default function LandingPage() {
                 capital expenditure decisions and long-term asset replacement planning.
               </p>
 
+              <h3>The Problem with Per-Inspection Pricing</h3>
+              <p>
+                Many inspection platforms charge per inspection — typically around £3 per completed
+                inspection. This pricing model creates a perverse incentive: the more thoroughly
+                you inspect, the more you pay. A company conducting routine visuals three times a
+                week across 20 sites faces inspection software costs of over £900 per month. This
+                discourages the very thoroughness that safety standards require.
+              </p>
+              <p>
+                InspectVoice uses flat monthly pricing specifically to avoid this problem. At £99
+                per month for up to 5 inspectors with unlimited inspections, the cost is
+                predictable regardless of inspection volume. This encourages frequent inspection
+                and removes the financial barrier to maintaining a robust safety regime.
+              </p>
+
               <h3>The Cost of Paper-Based Inspection Systems</h3>
               <p>
                 Many UK councils still rely on paper forms, spreadsheets, or generic asset
@@ -765,13 +923,13 @@ export default function LandingPage() {
                 First, there is the time cost. An inspector completing a routine visual inspection
                 on paper typically spends 15–20 minutes at the site, then another 10–15 minutes
                 back at the depot entering the data into a spreadsheet or database. With voice
-                capture, the data entry step is eliminated entirely — the report is generated in
-                real time as the inspector walks the site. For a council managing 50–100 playground
-                sites, this represents a saving of hundreds of hours per year.
+                capture and instant PDF generation, the data entry step is eliminated entirely —
+                the report is complete before the inspector leaves site. For a company managing
+                50–100 playground sites, this represents a saving of hundreds of hours per year.
               </p>
               <p>
                 Second, there is the compliance risk. Paper records can be lost, damaged, or
-                incomplete. In the event of an accident and subsequent legal claim, the council
+                incomplete. In the event of an accident and subsequent legal claim, the organisation
                 must demonstrate that a reasonable inspection regime was in place and properly
                 documented. Missing or illegible records undermine this defence. Digital records
                 with timestamps, user attribution, and immutable audit trails provide a
@@ -783,6 +941,23 @@ export default function LandingPage() {
                 forms are processed on Wednesday. In that window, a child could be injured. Digital
                 systems with real-time escalation close this gap — a very high severity defect
                 appears on the manager dashboard within seconds of being recorded.
+              </p>
+
+              <h3>Why Previous Findings Matter</h3>
+              <p>
+                One of the most critical elements of a defensible inspection regime is demonstrating
+                that reported defects are tracked to resolution. If an inspector reports a chain
+                link wear issue on visit 1, and the same defect is still present on visit 2, and
+                again on visit 3 — that documented trail becomes powerful evidence of whether the
+                responsible organisation acted on the findings.
+              </p>
+              <p>
+                InspectVoice automatically surfaces open defects from previous inspections when an
+                inspector revisits an asset. Each finding appears with the full original detail,
+                and the inspector marks it as Resolved, Still Present, or Worsened. Recurring
+                defects carry into the new report with a flag showing how many consecutive
+                inspections the issue has been open. This creates exactly the audit trail that
+                solicitors and insurers look for when assessing liability.
               </p>
 
               <h3>Impact-Absorbing Surfaces and BS EN 1177</h3>
@@ -799,25 +974,7 @@ export default function LandingPage() {
                 impact-absorbing performance of surfacing materials. InspectVoice enables inspectors
                 to record surface condition observations as part of the standard inspection flow,
                 with severity classifications that trigger maintenance actions when thresholds are
-                exceeded.
-              </p>
-
-              <h3>Manufacturer Recalls and Safety Notices</h3>
-              <p>
-                Playground equipment manufacturers occasionally issue safety recalls or product
-                notices when a design defect or material failure is identified. Councils must have
-                a system for tracking these recalls and checking their asset register for affected
-                equipment. Failure to act on a known recall significantly increases liability in
-                the event of an accident.
-              </p>
-              <p>
-                InspectVoice includes a dedicated manufacturer recall management system. When a
-                recall is entered, a deterministic matching engine scans the asset register by
-                manufacturer name and model number, identifying all potentially affected equipment.
-                Each match includes an explanatory reason string detailing exactly why the asset
-                was flagged — providing full transparency and defensibility. Matched assets display
-                recall warnings on their detail pages, and the recall summary is included in
-                stakeholder email digests.
+                exceeded. Baseline photo comparison shows visual deterioration over time.
               </p>
 
               <h3>Building a Defensible Inspection Regime</h3>
@@ -825,17 +982,18 @@ export default function LandingPage() {
                 A defensible inspection regime requires three elements: competent inspectors,
                 adequate frequency, and complete records. InspectVoice supports all three. The
                 platform ensures inspections are completed to a consistent standard regardless
-                of which inspector conducts them, configurable inspection frequencies with
-                automated reminders prevent inspections from being missed, and every finding is
-                recorded with full metadata including timestamp, user, location, severity, BS EN
-                reference, and photographic evidence.
+                of which inspector conducts them, the route planner with due-date tracking
+                prevents inspections from being missed, and every finding is recorded with full
+                metadata including timestamp, user, location, severity, BS EN reference, and
+                photographic evidence.
               </p>
               <p>
-                For councils facing increasing pressure on budgets and resources, InspectVoice
+                For organisations facing increasing pressure on budgets and resources, InspectVoice
                 provides a way to maintain — and demonstrably improve — inspection standards
                 while reducing the time and cost of the inspection process. The combination of
-                voice capture, AI categorisation, and automated reporting means that inspectors
-                spend more time looking at equipment and less time writing about it.
+                voice capture, AI defect extraction, previous findings carry-forward, and instant
+                PDF generation means that inspectors spend more time looking at equipment and
+                less time writing about it.
               </p>
             </div>
           </div>
@@ -844,7 +1002,7 @@ export default function LandingPage() {
         {/* =============================================
             SOCIAL PROOF / TRUST
             ============================================= */}
-        <section className="py-16 sm:py-20">
+        <section className="py-16 sm:py-20 bg-slate-50">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="bg-emerald-600 rounded-2xl p-8 sm:p-12 text-center">
               <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-4">
@@ -872,6 +1030,10 @@ export default function LandingPage() {
                   <CheckCircle className="w-4 h-4" />
                   Enterprise security
                 </span>
+                <span className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Offline-first architecture
+                </span>
               </div>
             </div>
           </div>
@@ -879,9 +1041,8 @@ export default function LandingPage() {
 
         {/* =============================================
             FAQ SECTION
-            Point 13: 12 FAQ blocks with schema
             ============================================= */}
-        <section id="faq" className="py-20 sm:py-24 bg-slate-50">
+        <section id="faq" className="py-20 sm:py-24">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight text-center mb-12">
               Frequently Asked Questions
@@ -898,43 +1059,46 @@ export default function LandingPage() {
         {/* =============================================
             CTA SECTION
             ============================================= */}
-        <section id="contact" className="py-20 sm:py-24">
+        <section id="contact" className="py-20 sm:py-24 bg-slate-50">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center">
               <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
                 Ready to modernise your playground inspections?
               </h2>
               <p className="mt-4 text-lg text-slate-600 max-w-xl mx-auto">
-                Get in touch for a demo tailored to your authority. We'll show you how InspectVoice
-                works with your sites, your team, and your existing processes.
+                Start your 30-day free trial today, or get in touch for an Enterprise demo
+                tailored to your organisation.
               </p>
             </div>
 
-            <div className="mt-10 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <iframe
-                src="https://app.smartsuite.com/form/sba974gi/tqV2bj6kTj?header=false"
-                width="100%"
-                height="600"
-                frameBorder="0"
-                title="Request a Demo — InspectVoice"
-                loading="lazy"
-                className="block"
-              />
+            <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
+              <Link
+                to="/sign-up"
+                className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-8 py-4 rounded-lg transition-colors text-base"
+              >
+                Start Free Trial
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+              <a
+                href="mailto:support@autaimate.com?subject=InspectVoice Enterprise Enquiry"
+                className="inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-semibold px-8 py-4 rounded-lg border border-slate-200 transition-colors text-base"
+              >
+                Contact for Enterprise
+              </a>
             </div>
 
             <p className="mt-6 text-sm text-slate-400 text-center">
-              No commitment required. Free trial available for qualifying authorities.
+              No credit card required for free trial. Enterprise includes dedicated onboarding.
             </p>
           </div>
         </section>
 
         {/* =============================================
             FOOTER
-            Point 15: Internal links
             ============================================= */}
         <footer className="bg-slate-900 text-slate-400 py-12">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid sm:grid-cols-3 gap-8 mb-8">
+            <div className="grid sm:grid-cols-4 gap-8 mb-8">
               <div>
                 <div className="flex items-center gap-2.5 mb-4">
                   <div className="w-7 h-7 rounded-md bg-emerald-600 flex items-center justify-center">
@@ -943,8 +1107,8 @@ export default function LandingPage() {
                   <span className="text-sm font-bold text-white">InspectVoice</span>
                 </div>
                 <p className="text-xs leading-relaxed">
-                  Voice-driven AI playground inspection software for UK local authorities.
-                  BS EN 1176/1177 compliant.
+                  Voice-driven AI playground inspection software for UK inspection companies and local authorities.
+                  BS EN 1176/1177 compliant. From £99/month.
                 </p>
               </div>
 
@@ -961,6 +1125,11 @@ export default function LandingPage() {
                   <li>
                     <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
                       How It Works
+                    </a>
+                  </li>
+                  <li>
+                    <a href="#pricing" className="hover:text-emerald-400 transition-colors">
+                      Pricing
                     </a>
                   </li>
                   <li>
@@ -1001,6 +1170,7 @@ export default function LandingPage() {
                   </li>
                 </ul>
               </div>
+
               <div>
                 <h4 className="text-xs font-semibold text-white uppercase tracking-wider mb-3">
                   Legal

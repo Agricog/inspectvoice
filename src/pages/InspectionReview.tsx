@@ -278,6 +278,17 @@ function AssetResultCard({
     [item.id, onFieldNormalised],
   );
 
+  const handleDefectFieldUpdate = useCallback(
+    (defectIdx: number, field: keyof DefectDetail, value: string) => {
+      if (!onItemUpdate) return;
+      const updatedDefects: DefectDetail[] = item.defects.map((d, i) =>
+        i === defectIdx ? { ...d, [field]: value } : d,
+      );
+      onItemUpdate(item.id, { defects: updatedDefects });
+    },
+    [item.id, item.defects, onItemUpdate],
+  );
+
   return (
     <div className="iv-panel overflow-hidden">
       <button
@@ -431,7 +442,17 @@ function AssetResultCard({
                       <div className="flex items-start gap-2 min-w-0 flex-1">
                         <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${riskDotColour(defect.risk_rating)}`} />
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm iv-text">{defect.description}</p>
+                          {!readOnly && onItemUpdate ? (
+                            <textarea
+                              value={defect.description}
+                              onChange={(e) => handleDefectFieldUpdate(idx, 'description', e.target.value)}
+                              rows={2}
+                              className="iv-input w-full text-sm resize-y"
+                              aria-label={`Edit defect ${idx + 1} description`}
+                            />
+                          ) : (
+                            <p className="text-sm iv-text">{defect.description}</p>
+                          )}
                           <div className="flex flex-wrap items-center gap-2 mt-1">
                             {defect.risk_rating && (
                               <span className="text-2xs iv-muted">
@@ -447,12 +468,23 @@ function AssetResultCard({
                               </span>
                             )}
                           </div>
-                          {defect.remedial_action && (
-                            <div className="mt-2 pt-2 border-t border-iv-border">
-                              <p className="text-2xs iv-muted uppercase tracking-wider mb-0.5">Remedial Action</p>
-                              <p className="text-sm iv-text">{defect.remedial_action}</p>
-                            </div>
-                          )}
+                          <div className="mt-2 pt-2 border-t border-iv-border">
+                            <p className="text-2xs iv-muted uppercase tracking-wider mb-0.5">Remedial Action</p>
+                            {!readOnly && onItemUpdate ? (
+                              <textarea
+                                value={defect.remedial_action ?? ''}
+                                onChange={(e) => handleDefectFieldUpdate(idx, 'remedial_action', e.target.value)}
+                                rows={2}
+                                className="iv-input w-full text-sm resize-y"
+                                placeholder="Enter remedial action..."
+                                aria-label={`Edit defect ${idx + 1} remedial action`}
+                              />
+                            ) : (
+                              defect.remedial_action ? (
+                                <p className="text-sm iv-text">{defect.remedial_action}</p>
+                              ) : null
+                            )}
+                          </div>
                         </div>
                       </div>
                       {!readOnly && (

@@ -89,7 +89,7 @@ export async function getPreviousFindings(
       d.bs_en_reference,
       d.action_timeframe,
       d.remedial_action,
-      d.estimated_cost_band,
+      d.estimated_cost_gbp AS estimated_cost_band,
       d.due_date::text AS due_date,
       d.created_at::text AS created_at,
       ii.inspection_id,

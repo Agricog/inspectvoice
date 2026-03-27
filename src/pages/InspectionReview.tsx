@@ -440,8 +440,25 @@ function AssetResultCard({
                   <div key={idx} className="text-sm iv-text bg-iv-surface-2 p-3 rounded-lg">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2 min-w-0 flex-1">
-                        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${riskDotColour(defect.risk_rating)}`} />
+                       <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${riskDotColour(defect.risk_rating)}`} />
                         <div className="min-w-0 flex-1">
+                          {(defect as unknown as Record<string, unknown>)._recurring && (
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-[#F97316]/15 text-[#F97316] border border-[#F97316]/30">
+                                Recurring
+                              </span>
+                              {((defect as unknown as Record<string, unknown>)._consecutive_inspections as number) > 1 && (
+                                <span className="text-2xs text-[#EF4444] font-medium">
+                                  Open {(defect as unknown as Record<string, unknown>)._consecutive_inspections as number} visits
+                                </span>
+                              )}
+                              {(defect as unknown as Record<string, unknown>)._first_reported && (
+                                <span className="text-2xs iv-muted">
+                                  First reported {new Date((defect as unknown as Record<string, unknown>)._first_reported as string).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {!readOnly && onItemUpdate ? (
                             <textarea
                               value={defect.description}
@@ -502,6 +519,55 @@ function AssetResultCard({
               </div>
             </div>
           )}
+
+          {/* Resolved Findings */}
+          {(() => {
+            const resolved = (item as unknown as Record<string, unknown>).resolved_findings as Array<{
+              description: string;
+              bs_en_reference: string;
+              severity: string;
+              remedial_action: string;
+              first_reported: string;
+              inspection_date: string;
+              inspector_name: string;
+              consecutive_inspections: number;
+              resolved_at: string;
+            }> | null | undefined;
+            if (!resolved || resolved.length === 0) return null;
+            return (
+              <div>
+                <p className="text-xs iv-muted mb-2 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-[#22C55E]" />
+                  Resolved Previous Findings ({resolved.length})
+                </p>
+                <div className="space-y-2">
+                  {resolved.map((r, ri) => (
+                    <div key={ri} className="text-sm iv-text bg-[#22C55E]/5 p-3 rounded-lg border border-[#22C55E]/20">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-[#22C55E]/15 text-[#22C55E] border border-[#22C55E]/30">
+                          Resolved
+                        </span>
+                        <span className="text-2xs iv-muted">
+                          {RISK_RATING_LABELS[r.severity as RiskRating] ?? r.severity}
+                        </span>
+                        {r.bs_en_reference && (
+                          <span className="text-2xs text-iv-accent">{r.bs_en_reference}</span>
+                        )}
+                      </div>
+                      <p className="text-sm iv-text line-through opacity-70">{r.description}</p>
+                      {r.remedial_action && (
+                        <p className="text-xs iv-muted mt-1 line-through opacity-70">Remedy: {r.remedial_action}</p>
+                      )}
+                      <p className="text-2xs iv-muted mt-2">
+                        First reported {new Date(r.first_reported).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {r.consecutive_inspections > 1 && ` · Open ${r.consecutive_inspections} visits before resolution`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Checklist */}
           {(() => {

@@ -722,18 +722,36 @@ class SyncService {
   private async runPreflightSync(): Promise<void> {
     if (!this.isOnline || !this.getAuthToken) return;
 
+    // ── Wait for outbound queue to drain first ──
+    // This ensures locally-created sites/assets reach the server
+    // before we pull server data back into IndexedDB.
     try {
-      // ── Sites ──
+      const pending = await syncQueue.count();
+      if (pending > 0) {
+        console.info(`[PreflightSync] ${pending} outbound items pending — skipping inbound sync this cycle`);
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    try {
+      // ── Sites (merge, don't replace) ──
       const sitesRes = await secureFetch<ApiResponse<{ sites: Array<Record<string, unknown>> }>>(
         '/api/v1/sites?limit=500',
         { method: 'GET', getToken: this.getAuthToken },
       );
       if (sitesRes.success && sitesRes.data?.sites) {
-        await sitesCache.putMany(
-          sitesRes.data.sites.map((s) => s as unknown as Parameters<typeof sitesCache.put>[0]),
-        );
+        // Only add/update — never delete local records
+        for (const s of sitesRes.data.sites) {
+          try {
+            await sitesCache.put(s as unknown as Parameters<typeof sitesCache.put>[0]);
+          } catch {
+            // Skip individual site — continue
+          }
+        }
 
-        // ── Assets for each site ──
+        // ── Assets for each site (merge) ──
         for (const site of sitesRes.data.sites) {
           try {
             const siteId = site['id'] as string;
@@ -743,9 +761,13 @@ class SyncService {
               { method: 'GET', getToken: this.getAuthToken! },
             );
             if (assetsRes.success && assetsRes.data?.assets) {
-              await assetsCache.putMany(
-                assetsRes.data.assets.map((a) => a as unknown as Parameters<typeof assetsCache.put>[0]),
-              );
+              for (const a of assetsRes.data.assets) {
+                try {
+                  await assetsCache.put(a as unknown as Parameters<typeof assetsCache.put>[0]);
+                } catch {
+                  // Skip individual asset
+                }
+              }
             }
           } catch {
             // Non-blocking — continue with other sites
@@ -755,6 +777,24 @@ class SyncService {
     } catch {
       // Non-blocking — inspector works with whatever was previously cached
     }
+
+    try {
+      // ── Defect Library ──
+      const libRes = await secureFetch<ApiResponse<{ entries: Array<Record<string, unknown>> }>>(
+        '/api/v1/defect-library?limit=500',
+        { method: 'GET', getToken: this.getAuthToken! },
+      );
+      if (libRes.success && libRes.data?.entries) {
+        try {
+          localStorage.setItem('iv-defect-library-cache', JSON.stringify(libRes.data.entries));
+        } catch {
+          // Storage full — non-blocking
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
+  }
 
     try {
       // ── Defect Library ──

@@ -325,12 +325,12 @@ export function SiteDetail(): JSX.Element {
         let activeAssets = cachedAssets.filter((a) => a.data.is_active !== false);
         if (activeAssets.length === 0) {
           try {
-            const assetsResp = await secureFetch<{ data: { assets: Array<Record<string, unknown>> } }>(
+            const assetsResp = await secureFetch<{ data: Array<Record<string, unknown>> }>(
               `/api/v1/sites/${id}/assets?limit=500`,
             );
-            if (assetsResp.data?.assets && assetsResp.data.assets.length > 0) {
+            if (Array.isArray(assetsResp.data) && assetsResp.data.length > 0) {
               const fetched: CachedAsset[] = [];
-              for (const raw of assetsResp.data.assets) {
+              for (const raw of assetsResp.data) {
                 const asset = raw as unknown as import('@/types').Asset;
                 await assetsCache.put(asset);
                 fetched.push({ id: asset.id, data: asset, lastModified: Date.now(), site_id: id as string, cachedAt: Date.now() } as CachedAsset);

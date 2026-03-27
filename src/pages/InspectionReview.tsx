@@ -1501,7 +1501,6 @@ export default function InspectionReview(): JSX.Element {
             <NormaliseButton
               fieldName="inspector_summary"
               originalText={summary}
-              inspectionId={inspectionId}
               onAccept={(normalisedText: string) => setSummary(normalisedText)}
             />
           )}

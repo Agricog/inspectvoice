@@ -333,7 +333,7 @@ export function SiteDetail(): JSX.Element {
               for (const raw of assetsResp.data.assets) {
                 const asset = raw as unknown as import('@/types').Asset;
                 await assetsCache.put(asset);
-                fetched.push({ id: asset.id, data: asset, lastModified: Date.now() } as CachedAsset);
+                fetched.push({ id: asset.id, data: asset, lastModified: Date.now(), site_id: id as string, cachedAt: Date.now() } as CachedAsset);
               }
               activeAssets = fetched.filter((a) => a.data.is_active !== false);
             }

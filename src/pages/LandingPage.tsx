@@ -1080,7 +1080,7 @@ export default function LandingPage() {
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <a
-                href="mailto:support@autaimate.com?subject=InspectVoice Enterprise Enquiry"
+                href="#contact"
                 className="inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-semibold px-8 py-4 rounded-lg border border-slate-200 transition-colors text-base"
               >
                 Contact for Enterprise
@@ -1090,6 +1090,34 @@ export default function LandingPage() {
             <p className="mt-6 text-sm text-slate-400 text-center">
               No credit card required for free trial. Enterprise includes dedicated onboarding.
             </p>
+          </div>
+        </section>
+
+        {/* =============================================
+            CONTACT FORM
+            ============================================= */}
+        <section id="contact" className="py-20 sm:py-24">
+          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center mb-10">
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                Get in touch
+              </h2>
+              <p className="mt-4 text-lg text-slate-600">
+                Enterprise enquiry, demo request, or just a question — we'll get back to you within 24 hours.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <iframe
+                src="https://app.smartsuite.com/form/sba974gi/tqV2bj6kTj?header=false"
+                width="100%"
+                height="600"
+                frameBorder="0"
+                title="Contact InspectVoice"
+                loading="lazy"
+                className="block"
+              />
+            </div>
           </div>
         </section>
 

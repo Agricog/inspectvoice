@@ -32,6 +32,8 @@ import {
   inspectionItems,
   pendingPhotos,
   pendingAudio,
+  sitesCache,
+  assetsCache,
   runStorageMaintenance,
 } from '@services/offlineStore';
 import { captureError } from '@utils/errorTracking';
@@ -201,6 +203,7 @@ class SyncService {
 
     // Process immediately on start
     if (this.isOnline) {
+      void this.runPreflightSync();
       void this.processQueue();
     }
   }
@@ -703,6 +706,73 @@ class SyncService {
         body: { id: assetId, ...payload },
       },
     );
+  }
+
+  // =============================================
+  // PRE-FLIGHT SYNC (inbound — server → IndexedDB)
+  // =============================================
+
+  /**
+   * Pull sites, assets, and defect library from the server into IndexedDB.
+   * Runs once on app startup when online, so inspectors have all data
+   * available before going into the field.
+   *
+   * Non-blocking — failures are silently caught. The inspector can still
+   * work with whatever data was previously cached.
+   */
+  private async runPreflightSync(): Promise<void> {
+    if (!this.isOnline || !this.getAuthToken) return;
+
+    try {
+      // ── Sites ──
+      const sitesRes = await secureFetch<ApiResponse<{ sites: Array<Record<string, unknown>> }>>(
+        '/api/v1/sites?limit=500',
+        { method: 'GET', getToken: this.getAuthToken },
+      );
+      if (sitesRes.success && sitesRes.data?.sites) {
+        await sitesCache.putMany(
+          sitesRes.data.sites.map((s) => s as unknown as Parameters<typeof sitesCache.put>[0]),
+        );
+
+        // ── Assets for each site ──
+        for (const site of sitesRes.data.sites) {
+          try {
+            const siteId = site['id'] as string;
+            if (!siteId) continue;
+            const assetsRes = await secureFetch<ApiResponse<{ assets: Array<Record<string, unknown>> }>>(
+              `/api/v1/sites/${siteId}/assets?limit=500`,
+              { method: 'GET', getToken: this.getAuthToken! },
+            );
+            if (assetsRes.success && assetsRes.data?.assets) {
+              await assetsCache.putMany(
+                assetsRes.data.assets.map((a) => a as unknown as Parameters<typeof assetsCache.put>[0]),
+              );
+            }
+          } catch {
+            // Non-blocking — continue with other sites
+          }
+        }
+      }
+    } catch {
+      // Non-blocking — inspector works with whatever was previously cached
+    }
+
+    try {
+      // ── Defect Library ──
+      const libRes = await secureFetch<ApiResponse<{ entries: Array<Record<string, unknown>> }>>(
+        '/api/v1/defect-library?limit=500',
+        { method: 'GET', getToken: this.getAuthToken! },
+      );
+      if (libRes.success && libRes.data?.entries) {
+        try {
+          localStorage.setItem('iv-defect-library-cache', JSON.stringify(libRes.data.entries));
+        } catch {
+          // Storage full — non-blocking
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
   }
 
   // =============================================

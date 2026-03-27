@@ -20,6 +20,8 @@ import {
   useOrganization,
 } from '@clerk/clerk-react';
 import { Layout } from '@components/Layout';
+import { useAuth } from '@clerk/clerk-react';
+import { getCachedSession } from '@services/offlineAuth';
 import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
 import { SiteList } from '@pages/SiteList';
 import { SiteForm } from '@pages/SiteForm';
@@ -103,15 +105,34 @@ function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
 // =============================================
 
 function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
+  const { isLoaded } = useAuth();
+  const cachedSession = getCachedSession();
+  const isOffline = !navigator.onLine;
+
+  // If Clerk loaded normally, use standard auth flow
+  if (isLoaded) {
+    return (
+      <>
+        <SignedIn>
+          <OrgGate>{children}</OrgGate>
+        </SignedIn>
+        <SignedOut>
+          <RedirectToSignIn />
+        </SignedOut>
+      </>
+    );
+  }
+
+  // Clerk hasn't loaded — if offline with cached session, render app
+  if (isOffline && cachedSession) {
+    return <>{children}</>;
+  }
+
+  // Still loading (online) — show spinner
   return (
-    <>
-      <SignedIn>
-        <OrgGate>{children}</OrgGate>
-      </SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
+    <div className="flex items-center justify-center min-h-screen bg-iv-bg">
+      <div className="animate-pulse text-iv-muted text-sm">Loading…</div>
+    </div>
   );
 }
 

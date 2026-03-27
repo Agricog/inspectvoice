@@ -973,6 +973,20 @@ export default function InspectionCapture(): JSX.Element {
         inspector_confirmed: existing?.inspector_confirmed ?? false,
         inspector_notes: captureState.notes || null,
         inspector_risk_override: existing?.inspector_risk_override ?? null,
+        resolved_findings: previousFindings
+          .filter((f) => findingActions[f.id] === 'resolved')
+          .map((f) => ({
+            original_defect_id: f.id,
+            description: f.description,
+            bs_en_reference: f.bs_en_reference ?? '',
+            severity: f.severity,
+            remedial_action: f.remedial_action ?? '',
+            first_reported: f.created_at,
+            inspection_date: f.inspection_date,
+            inspector_name: f.inspector_name,
+            consecutive_inspections: f.consecutive_inspections,
+            resolved_at: new Date().toISOString(),
+          })),
         checklist_data: {
           standard: checklistPoints.map((point, idx) => ({
             label: point.label,

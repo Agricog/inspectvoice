@@ -342,7 +342,7 @@ export default function DefectQuickPick({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showCustomForm, setShowCustomForm] = useState(false);
 
-  // ── Fetch quick-pick items ──
+  // ── Fetch quick-pick items (API first, IndexedDB/localStorage fallback) ──
   const fetchItems = useCallback(async () => {
     if (!assetType) return;
     setLoading(true);
@@ -351,8 +351,47 @@ export default function DefectQuickPick({
         `/api/v1/defect-library/quick-pick/${encodeURIComponent(assetType)}?limit=12`,
       );
       setItems(json.data);
+      // Cache for offline use
+      try {
+        const cacheKey = `iv-defect-qp-${assetType}`;
+        localStorage.setItem(cacheKey, JSON.stringify(json.data));
+      } catch {
+        // Storage full — non-blocking
+      }
     } catch {
-      // Silent — non-critical feature
+      // API failed (offline) — try localStorage cache
+      try {
+        const cacheKey = `iv-defect-qp-${assetType}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          setItems(JSON.parse(cached) as QuickPickItem[]);
+        } else {
+          // Try the full library cache from pre-flight sync
+          const fullCache = localStorage.getItem('iv-defect-library-cache');
+          if (fullCache) {
+            const allEntries = JSON.parse(fullCache) as Array<Record<string, unknown>>;
+            const matching = allEntries
+              .filter((e) => e['asset_type'] === assetType)
+              .slice(0, 12)
+              .map((e) => ({
+                entry_id: e['id'] as string,
+                version_id: (e['current_version_id'] as string) ?? '',
+                title: (e['title'] as string) ?? '',
+                description_template: (e['description_template'] as string) ?? '',
+                bs_en_refs: (e['bs_en_refs'] as readonly string[]) ?? [],
+                severity_default: (e['severity_default'] as string) ?? 'medium',
+                remedial_action_template: (e['remedial_action_template'] as string) ?? '',
+                cost_band: (e['cost_band'] as string | null) ?? null,
+                timeframe_default: (e['timeframe_default'] as string | null) ?? null,
+                source: 'cache',
+                usage_count: 0,
+              })) as QuickPickItem[];
+            setItems(matching);
+          }
+        }
+      } catch {
+        // Cache read failed — show empty
+      }
     } finally {
       setLoading(false);
     }

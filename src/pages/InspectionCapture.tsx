@@ -92,6 +92,16 @@ import DefectTemplateFiller from '@components/DefectTemplateFiller';
 // =============================================
 
 /** Strip surrounding quote characters from defect descriptions */
+/** Escalate risk one level when a defect has worsened */
+function escalateRisk(current: RiskRating): RiskRating {
+  switch (current) {
+    case RiskRating.LOW: return RiskRating.MEDIUM;
+    case RiskRating.MEDIUM: return RiskRating.HIGH;
+    case RiskRating.HIGH: return RiskRating.VERY_HIGH;
+    case RiskRating.VERY_HIGH: return RiskRating.VERY_HIGH;
+    default: return current;
+  }
+}
 function sanitiseDescription(value: string): string {
   return value.replace(/^["']|["']$/g, '').trim();
 }
@@ -111,6 +121,25 @@ interface CaptureDefect extends DefectDetail {
   /** Library entry ID if from quick-pick, 'existing' if loaded from prior save, undefined if custom */
   _libraryEntryId?: string;
 }
+
+interface PreviousFinding {
+  readonly id: string;
+  readonly description: string;
+  readonly severity: string;
+  readonly status: string;
+  readonly bs_en_reference: string | null;
+  readonly action_timeframe: string | null;
+  readonly remedial_action: string | null;
+  readonly estimated_cost_band: string | null;
+  readonly created_at: string;
+  readonly inspection_date: string;
+  readonly inspection_type: string;
+  readonly inspector_name: string;
+  readonly made_safe: boolean;
+  readonly consecutive_inspections: number;
+}
+
+type FindingAction = 'resolved' | 'still_present' | 'worsened';
 
 interface AssetCaptureState {
   checklistCompleted: Record<number, boolean>;
@@ -338,6 +367,9 @@ export default function InspectionCapture(): JSX.Element {
   const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   const [showQuickPick, setShowQuickPick] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [previousFindings, setPreviousFindings] = useState<PreviousFinding[]>([]);
+  const [findingsLoading, setFindingsLoading] = useState(false);
+  const [findingActions, setFindingActions] = useState<Record<string, FindingAction>>({});
 
   const currentAsset = assets[currentIndex] ?? null;
   const totalAssets = assets.length;
@@ -480,11 +512,51 @@ export default function InspectionCapture(): JSX.Element {
     setRecordDuration(0);
     setVoiceState(VoiceCaptureState.IDLE);
     setShowQuickPick(false);
+    setFindingActions({});
+    setPreviousFindings([]);
     if (voiceCaptureRef.current) {
       voiceCaptureRef.current.cancel();
       voiceCaptureRef.current = null;
     }
   }, [currentIndex, currentAsset?.id, existingItems]);
+
+  // ── Fetch previous findings for current asset ──
+  useEffect(() => {
+    if (!currentAsset || !inspectionId) return;
+    let cancelled = false;
+
+    async function fetchFindings(): Promise<void> {
+      setFindingsLoading(true);
+      try {
+        const clerkWin = window as unknown as { Clerk?: { session?: { getToken: () => Promise<string> } } };
+        const token = await clerkWin.Clerk?.session?.getToken();
+        if (!token || cancelled) { setFindingsLoading(false); return; }
+        const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
+        const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+        const res = await fetch(
+          `${apiBase}/api/v1/assets/${currentAsset.id}/previous-findings?exclude_inspection_id=${inspectionId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'X-CSRF-Token': csrf,
+            },
+          },
+        );
+        if (!res.ok || cancelled) { setFindingsLoading(false); return; }
+        const json = await res.json() as { success: boolean; data?: { findings: PreviousFinding[] } };
+        if (!cancelled && json.success && json.data) {
+          setPreviousFindings(json.data.findings);
+        }
+      } catch {
+        // Offline or network error — non-blocking, inspector can still capture
+      } finally {
+        if (!cancelled) setFindingsLoading(false);
+      }
+    }
+
+    void fetchFindings();
+    return () => { cancelled = true; };
+  }, [currentAsset?.id, inspectionId]);
 
   useEffect(() => {
     return () => {
@@ -809,6 +881,17 @@ export default function InspectionCapture(): JSX.Element {
     }));
   }, []);
 
+  const handleFindingAction = useCallback((findingId: string, action: FindingAction) => {
+    setFindingActions((prev) => {
+      // Toggle off if same action tapped again
+      if (prev[findingId] === action) {
+        const { [findingId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [findingId]: action };
+    });
+  }, []);
+
   const handleRemoveManualDefect = useCallback((index: number) => {
     setCaptureState((prev) => ({
       ...prev,
@@ -854,11 +937,31 @@ export default function InspectionCapture(): JSX.Element {
         ai_model_version: existing?.ai_model_version ?? '',
         ai_processing_status: existing?.ai_processing_status ?? AIProcessingStatus.PENDING,
         ai_processed_at: existing?.ai_processed_at ?? null,
-        defects: captureState.manualDefects.map(({ _libraryEntryId: _, ...d }) => ({
-          ...d,
-          description: sanitiseDescription(d.description),
-          remedial_action: sanitiseDescription(d.remedial_action),
-        })),
+        defects: [
+          // Manual / quick-pick defects
+          ...captureState.manualDefects.map(({ _libraryEntryId: _, ...d }) => ({
+            ...d,
+            description: sanitiseDescription(d.description),
+            remedial_action: sanitiseDescription(d.remedial_action),
+          })),
+          // Carried-forward previous findings (still present or worsened)
+          ...previousFindings
+            .filter((f) => findingActions[f.id] === 'still_present' || findingActions[f.id] === 'worsened')
+            .map((f) => ({
+              description: sanitiseDescription(f.description),
+              bs_en_reference: f.bs_en_reference ?? '',
+              risk_rating: (findingActions[f.id] === 'worsened'
+                ? escalateRisk(f.severity as RiskRating)
+                : f.severity) as RiskRating,
+              remedial_action: sanitiseDescription(f.remedial_action ?? ''),
+              action_timeframe: (f.action_timeframe ?? 'routine') as ActionTimeframe,
+              estimated_cost_band: (f.estimated_cost_band ?? 'low') as CostBand,
+              _recurring: true,
+              _original_defect_id: f.id,
+              _first_reported: f.created_at,
+              _consecutive_inspections: f.consecutive_inspections + 1,
+            })),
+        ],
         overall_condition: captureState.condition,
         risk_rating: existing?.risk_rating ?? null,
         requires_action: captureState.manualDefects.some(
@@ -1383,6 +1486,99 @@ export default function InspectionCapture(): JSX.Element {
             onSetBaseline={handleSetBaseline}
             settingBaseline={settingBaseline}
           />
+        </div>
+      )}
+
+      {/* ── Previous Findings ── */}
+      {(previousFindings.length > 0 || findingsLoading) && (
+        <div className="iv-panel p-4 mb-4">
+          <h3 className="text-sm font-semibold iv-text mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-[#F97316]" />
+            Previous Findings
+            {previousFindings.length > 0 && (
+              <span className="text-xs text-[#F97316]">({previousFindings.length})</span>
+            )}
+          </h3>
+          {findingsLoading ? (
+            <div className="flex items-center gap-2 py-3">
+              <Loader2 className="w-4 h-4 animate-spin iv-muted" />
+              <span className="text-sm iv-muted">Loading previous findings…</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {previousFindings.map((finding) => {
+                const action = findingActions[finding.id];
+                return (
+                  <div key={finding.id} className="p-3 rounded-lg bg-iv-surface-2 border border-iv-border">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                          finding.severity === 'very_high' ? 'bg-[#EF4444]' :
+                          finding.severity === 'high' ? 'bg-[#F97316]' :
+                          finding.severity === 'medium' ? 'bg-[#EAB308]' :
+                          'bg-[#22C55E]'
+                        }`} />
+                        <span className="text-2xs iv-muted">
+                          {RISK_RATING_LABELS[finding.severity as RiskRating] ?? finding.severity}
+                        </span>
+                        {finding.bs_en_reference && (
+                          <span className="text-2xs text-iv-accent">{finding.bs_en_reference}</span>
+                        )}
+                      </div>
+                      {finding.consecutive_inspections > 1 && (
+                        <span className="text-2xs text-[#EF4444] font-medium">
+                          Open {finding.consecutive_inspections} visits
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm iv-text mb-1">{finding.description}</p>
+                    {finding.remedial_action && (
+                      <p className="text-xs iv-muted mb-2">Remedy: {finding.remedial_action}</p>
+                    )}
+                    <p className="text-2xs iv-muted mb-3">
+                      Reported {finding.inspection_date} by {finding.inspector_name}
+                      {finding.made_safe && ' · Made safe'}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleFindingAction(finding.id, 'resolved')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          action === 'resolved'
+                            ? 'bg-[#22C55E]/15 text-[#22C55E] border border-[#22C55E]'
+                            : 'bg-iv-surface border border-iv-border iv-muted hover:border-iv-border-light'
+                        }`}
+                      >
+                        Resolved
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleFindingAction(finding.id, 'still_present')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          action === 'still_present'
+                            ? 'bg-[#F97316]/15 text-[#F97316] border border-[#F97316]'
+                            : 'bg-iv-surface border border-iv-border iv-muted hover:border-iv-border-light'
+                        }`}
+                      >
+                        Still Present
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleFindingAction(finding.id, 'worsened')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          action === 'worsened'
+                            ? 'bg-[#EF4444]/15 text-[#EF4444] border border-[#EF4444]'
+                            : 'bg-iv-surface border border-iv-border iv-muted hover:border-iv-border-light'
+                        }`}
+                      >
+                        Worsened
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

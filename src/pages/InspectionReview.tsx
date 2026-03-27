@@ -447,16 +447,24 @@ function AssetResultCard({
                               <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-[#F97316]/15 text-[#F97316] border border-[#F97316]/30">
                                 Recurring
                               </span>
-                              {((defect as unknown as Record<string, unknown>)._consecutive_inspections as number) > 1 && (
-                                <span className="text-2xs text-[#EF4444] font-medium">
-                                  Open {(defect as unknown as Record<string, unknown>)._consecutive_inspections as number} visits
-                                </span>
-                              )}
-                              {(defect as unknown as Record<string, unknown>)._first_reported && (
-                                <span className="text-2xs iv-muted">
-                                  First reported {new Date((defect as unknown as Record<string, unknown>)._first_reported as string).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                                </span>
-                              )}
+                              {(() => {
+                                const visits = (defect as unknown as Record<string, unknown>)._consecutive_inspections as number | undefined;
+                                if (!visits || visits <= 1) return null;
+                                return (
+                                  <span className="text-2xs text-[#EF4444] font-medium">
+                                    Open {String(visits)} visits
+                                  </span>
+                                );
+                              })()}
+                              {(() => {
+                                const firstReported = (defect as unknown as Record<string, unknown>)._first_reported as string | undefined;
+                                if (!firstReported) return null;
+                                return (
+                                  <span className="text-2xs iv-muted">
+                                    First reported {new Date(firstReported).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           )}
                           {!readOnly && onItemUpdate ? (

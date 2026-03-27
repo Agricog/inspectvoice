@@ -533,8 +533,10 @@ export default function InspectionCapture(): JSX.Element {
         if (!token || cancelled) { setFindingsLoading(false); return; }
         const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
         const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+        const assetId = currentAsset?.id;
+        if (!assetId || cancelled) { setFindingsLoading(false); return; }
         const res = await fetch(
-          `${apiBase}/api/v1/assets/${currentAsset.id}/previous-findings?exclude_inspection_id=${inspectionId}`,
+          `${apiBase}/api/v1/assets/${assetId}/previous-findings?exclude_inspection_id=${inspectionId}`,
           {
             headers: {
               'Authorization': `Bearer ${token}`,

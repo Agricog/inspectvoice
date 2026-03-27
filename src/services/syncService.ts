@@ -796,28 +796,11 @@ class SyncService {
     }
   }
 
-    try {
-      // ── Defect Library ──
-      const libRes = await secureFetch<ApiResponse<{ entries: Array<Record<string, unknown>> }>>(
-        '/api/v1/defect-library?limit=500',
-        { method: 'GET', getToken: this.getAuthToken! },
-      );
-      if (libRes.success && libRes.data?.entries) {
-        try {
-          localStorage.setItem('iv-defect-library-cache', JSON.stringify(libRes.data.entries));
-        } catch {
-          // Storage full — non-blocking
-        }
-      }
-    } catch {
-      // Non-blocking
     }
-  }
 
   // =============================================
   // MAINTENANCE
   // =============================================
-
   /** Run periodic storage maintenance */
   private async runMaintenance(): Promise<void> {
     try {

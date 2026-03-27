@@ -21,7 +21,7 @@ import {
   useAuth,
 } from '@clerk/clerk-react';
 import { Layout } from '@components/Layout';
-import { useAuth } from '@clerk/clerk-react';
+import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
 import { getCachedSession } from '@services/offlineAuth';
 import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
 import { getCachedSession } from '@services/offlineAuth';

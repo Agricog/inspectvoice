@@ -18,11 +18,13 @@ import {
   RedirectToSignIn,
   OrganizationSwitcher,
   useOrganization,
+  useAuth,
 } from '@clerk/clerk-react';
 import { Layout } from '@components/Layout';
 import { useAuth } from '@clerk/clerk-react';
 import { getCachedSession } from '@services/offlineAuth';
 import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
+import { getCachedSession } from '@services/offlineAuth';
 import { SiteList } from '@pages/SiteList';
 import { SiteForm } from '@pages/SiteForm';
 import { SiteDetail } from '@pages/SiteDetail';

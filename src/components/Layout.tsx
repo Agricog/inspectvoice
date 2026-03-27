@@ -147,46 +147,69 @@ export function Layout(): JSX.Element {
           </div>
         </div>
 
-        {/* Mobile nav */}
+       {/* Mobile nav overlay */}
         {mobileMenuOpen && (
-          <nav
-            id="mobile-nav"
-            className="md:hidden border-t border-iv-border bg-iv-surface px-4 py-3 animate-slide-up"
-            aria-label="Mobile navigation"
-          >
-            <ul className="space-y-1">
-              {NAV_ITEMS.map((item) => (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    onClick={closeMobileMenu}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                        isActive
-                          ? 'bg-iv-accent/10 text-iv-accent'
-                          : 'text-iv-muted hover:text-iv-text hover:bg-iv-surface-2'
-                      }`
-                    }
-                  >
-                    {item.icon}
-                    {item.label}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
+          <>
+            <div
+              className="fixed inset-0 bg-black/50 z-40 md:hidden"
+              onClick={closeMobileMenu}
+              aria-hidden="true"
+            />
+            <nav
+              id="mobile-nav"
+              className="fixed top-0 left-0 w-72 h-dvh z-50 md:hidden bg-iv-surface border-r border-iv-border px-4 py-6 overflow-y-auto animate-slide-up"
+              aria-label="Mobile navigation"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-iv-accent/15 flex items-center justify-center">
+                    <Shield className="w-5 h-5 text-iv-accent" />
+                  </div>
+                  <span className="text-lg font-semibold text-iv-text">InspectVoice</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeMobileMenu}
+                  className="iv-btn-icon"
+                  aria-label="Close menu"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-            {/* Mobile online status */}
-            <div className="mt-3 pt-3 border-t border-iv-border flex items-center gap-2 px-3">
-              {isOnline ? (
-                <Wifi className="w-4 h-4 text-iv-accent" />
-              ) : (
-                <WifiOff className="w-4 h-4 text-risk-medium" />
-              )}
-              <span className="text-xs text-iv-muted">
-                {isOnline ? 'Online — syncing enabled' : 'Offline — data saved locally'}
-              </span>
-            </div>
-          </nav>
+              <ul className="space-y-1">
+                {NAV_ITEMS.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      onClick={closeMobileMenu}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                          isActive
+                            ? 'bg-iv-accent/10 text-iv-accent'
+                            : 'text-iv-muted hover:text-iv-text hover:bg-iv-surface-2'
+                        }`
+                      }
+                    >
+                      {item.icon}
+                      {item.label}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-6 pt-4 border-t border-iv-border flex items-center gap-2 px-3">
+                {isOnline ? (
+                  <Wifi className="w-4 h-4 text-iv-accent" />
+                ) : (
+                  <WifiOff className="w-4 h-4 text-risk-medium" />
+                )}
+                <span className="text-xs text-iv-muted">
+                  {isOnline ? 'Online — syncing enabled' : 'Offline — data saved locally'}
+                </span>
+              </div>
+            </nav>
+          </>
         )}
       </header>
 

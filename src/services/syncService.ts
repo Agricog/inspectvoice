@@ -201,10 +201,9 @@ class SyncService {
       void this.runMaintenance();
     }, MAINTENANCE_INTERVAL_MS);
 
-    // Process immediately on start
+    // Process immediately on start — outbound FIRST, then inbound
     if (this.isOnline) {
-      void this.runPreflightSync();
-      void this.processQueue();
+      void this.processQueue().then(() => this.runPreflightSync());
     }
   }
 

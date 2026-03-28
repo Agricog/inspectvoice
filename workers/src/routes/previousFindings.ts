@@ -79,9 +79,11 @@ export async function getPreviousFindings(
   const url = new URL(_request.url);
   const excludeInspectionId = url.searchParams.get('exclude_inspection_id');
 
-  // ── All open defects for this asset from previous inspections ──
+  // ── Deduplicated open defects: only the most recent per unique issue ──
+  // Uses DISTINCT ON (bs_en_reference, description) so carried-forward
+  // defects don't appear multiple times across inspections.
   const findings = await db.rawQuery<PreviousFindingRow>(
-    `SELECT
+    `SELECT DISTINCT ON (COALESCE(d.bs_en_reference, ''), LEFT(d.description, 100))
       d.id,
       d.description,
       d.severity,
@@ -126,13 +128,9 @@ export async function getPreviousFindings(
        AND d.status NOT IN ('resolved', 'verified')
        ${excludeInspectionId ? 'AND i.id != $4' : ''}
      ORDER BY
-       CASE d.severity
-         WHEN 'very_high' THEN 1
-         WHEN 'high' THEN 2
-         WHEN 'medium' THEN 3
-         WHEN 'low' THEN 4
-         ELSE 5
-       END,
+       COALESCE(d.bs_en_reference, ''),
+       LEFT(d.description, 100),
+       i.inspection_date DESC,
        d.created_at DESC
      LIMIT 50`,
     excludeInspectionId

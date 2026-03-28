@@ -357,7 +357,7 @@ function CollapsibleSection({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-[#1C2029] transition-colors"
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-iv-surface-2 transition-colors"
         aria-expanded={open}
       >
         <div className="flex items-center gap-2">
@@ -540,7 +540,7 @@ function RepeatDefectAlert({ repeats }: { repeats: RepeatDefect[] }): JSX.Elemen
         {repeats.map((r) => (
           <div
             key={r.bs_en_reference}
-            className="flex items-center justify-between p-2.5 rounded-lg bg-[#1C2029]"
+            className="flex items-center justify-between p-2.5 rounded-lg bg-iv-surface-2"
           >
             <div className="min-w-0 flex-1">
               <span className="text-sm font-mono text-[#F97316]">{r.bs_en_reference}</span>
@@ -755,7 +755,7 @@ export default function AssetDetail(): JSX.Element {
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold iv-text">{asset.asset_code}</h1>
               {!asset.is_active && (
-                <span className="iv-badge text-xs bg-[#2A2F3A] iv-muted border border-[#2A2F3A] px-2 py-0.5 rounded-full">
+                <span className="iv-badge text-xs bg-[#2A2F3A] iv-muted border border-iv-border px-2 py-0.5 rounded-full">
                   Inactive
                 </span>
               )}
@@ -859,7 +859,7 @@ export default function AssetDetail(): JSX.Element {
             <p className="text-sm iv-muted">Photo loading requires sync service (Phase 5)</p>
           </div>
         ) : (
-          <div className="aspect-video bg-[#1C2029] rounded-lg flex flex-col items-center justify-center border-2 border-dashed border-[#2A2F3A]">
+          <div className="aspect-video bg-[#1C2029] rounded-lg flex flex-col items-center justify-center border-2 border-dashed border-iv-border">
             <Camera className="w-8 h-8 iv-muted mb-2" />
             <p className="text-sm iv-muted">No reference photo</p>
             <p className="text-xs iv-muted mt-1">Photo capture available in Phase 4</p>
@@ -1224,7 +1224,7 @@ export default function AssetDetail(): JSX.Element {
             {defectHistory.map((defect) => {
               const isOpen = defect.status !== 'resolved' && defect.status !== 'verified';
               const statusLabel = DEFECT_STATUS_LABELS[defect.status] ?? defect.status;
-              const statusStyle = DEFECT_STATUS_STYLES[defect.status] ?? 'bg-[#2A2F3A] iv-muted';
+              const statusStyle = DEFECT_STATUS_STYLES[defect.status] ?? 'bg-iv-border iv-muted';
 
               return (
                 <div

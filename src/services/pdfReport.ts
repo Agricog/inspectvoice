@@ -869,14 +869,70 @@ async function renderAssetResults(doc: PDFDocument, cursor: Cursor, fonts: PDFFo
     }
 
     // Defects
-    if (item.defects.length > 0) {
-      cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
-      cursor.page.drawText(`Defects (${item.defects.length}):`, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_ORANGE });
-      cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 4 };
-      for (const defect of item.defects) {
-        cursor = renderDefectBlock(doc, cursor, fonts, defect, reportId);
+   if (item.defects.length > 0) {
+        cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
+        cursor.page.drawText(`Defects (${item.defects.length}):`, { x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_ORANGE });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 4 };
+        for (const defect of item.defects) {
+          cursor = renderDefectBlock(doc, cursor, fonts, defect, reportId);
+        }
       }
-    }
+
+      // Resolved Previous Findings
+      const resolvedFindings = (item as unknown as Record<string, unknown>).resolved_findings as Array<{
+        description: string;
+        bs_en_reference: string;
+        severity: string;
+        remedial_action: string;
+        first_reported: string;
+        consecutive_inspections: number;
+        resolved_at: string;
+      }> | null | undefined;
+      if (resolvedFindings && resolvedFindings.length > 0) {
+        cursor = ensureSpace(doc, cursor, fonts, reportId, 30);
+        cursor.page.drawText(`Resolved Previous Findings (${resolvedFindings.length}):`, {
+          x: MARGIN_LEFT + 6, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.bold, color: COLOUR_GREEN,
+        });
+        cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 4 };
+        for (const rf of resolvedFindings) {
+          cursor = ensureSpace(doc, cursor, fonts, reportId, 50);
+          const rfIndent = MARGIN_LEFT + 12;
+          drawBadge(cursor.page, fonts, 'Resolved', rfIndent, cursor.y - FONT_SIZE_BODY - 1, COLOUR_GREEN, COLOUR_GREEN_BG);
+          const resolvedBadgeW = fonts.bold.widthOfTextAtSize('Resolved', FONT_SIZE_SMALL) + 20;
+          const sevLabel = RISK_RATING_LABELS[rf.severity as RiskRating] ?? rf.severity;
+          cursor.page.drawText(sanitiseForPdf(sevLabel), {
+            x: rfIndent + resolvedBadgeW + 4, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_MID_GREY,
+          });
+          if (rf.bs_en_reference) {
+            const sevW = fonts.regular.widthOfTextAtSize(sanitiseForPdf(sevLabel), FONT_SIZE_SMALL);
+            cursor.page.drawText(sanitiseForPdf(rf.bs_en_reference), {
+              x: rfIndent + resolvedBadgeW + sevW + 12, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_ACCENT,
+            });
+          }
+          cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER - 2 };
+          const descLines = wrapText(rf.description, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 24);
+          for (const line of descLines) {
+            cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER + 2);
+            cursor.page.drawText(line, { x: rfIndent, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_BODY, font: fonts.regular, color: COLOUR_MID_GREY });
+            cursor = { ...cursor, y: cursor.y - FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER };
+          }
+          if (rf.remedial_action) {
+            const remLines = wrapText(`Remedy: ${rf.remedial_action}`, fonts.regular, FONT_SIZE_SMALL, CONTENT_WIDTH - 24);
+            for (const line of remLines) {
+              cursor = ensureSpace(doc, cursor, fonts, reportId, FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER + 2);
+              cursor.page.drawText(line, { x: rfIndent, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.regular, color: COLOUR_MID_GREY });
+              cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER };
+            }
+          }
+          const metaParts: string[] = [];
+          metaParts.push(`First reported ${formatDate(rf.first_reported)}`);
+          if (rf.consecutive_inspections > 1) metaParts.push(`Open ${rf.consecutive_inspections} visits before resolution`);
+          cursor.page.drawText(sanitiseForPdf(metaParts.join(' - ')), {
+            x: rfIndent, y: cursor.y - FONT_SIZE_SMALL, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY,
+          });
+          cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 8 };
+        }
+      }
   }
 
   return cursor;
@@ -887,10 +943,34 @@ function renderDefectBlock(doc: PDFDocument, cursor: Cursor, fonts: PDFFonts, de
   const lineHeight = FONT_SIZE_BODY * LINE_HEIGHT_MULTIPLIER;
   const indent = MARGIN_LEFT + 12;
 
+  const defectRecord = defect as unknown as Record<string, unknown>;
+  const isRecurring = Boolean(defectRecord._recurring);
+  const consecutiveVisits = (defectRecord._consecutive_inspections as number) ?? 0;
+  const firstReported = defectRecord._first_reported as string | undefined;
+
   const riskLabel = RISK_RATING_LABELS[defect.risk_rating] ?? 'Unknown';
   drawBadge(cursor.page, fonts, riskLabel, indent, cursor.y - FONT_SIZE_BODY - 1, riskColour(defect.risk_rating), riskBgColour(defect.risk_rating));
 
-  const badgeOffset = fonts.bold.widthOfTextAtSize(sanitiseForPdf(riskLabel), FONT_SIZE_SMALL) + 20;
+  let badgeOffset = fonts.bold.widthOfTextAtSize(sanitiseForPdf(riskLabel), FONT_SIZE_SMALL) + 20;
+
+  if (isRecurring) {
+    drawBadge(cursor.page, fonts, 'RECURRING', indent + badgeOffset, cursor.y - FONT_SIZE_BODY - 1, COLOUR_ORANGE, COLOUR_ORANGE_BG);
+    badgeOffset += fonts.bold.widthOfTextAtSize('RECURRING', FONT_SIZE_SMALL) + 24;
+    if (consecutiveVisits > 1) {
+      const visitText = `Open ${consecutiveVisits} visits`;
+      cursor.page.drawText(sanitiseForPdf(visitText), {
+        x: indent + badgeOffset, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_SMALL, font: fonts.bold, color: COLOUR_RED,
+      });
+      badgeOffset += fonts.bold.widthOfTextAtSize(sanitiseForPdf(visitText), FONT_SIZE_SMALL) + 8;
+    }
+    if (firstReported) {
+      const frText = `First reported ${formatDate(firstReported)}`;
+      cursor.page.drawText(sanitiseForPdf(frText), {
+        x: indent + badgeOffset, y: cursor.y - FONT_SIZE_BODY, size: FONT_SIZE_SMALL, font: fonts.italic, color: COLOUR_MID_GREY,
+      });
+    }
+    cursor = { ...cursor, y: cursor.y - FONT_SIZE_SMALL * LINE_HEIGHT_MULTIPLIER - 2 };
+  }
   const descLines = wrapText(defect.description, fonts.regular, FONT_SIZE_BODY, CONTENT_WIDTH - 24 - badgeOffset);
   for (let i = 0; i < descLines.length; i++) {
     const xPos = i === 0 ? indent + badgeOffset : indent;

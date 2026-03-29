@@ -184,7 +184,8 @@ export function NormalisationReviewPanel({
   }
 
   return (
-    <div className="iv-panel overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center px-0 sm:px-4">
+    <div className="iv-panel overflow-hidden w-full sm:max-w-lg max-h-[90vh] flex flex-col">
       {/* Header */}
       <div className="px-4 py-3 bg-iv-accent/10 border-b border-iv-accent/20 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -231,7 +232,7 @@ export function NormalisationReviewPanel({
       )}
 
       {/* Items */}
-      <div className="divide-y divide-iv-border max-h-[60vh] overflow-y-auto">
+      <div className="divide-y divide-iv-border overflow-y-auto flex-1 min-h-0">
         {items.map((item, index) => (
           <ReviewItemRow
             key={item.result.logId}
@@ -272,6 +273,7 @@ export function NormalisationReviewPanel({
           {allResolved ? 'Continue to Sign Off' : `${pendingCount} remaining…`}
         </button>
       </div>
+    </div>
     </div>
   );
 }
@@ -329,7 +331,7 @@ function ReviewItemRow({
       >
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-medium text-iv-text">{fieldLabel}</span>
-          <span className="text-2xs text-iv-muted truncate max-w-[200px]">
+          <span className="text-2xs text-iv-muted truncate max-w-[120px] sm:max-w-[200px]">
             {item.result.diffSummary}
           </span>
         </div>

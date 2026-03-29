@@ -391,33 +391,28 @@ export function SiteDetail(): JSX.Element {
       </Helmet>
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div className="flex items-start gap-3">
+      <div className="mb-6">
+        <div className="flex items-center gap-3 mb-3">
           <button
             type="button"
-            className="iv-btn-icon mt-0.5"
+            className="iv-btn-icon"
             onClick={() => void navigate('/sites')}
             aria-label="Back to sites"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-iv-accent/10 flex items-center justify-center text-iv-accent">
-                <SiteTypeIcon siteType={site.site_type} />
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold text-iv-text">{site.name}</h1>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-sm text-iv-muted">{SITE_TYPE_LABELS[site.site_type]}</span>
-                  <StatusBadge status={site.status} />
-                </div>
-              </div>
+          <div className="w-10 h-10 rounded-lg bg-iv-accent/10 flex items-center justify-center text-iv-accent flex-shrink-0">
+            <SiteTypeIcon siteType={site.site_type} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold text-iv-text truncate">{site.name}</h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-sm text-iv-muted">{SITE_TYPE_LABELS[site.site_type]}</span>
+              <StatusBadge status={site.status} />
             </div>
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 pl-12">
           <button
             type="button"
             onClick={() => setConfirmDelete(true)}

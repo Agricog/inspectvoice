@@ -450,6 +450,33 @@ export async function createInspectionItem(
       defects, logger,
     );
   }
+
+  // ── Resolve previously-open defects that the inspector marked Resolved ──
+  const resolvedFindings = body['resolved_findings'] as Array<Record<string, unknown>> | undefined;
+  if (resolvedFindings && Array.isArray(resolvedFindings) && resolvedFindings.length > 0) {
+    const now = new Date().toISOString();
+    for (const rf of resolvedFindings) {
+      const origId = rf['original_defect_id'] as string | undefined;
+      if (!origId) continue;
+      try {
+        await db.rawExecute(
+          `UPDATE defects SET status = 'resolved', resolved_at = $1, updated_at = $1,
+           resolution_notes = 'Marked resolved during inspection ' || $2
+           WHERE id = $3 AND status NOT IN ('resolved', 'verified')`,
+          [now, inspectionId, origId],
+        );
+      } catch (err) {
+        logger.error('Failed to resolve finding', {
+          originalDefectId: origId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    logger.info('Resolved previous findings', {
+      inspectionId,
+      count: resolvedFindings.length,
+    });
+  }
   return jsonResponse({
     success: true,
     data: rows[0],

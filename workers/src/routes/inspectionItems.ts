@@ -242,6 +242,24 @@ async function extractItemDefects(
         [itemId, description],
       );
       if ((exists[0]?.count ?? 0) > 0) continue;
+      // If this is a carried-forward defect, mark the original as resolved
+      const originalDefectId = defect['_original_defect_id'] as string | undefined;
+      if (originalDefectId) {
+        try {
+          await db.rawExecute(
+            `UPDATE defects SET status = 'resolved', resolved_at = $1, updated_at = $1,
+             resolution_notes = 'Superseded by carry-forward in inspection ' || $2
+             WHERE id = $3 AND status NOT IN ('resolved', 'verified')`,
+            [now, inspectionId, originalDefectId],
+          );
+        } catch (resolveErr) {
+          logger.error('Failed to resolve original defect', {
+            originalDefectId,
+            error: resolveErr instanceof Error ? resolveErr.message : String(resolveErr),
+          });
+        }
+      }
+
       await db.rawExecute(
         `INSERT INTO defects (
           id, org_id, inspection_item_id, inspection_id, site_id, asset_id,

@@ -741,9 +741,9 @@ class SyncService {
         '/api/v1/sites?limit=500',
         { method: 'GET', getToken: this.getAuthToken },
       );
-      if (sitesRes.success && sitesRes.data?.sites) {
-        // Only add/update — never delete local records
-        for (const s of sitesRes.data.sites) {
+      const sitesArray = Array.isArray(sitesRes.data) ? sitesRes.data : sitesRes.data?.sites;
+      if (sitesRes.success && sitesArray && sitesArray.length > 0) {
+        for (const s of sitesArray) {
           try {
             await sitesCache.put(s as unknown as Parameters<typeof sitesCache.put>[0]);
           } catch {
@@ -756,12 +756,12 @@ class SyncService {
           try {
             const siteId = site['id'] as string;
             if (!siteId) continue;
-            const assetsRes = await secureFetch<ApiResponse<{ assets: Array<Record<string, unknown>> }>>(
+            const assetsRes = await secureFetch<ApiResponse<Array<Record<string, unknown>>>>(
               `/api/v1/sites/${siteId}/assets?limit=500`,
               { method: 'GET', getToken: this.getAuthToken! },
             );
-            if (assetsRes.success && assetsRes.data?.assets) {
-              for (const a of assetsRes.data.assets) {
+            if (assetsRes.success && Array.isArray(assetsRes.data) && assetsRes.data.length > 0) {
+              for (const a of assetsRes.data) {
                 try {
                   await assetsCache.put(a as unknown as Parameters<typeof assetsCache.put>[0]);
                 } catch {

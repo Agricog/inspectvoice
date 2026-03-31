@@ -96,7 +96,8 @@ createRoot(rootElement).render(
   <StrictMode>
     <ClerkProvider
       publishableKey={CLERK_PUBLISHABLE_KEY}
-      fallbackRedirectUrl="/dashboard"
+      signInFallbackRedirectUrl="/dashboard"
+      signUpFallbackRedirectUrl="/dashboard"
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
     >

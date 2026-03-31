@@ -1096,10 +1096,6 @@ export default function InspectionCapture(): JSX.Element {
       }
 
       setCaptureState((prev) => ({ ...prev, saved: true }));
-
-      if (currentIndex < totalAssets - 1) {
-        setCurrentIndex((prev) => prev + 1);
-      }
     } catch (error) {
       captureError(error, { module: 'InspectionCapture', operation: 'saveItem' });
     } finally {
@@ -1111,19 +1107,28 @@ export default function InspectionCapture(): JSX.Element {
   // NAVIGATION
   // =============================================
 
-  const handlePrevious = useCallback(() => {
+  const handlePrevious = useCallback(async () => {
     if (currentIndex > 0) {
       voiceCaptureRef.current?.cancel();
+      const hasUnsavedFindings = Object.keys(findingActions).length > 0;
+      const hasUnsavedCapture = !captureState.saved && (captureState.voiceTranscript || captureState.hasAudioRecording || captureState.notes || captureState.condition || captureState.manualDefects.length > 0);
+      if (hasUnsavedFindings || hasUnsavedCapture) {
+        await handleSaveAsset();
+      }
       setCurrentIndex((prev) => prev - 1);
     }
-  }, [currentIndex]);
-
-  const handleNext = useCallback(() => {
+  }, [currentIndex, findingActions, captureState, handleSaveAsset]);
+  const handleNext = useCallback(async () => {
     if (currentIndex < totalAssets - 1) {
       voiceCaptureRef.current?.cancel();
+      const hasUnsavedFindings = Object.keys(findingActions).length > 0;
+      const hasUnsavedCapture = !captureState.saved && (captureState.voiceTranscript || captureState.hasAudioRecording || captureState.notes || captureState.condition || captureState.manualDefects.length > 0);
+      if (hasUnsavedFindings || hasUnsavedCapture) {
+        await handleSaveAsset();
+      }
       setCurrentIndex((prev) => prev + 1);
     }
-  }, [currentIndex, totalAssets]);
+  }, [currentIndex, totalAssets, findingActions, captureState, handleSaveAsset]);
 
   const handleFinish = useCallback(async () => {
     voiceCaptureRef.current?.cancel();
@@ -1731,7 +1736,7 @@ export default function InspectionCapture(): JSX.Element {
           {saving ? (
             <><Loader2 className="w-4 h-4 animate-spin" />Saving...</>
           ) : (
-            <><CheckCircle2 className="w-4 h-4" />{isCurrentSaved ? 'Update & Continue' : 'Save & Continue'}</>
+            <><CheckCircle2 className="w-4 h-4" />{isCurrentSaved ? 'Update' : 'Save'}</>
           )}
         </button>
 

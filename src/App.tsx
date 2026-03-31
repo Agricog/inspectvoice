@@ -141,30 +141,45 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
 
 function HomeRoute(): JSX.Element {
   const { isLoaded, isSignedIn } = useAuth();
+  const [timedOut, setTimedOut] = React.useState(false);
 
-  if (!isLoaded) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-4">
-        <div className="w-12 h-12 rounded-xl bg-iv-accent/10 flex items-center justify-center">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-iv-accent">
-            <path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
-            <path d="M12.02 21.485C6.44 21.485 2 16.97 2 11.4a10 10 0 0 1 20 0c0 2.58-.94 4.93-2.49 6.73" />
-            <path d="M8 21l4-4l4 4" />
-          </svg>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-iv-accent animate-pulse" />
-          <span className="text-sm text-iv-muted">Loading…</span>
-        </div>
+  React.useEffect(() => {
+    if (isLoaded) return;
+    const timer = setTimeout(() => setTimedOut(true), 3000);
+    return () => clearTimeout(timer);
+  }, [isLoaded]);
+
+  if (isLoaded) {
+    if (isSignedIn) {
+      return <Navigate to="/dashboard" replace />;
+    }
+    return <LandingPage />;
+  }
+
+  // Offline or timed out with cached session — go straight to dashboard
+  if (timedOut || !navigator.onLine) {
+    const cached = getCachedSession();
+    if (cached) {
+      return <Navigate to="/dashboard" replace />;
+    }
+  }
+
+  // Show splash while waiting
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-4">
+      <div className="w-12 h-12 rounded-xl bg-iv-accent/10 flex items-center justify-center">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-iv-accent">
+          <path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+          <path d="M12.02 21.485C6.44 21.485 2 16.97 2 11.4a10 10 0 0 1 20 0c0 2.58-.94 4.93-2.49 6.73" />
+          <path d="M8 21l4-4l4 4" />
+        </svg>
       </div>
-    );
-  }
-
-  if (isSignedIn) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  return <LandingPage />;
+      <div className="flex items-center gap-2">
+        <div className="w-1.5 h-1.5 rounded-full bg-iv-accent animate-pulse" />
+        <span className="text-sm text-iv-muted">Loading…</span>
+      </div>
+    </div>
+  );
 }
 
 // =============================================

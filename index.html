@@ -24,3 +24,50 @@
         justify-content: center;
         gap: 16px;
         background: #0C0F14;
+        z-index: 99999;
+        transition: opacity 0.3s ease;
+      }
+      #iv-splash.fade-out { opacity: 0; pointer-events: none; }
+      #iv-splash .logo-box {
+        width: 48px; height: 48px; border-radius: 12px;
+        background: rgba(34,197,94,0.1);
+        display: flex; align-items: center; justify-content: center;
+      }
+      #iv-splash .logo-box svg { color: #22C55E; }
+      #iv-splash h1 {
+        font-family: 'Inter', sans-serif; font-size: 18px;
+        font-weight: 600; color: #E2E8F0; margin: 0;
+      }
+      #iv-splash .pulse-row {
+        display: flex; align-items: center; gap: 8px;
+      }
+      #iv-splash .dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: #22C55E; animation: iv-pulse 1.5s infinite;
+      }
+      #iv-splash span {
+        font-family: 'Inter', sans-serif; font-size: 14px; color: #64748B;
+      }
+      @keyframes iv-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+  </head>
+  <body class="bg-iv-bg text-iv-text antialiased">
+    <!-- Instant splash — removed by React when app mounts -->
+    <div id="iv-splash">
+      <div class="logo-box">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+          <path d="M12.02 21.485C6.44 21.485 2 16.97 2 11.4a10 10 0 0 1 20 0c0 2.58-.94 4.93-2.49 6.73" />
+          <path d="M8 21l4-4l4 4" />
+        </svg>
+      </div>
+      <h1>InspectVoice</h1>
+      <div class="pulse-row">
+        <div class="dot"></div>
+        <span>Loading…</span>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

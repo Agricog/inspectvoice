@@ -111,17 +111,8 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
   const { isLoaded } = useAuth();
   const cachedSession = getCachedSession();
   const isOffline = !navigator.onLine;
-  const [timedOut, setTimedOut] = React.useState(false);
-  const [showRetry, setShowRetry] = React.useState(false);
 
-  React.useEffect(() => {
-    if (isLoaded) return;
-    const t1 = setTimeout(() => setTimedOut(true), 3000);
-    const t2 = setTimeout(() => setShowRetry(true), 8000);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [isLoaded]);
-
-  // Clerk loaded normally — standard auth flow
+  // Clerk loaded — standard auth flow
   if (isLoaded) {
     return (
       <>
@@ -135,46 +126,13 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
     );
   }
 
-  // Clerk hasn't loaded but we have a cached session — use it
-  if ((isOffline || timedOut) && cachedSession) {
+  // Offline with cached session — let them in
+  if (isOffline && cachedSession) {
     return <>{children}</>;
   }
 
-  // Branded splash while Clerk initialises
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-6">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-12 h-12 rounded-xl bg-iv-accent/10 flex items-center justify-center">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-iv-accent">
-            <path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
-            <path d="M12.02 21.485C6.44 21.485 2 16.97 2 11.4a10 10 0 0 1 20 0c0 2.58-.94 4.93-2.49 6.73" />
-            <path d="M8 21l4-4l4 4" />
-          </svg>
-        </div>
-        <h1 className="text-lg font-semibold text-iv-text">InspectVoice</h1>
-        {!showRetry && (
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-iv-accent animate-pulse" />
-            <span className="text-sm text-iv-muted">Loading your workspace…</span>
-          </div>
-        )}
-      </div>
-      {showRetry && (
-        <div className="flex flex-col items-center gap-3">
-          <p className="text-sm text-iv-muted text-center max-w-xs">
-            Taking longer than usual. Check your connection and try again.
-          </p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="iv-btn-primary px-6"
-          >
-            Reload
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  // Clerk still loading — splash is already visible from index.html
+  return null;
 }
 
 // =============================================

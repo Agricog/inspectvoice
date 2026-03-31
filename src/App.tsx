@@ -131,8 +131,8 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
     return <>{children}</>;
   }
 
-  // Clerk still loading — splash is already visible from index.html
-  return null;
+// Clerk still loading — splash is already visible from index.html
+  return <></>;
 }
 
 // =============================================

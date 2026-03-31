@@ -114,7 +114,11 @@ export function MyPerformanceCard(): JSX.Element {
     return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
   };
 
-  const formatPct = (v: number | null): string => (v === null ? '—' : `${v.toFixed(0)}%`);
+  const formatPct = (v: number | string | null): string => {
+    if (v === null || v === undefined) return '—';
+    const num = Number(v);
+    return isNaN(num) ? '—' : `${num.toFixed(0)}%`;
+  };
 
   return (
     <div className="iv-panel p-4">

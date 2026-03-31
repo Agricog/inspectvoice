@@ -1102,6 +1102,12 @@ export default function InspectionCapture(): JSX.Element {
       setSaving(false);
     }
   }, [currentAsset, inspectionId, inspection, captureState, currentIndex, totalAssets, existingItems]);
+  const handleSaveAndAdvance = useCallback(async () => {
+    await handleSaveAsset();
+    if (currentIndex < totalAssets - 1) {
+      setCurrentIndex((prev) => prev + 1);
+    }
+  }, [handleSaveAsset, currentIndex, totalAssets]);
 
   // =============================================
   // NAVIGATION
@@ -1729,14 +1735,14 @@ export default function InspectionCapture(): JSX.Element {
       <div className="space-y-3 mb-6">
         <button
           type="button"
-          onClick={handleSaveAsset}
+         onClick={handleSaveAndAdvance}
           disabled={saving || (!hasCapture && !captureState.condition)}
           className="iv-btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {saving ? (
             <><Loader2 className="w-4 h-4 animate-spin" />Saving...</>
           ) : (
-            <><CheckCircle2 className="w-4 h-4" />{isCurrentSaved ? 'Update' : 'Save'}</>
+            <><CheckCircle2 className="w-4 h-4" />{isCurrentSaved ? 'Update & Continue' : 'Save & Continue'}</>
           )}
         </button>
 

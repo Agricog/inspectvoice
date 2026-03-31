@@ -86,7 +86,12 @@ const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Root element not found. Check index.html has <div id="root">.');
 }
-
+// Remove the HTML splash screen once React takes over
+const splash = document.getElementById('iv-splash');
+if (splash) {
+  splash.classList.add('fade-out');
+  setTimeout(() => splash.remove(), 300);
+}
 createRoot(rootElement).render(
   <StrictMode>
     <ClerkProvider

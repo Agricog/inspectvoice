@@ -4,6 +4,8 @@
  *
  * UPDATED: Features 14 (Inspector Performance) + 15 (Defect Library) routes added.
  * UPDATED: Landing page at / for SEO, dashboard moved to /dashboard.
+ * FIX: 31 Mar 2026 — HomeRoute replaces bare SignedIn/SignedOut on / route
+ *   to prevent white screen when Clerk hasn't initialised after sign-in redirect.
  *
  * Build Standard: Autaimate v3
  */
@@ -114,9 +116,7 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
 
   React.useEffect(() => {
     if (isLoaded) return;
-    // After 3s — use cached session if available
     const t1 = setTimeout(() => setTimedOut(true), 3000);
-    // After 8s — show retry button
     const t2 = setTimeout(() => setShowRetry(true), 8000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [isLoaded]);
@@ -178,6 +178,38 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
 }
 
 // =============================================
+// HOME ROUTE — handles / with proper loading state
+// =============================================
+
+function HomeRoute(): JSX.Element {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  if (!isLoaded) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-4">
+        <div className="w-12 h-12 rounded-xl bg-iv-accent/10 flex items-center justify-center">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-iv-accent">
+            <path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+            <path d="M12.02 21.485C6.44 21.485 2 16.97 2 11.4a10 10 0 0 1 20 0c0 2.58-.94 4.93-2.49 6.73" />
+            <path d="M8 21l4-4l4 4" />
+          </svg>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-iv-accent animate-pulse" />
+          <span className="text-sm text-iv-muted">Loading…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isSignedIn) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <LandingPage />;
+}
+
+// =============================================
 // 404
 // =============================================
 
@@ -204,20 +236,8 @@ export function App(): JSX.Element {
         <Routes>
           {/* ── Public routes (no auth required) ── */}
 
-          {/* Landing page — SEO entry point for search engines & unauthenticated visitors */}
-          <Route
-            path="/"
-            element={
-              <>
-                <SignedIn>
-                  <Navigate to="/dashboard" replace />
-                </SignedIn>
-                <SignedOut>
-                  <LandingPage />
-                </SignedOut>
-              </>
-            }
-          />
+          {/* Landing / dashboard — splash screen while Clerk initialises */}
+          <Route path="/" element={<HomeRoute />} />
 
           <Route
             path="/sign-in/*"

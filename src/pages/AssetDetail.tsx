@@ -88,6 +88,7 @@ interface AssetHistoryResponse {
     defect_history: DefectHistoryItem[];
     condition_timeline: ConditionPoint[];
     condition_summary: ConditionSummary;
+    latest_photo: { r2_url: string; captured_at: string } | null;
   };
 }
 

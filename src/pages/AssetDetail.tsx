@@ -848,24 +848,25 @@ export default function AssetDetail(): JSX.Element {
       {/* Repeat Defect Alert */}
       <RepeatDefectAlert repeats={repeatDefects} />
 
-      {/* ── Reference Photo Placeholder ── */}
-      <div className="iv-panel p-5 mb-4">
-        <h2 className="text-base font-semibold iv-text mb-3 flex items-center gap-2">
-          <Camera className="w-4 h-4 text-[#22C55E]" />
-          Reference Photo
-        </h2>
-        {asset.reference_photo_id ? (
-          <div className="aspect-video bg-[#1C2029] rounded-lg flex items-center justify-center">
-            <p className="text-sm iv-muted">Photo loading requires sync service (Phase 5)</p>
+      {/* ── Last Inspection Photo ── */}
+      {historyPayload?.latest_photo?.r2_url && (
+        <div className="iv-panel p-5 mb-4">
+          <h2 className="text-base font-semibold iv-text mb-3 flex items-center gap-2">
+            <Camera className="w-4 h-4 text-[#22C55E]" />
+            Last Inspection Photo
+          </h2>
+          <div className="aspect-video rounded-lg overflow-hidden">
+            <img
+              src={historyPayload.latest_photo.r2_url}
+              alt={`Last inspection photo for ${asset.asset_code}`}
+              className="w-full h-full object-cover"
+            />
           </div>
-        ) : (
-          <div className="aspect-video bg-[#1C2029] rounded-lg flex flex-col items-center justify-center border-2 border-dashed border-iv-border">
-            <Camera className="w-8 h-8 iv-muted mb-2" />
-            <p className="text-sm iv-muted">No reference photo</p>
-            <p className="text-xs iv-muted mt-1">Photo capture available in Phase 4</p>
-          </div>
-        )}
-      </div>
+          <p className="text-xs iv-muted mt-2">
+            Captured {formatDate(historyPayload.latest_photo.captured_at)}
+          </p>
+        </div>
+      )}
 
       {/* ── Asset Information ── */}
       <div className="iv-panel p-5 mb-4">

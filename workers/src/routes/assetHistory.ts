@@ -104,6 +104,7 @@ export async function getAssetHistory(
     defectHistory,
     repeatDefects,
     conditionPoints,
+    latestPhotoRows,
   ] = await Promise.all([
     // ── 1. Inspection timeline ────────────
     // Every inspection that included this asset, newest first
@@ -130,6 +131,21 @@ export async function getAssetHistory(
        LIMIT 50`,
       [ctx.orgId, assetId, asset_code],
     ),
+
+    // ── 5. Latest inspection photo ────────────
+    db.rawQuery<{ r2_url: string; captured_at: string }>(
+      `SELECT p.r2_url, p.captured_at::text AS captured_at
+       FROM photos p
+       INNER JOIN inspection_items ii ON p.inspection_item_id = ii.id
+       INNER JOIN inspections i ON ii.inspection_id = i.id
+       WHERE i.org_id = $1
+         AND (ii.asset_id = $2 OR ii.asset_code = $3)
+         AND p.r2_url IS NOT NULL
+       ORDER BY p.captured_at DESC
+       LIMIT 1`,
+      [ctx.orgId, assetId, asset_code],
+    ),
+  ]);
 
     // ── 2. Defect history ────────────
     // All defects ever raised against this asset
@@ -250,6 +266,7 @@ export async function getAssetHistory(
         resolved_defects: resolvedDefects,
         repeat_defect_types: repeatDefects,
       },
+      latest_photo: latestPhotoRows[0] ?? null,
     },
   }, ctx.requestId);
 }

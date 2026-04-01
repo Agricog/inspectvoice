@@ -1229,7 +1229,7 @@ export default function AssetDetail(): JSX.Element {
               return (
                 <div
                   key={defect.id}
-                  className={`p-3 rounded-lg ${isOpen ? 'bg-[#F97316]/5' : 'bg-[#1C2029]'}`}
+                  className={`p-3 rounded-lg ${isOpen ? 'bg-[#F97316]/5' : 'bg-[#22C55E]/5 border border-[#22C55E]/20'}`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">

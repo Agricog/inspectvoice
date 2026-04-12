@@ -366,7 +366,7 @@ function calculateQuality(
 // =============================================
 
 export async function runCompletenessCheck(
-  _request: Request,
+  request: Request,
   params: RouteParams,
   ctx: RequestContext,
 ): Promise<Response> {
@@ -378,22 +378,64 @@ export async function runCompletenessCheck(
 
   logger.info('Running completeness check', { inspectionId: id });
 
-  // Fetch inspection
+  // Parse client-supplied payload — client sends current in-memory state
+  // which is authoritative at sign-off time (DB may lag behind sync).
+  // We validate ownership via the DB inspection fetch regardless.
+  let clientItems: Record<string, unknown>[] | null = null;
+  let clientSummary: string | null = null;
+  let clientClosureRecommended: boolean | null = null;
+  let clientClosureReason: string | null = null;
+
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    if (Array.isArray(body['items']) && body['items'].length > 0) {
+      clientItems = body['items'] as Record<string, unknown>[];
+    }
+    if (typeof body['inspector_summary'] === 'string') clientSummary = body['inspector_summary'];
+    if (typeof body['closure_recommended'] === 'boolean') clientClosureRecommended = body['closure_recommended'];
+    if (typeof body['closure_reason'] === 'string') clientClosureReason = body['closure_reason'];
+  } catch {
+    // Malformed or empty body — fall through to DB read
+  }
+
+  // Fetch inspection — always from DB (auth/ownership check)
   const inspection = await db.findByIdOrThrow<Record<string, unknown>>('inspections', id, 'Inspection');
 
-  // Fetch items with defects
-  const items = await db.findByParent<Record<string, unknown>>(
-    'inspection_items',
-    'inspections',
-    'inspection_id',
-    id,
-    { orderBy: 'asset_code', orderDirection: 'asc' },
-  );
+  // Overlay client-supplied closure fields onto inspection record
+  // so deterministic checks use the current pre-sign-off values.
+  if (clientClosureRecommended !== null) inspection['closure_recommended'] = clientClosureRecommended;
+  if (clientClosureReason !== null) inspection['closure_reason'] = clientClosureReason;
+  if (clientSummary !== null) inspection['inspector_summary'] = clientSummary;
+
+  // Use client items if provided; fall back to DB read if not.
+  // Client items are the authoritative source at sign-off time.
+  let items: Record<string, unknown>[];
+  if (clientItems) {
+    items = clientItems;
+    logger.info('Using client-supplied items for completeness check', {
+      inspectionId: id,
+      itemCount: items.length,
+    });
+  } else {
+    items = await db.findByParent<Record<string, unknown>>(
+      'inspection_items',
+      'inspections',
+      'inspection_id',
+      id,
+      { orderBy: 'asset_code', orderDirection: 'asc' },
+    );
+    logger.info('Using DB items for completeness check (no client payload)', {
+      inspectionId: id,
+      itemCount: items.length,
+    });
+  }
 
   // ── Fetch photo counts per inspection item from the photos table ──
   // The inspection_items table does NOT have a photo_count column.
   // Photos are stored in a separate `photos` table linked by inspection_item_id.
   // We query actual counts here and inject them into the items for the checks.
+  // Photo counts always come from the DB photos table — never trusted from client.
+  // Even when items are client-supplied, photo count is authoritative server-side.
   const itemIds = items.map((item) => item['id'] as string);
 
   if (itemIds.length > 0) {

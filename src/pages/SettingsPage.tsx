@@ -455,8 +455,9 @@ function OrganisationSection({
   org: Organisation;
   onSave: (data: Partial<Organisation>) => Promise<void>;
 }): JSX.Element {
-  const [orgName, setOrgName] = useState(org.name ?? '');
-  const [primaryColor, setPrimaryColor] = useState(org.primary_color ?? '#22C55E');
+  const orgRecord = org as unknown as Record<string, unknown>;
+  const [orgName, setOrgName] = useState((orgRecord['company_name'] as string | null) ?? org.name ?? '');
+  const [primaryColor, setPrimaryColor] = useState((orgRecord['brand_colour'] as string | null) ?? org.primary_color ?? '#22C55E');
  const orgMeta = (org as unknown as Record<string, unknown>).metadata as Record<string, unknown> | null | undefined;
   const [logoBase64, setLogoBase64] = useState<string | null>(
     orgMeta?.logo_base64 as string | null ?? null,
@@ -465,8 +466,9 @@ function OrganisationSection({
   const [sectionState, setSectionState] = useState<SectionState>(INITIAL_SECTION_STATE);
 
   useEffect(() => {
-    setOrgName(org.name ?? '');
-    setPrimaryColor(org.primary_color ?? '#22C55E');
+    const meta2 = (org as unknown as Record<string, unknown>);
+    setOrgName((meta2['company_name'] as string | null) ?? org.name ?? '');
+    setPrimaryColor((meta2['brand_colour'] as string | null) ?? org.primary_color ?? '#22C55E');
     const meta = (org as unknown as Record<string, unknown>).metadata as Record<string, unknown> | null | undefined;
     const savedLogo = meta?.logo_base64 as string | null ?? null;
     setLogoBase64(savedLogo);
@@ -503,8 +505,7 @@ function OrganisationSection({
     try {
       const existingMeta = (org as unknown as Record<string, unknown>).metadata as Record<string, unknown> | null ?? {};
       await onSave({
-        name: orgName.trim(),
-        primary_color: primaryColor.trim(),
+        company_name: orgName.trim(),
         brand_colour: primaryColor.trim(),
         metadata: { ...existingMeta, logo_base64: logoBase64 },
       } as Partial<Organisation>);

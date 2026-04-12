@@ -16,7 +16,7 @@
  *
  * FIX: 3 Mar 2026
  *   - orgName pulled from Clerk useOrganization() instead of hardcoded 'InspectVoice'
- *   - Photo counts loaded from pendingPhotos and passed to PDF generator
+ *   - Photo counts loaded from pendingPhotos and passed to PDF generatorf
  *   - API fallback: if inspection not in IndexedDB, fetches from server
  *     so signed inspections from previous sessions are always viewable
  *   - Site data also falls back to API when not cached locally
@@ -1052,33 +1052,28 @@ export default function InspectionReview(): JSX.Element {
         }>(`/api/v1/inspections/${inspectionId}`);
 
         if (response?.data?.items && response.data.items.length > 0) {
-          const serverItems = response.data.items;
-          const localItemMap = new Map(items.map((i) => [i.id, i]));
+            const serverItems = response.data.items;
+            const serverItemMap = new Map(serverItems.map((i) => [i.id, i]));
 
-          pdfItems = serverItems.map((serverItem) => {
-            const localItem = localItemMap.get(serverItem.id);
-            if (!localItem) return serverItem;
+            // Local data is always the authoritative base — it holds the
+            // inspector's captured defects, conditions, and checklist state.
+            // Server data only supplements fields that originate server-side:
+            // Whisper transcripts (from the audio processing pipeline).
+            // Every other field: local wins unconditionally.
+            pdfItems = items.map((localItem) => {
+              const serverItem = serverItemMap.get(localItem.id);
+              if (!serverItem) return localItem;
 
-            return {
-              ...serverItem,
-              voice_transcript: serverItem.voice_transcript || localItem.voice_transcript,
-              defects: localItem.defects.length > 0 ? localItem.defects : serverItem.defects,
-              inspector_notes: serverItem.inspector_notes || localItem.inspector_notes,
-              overall_condition: serverItem.overall_condition ?? localItem.overall_condition,
-              risk_rating: serverItem.risk_rating ?? localItem.risk_rating,
-              checklist_data: ((localItem as unknown as Record<string, unknown>).checklist_data as ChecklistData | null) ?? ((serverItem as unknown as Record<string, unknown>).checklist_data as ChecklistData | null) ?? null,
-            };
-          });
+              return {
+                ...localItem,
+                // Only take transcript from server if local has none —
+                // server may have a Whisper transcript for offline recordings.
+                voice_transcript: localItem.voice_transcript || serverItem.voice_transcript,
+              };
+            });
 
-          // Also include any local items not yet on the server
-          for (const [localId, localItem] of localItemMap) {
-            if (!serverItems.some((si) => si.id === localId)) {
-              pdfItems.push(localItem);
-            }
+            setItems(pdfItems);
           }
-
-          setItems(pdfItems);
-        }
       } catch {
         // API fetch failed — fall back to local items (which have all captured data)
       }

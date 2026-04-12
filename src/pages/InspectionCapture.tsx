@@ -78,7 +78,7 @@ import {
   ActionTimeframe,
   CostBand,
 } from '@/types';
-import type { Asset, Inspection, InspectionItem, DefectDetail } from '@/types';
+import type { Asset, Inspection, InspectionItem, DefectDetail, ChecklistData } from '@/types';
 import { getAssetTypeConfig, getInspectionPointsForType } from '@config/assetTypes';
 import type { InspectionPoint } from '@config/assetTypes';
 import BaselineComparison from '@components/BaselineComparison';
@@ -484,10 +484,40 @@ export default function InspectionCapture(): JSX.Element {
     if (!currentAsset) return;
     const existing = existingItems.get(currentAsset.id) ?? existingItems.get(currentAsset.asset_code);
     if (existing) {
+      // Restore checklist state from saved checklist_data so navigating
+      // back to a completed asset shows the correct ticked state.
+      const checklistData = (existing as unknown as Record<string, unknown>).checklist_data as ChecklistData | null;
+      const restoredCompleted: Record<number, boolean> = {};
+      const restoredDismissed: number[] = [];
+      const restoredCustom: CustomChecklistItem[] = [];
+
+      if (checklistData && inspection) {
+        const points = getInspectionPointsForType(
+          currentAsset.asset_type,
+          inspection.inspection_type as 'routine_visual' | 'operational' | 'annual_main',
+        );
+        // Map label → index so we can restore by position regardless of
+        // whether the checklist config changes between sessions.
+        const labelToIndex = new Map<string, number>(
+          points.map((p, idx) => [p.label, idx] as [string, number]),
+        );
+        for (const saved of checklistData.standard) {
+          const idx = labelToIndex.get(saved.label);
+          if (idx !== undefined && saved.completed) restoredCompleted[idx] = true;
+        }
+        for (const dismissed of checklistData.dismissed) {
+          const idx = labelToIndex.get(dismissed.label);
+          if (idx !== undefined) restoredDismissed.push(idx);
+        }
+        for (const custom of checklistData.custom) {
+          restoredCustom.push({ id: uuid(), label: custom.label, completed: custom.completed });
+        }
+      }
+
       setCaptureState({
-        checklistCompleted: {},
-        checklistDismissed: [],
-        customChecklist: [],
+        checklistCompleted: restoredCompleted,
+        checklistDismissed: restoredDismissed,
+        customChecklist: restoredCustom,
         voiceTranscript: existing.voice_transcript ?? '',
         hasAudioRecording: Boolean(existing.audio_r2_key),
         audioBlobId: null,

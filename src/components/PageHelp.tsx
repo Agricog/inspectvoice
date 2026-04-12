@@ -15,13 +15,19 @@
  *   - Numbered steps within each section
  *   - Sections expand/collapse on tap
  *   - Closes on X button or Escape key
- *   - Dark theme (iv-* design tokens)
+ *   - Always dark theme (hardcoded — overlay is always dark regardless of app theme)
  *   - Mobile-first, works on all screen sizes
  *   - Accessible: focus management, aria labels, keyboard navigation
  *
+ * FIX: Apr 2026
+ *   - Replaced all iv-text / iv-muted / iv-muted-2 / iv-text CSS variable classes
+ *     inside the overlay with hardcoded dark-theme colours. The overlay background
+ *     is always #0C0F14 (dark), but iv-* variables follow the app's current theme.
+ *     In light mode (the default for outdoor use) iv-text resolves to a dark colour,
+ *     making all text invisible against the dark overlay background.
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready first time
  */
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HelpCircle, X, ChevronDown } from 'lucide-react';
 import { PAGE_HELP_CONTENT } from '@config/helpContent';
@@ -30,7 +36,6 @@ import type { PageHelpKey } from '@config/helpContent';
 // =============================================
 // PROPS
 // =============================================
-
 interface PageHelpProps {
   /** Key matching a page in PAGE_HELP_CONTENT */
   pageKey: PageHelpKey;
@@ -39,7 +44,6 @@ interface PageHelpProps {
 // =============================================
 // ACCORDION SECTION
 // =============================================
-
 function HelpAccordion({
   heading,
   items,
@@ -76,9 +80,10 @@ function HelpAccordion({
         <div className={`w-8 h-8 rounded-lg ${iconBg} flex items-center justify-center flex-shrink-0`}>
           <HelpCircle className={`w-4 h-4 ${iconColour}`} />
         </div>
-        <span className="text-sm font-semibold iv-text flex-1">{heading}</span>
+        {/* Hardcoded white — overlay is always dark */}
+        <span className="text-sm font-semibold text-white flex-1">{heading}</span>
         <ChevronDown
-          className={`w-4 h-4 iv-muted transition-transform duration-200 flex-shrink-0 ${
+          className={`w-4 h-4 text-[#6B7280] transition-transform duration-200 flex-shrink-0 ${
             isOpen ? 'rotate-180' : ''
           }`}
         />
@@ -100,7 +105,8 @@ function HelpAccordion({
                   <span className={`w-5 h-5 rounded-full ${iconBg} ${iconColour} text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5`}>
                     {idx + 1}
                   </span>
-                  <span className="text-sm iv-muted leading-relaxed">{item}</span>
+                  {/* Hardcoded #9CA3AF — overlay is always dark */}
+                  <span className="text-sm text-[#9CA3AF] leading-relaxed">{item}</span>
                 </li>
               ))}
             </ol>
@@ -114,7 +120,6 @@ function HelpAccordion({
 // =============================================
 // SECTION COLOUR PALETTE
 // =============================================
-
 const SECTION_STYLES: Array<{ colour: string; bg: string }> = [
   { colour: 'text-[#22C55E]', bg: 'bg-[#22C55E]/10' },
   { colour: 'text-[#3B82F6]', bg: 'bg-[#3B82F6]/10' },
@@ -133,12 +138,10 @@ function getSectionStyle(index: number): { colour: string; bg: string } {
 // =============================================
 // MAIN COMPONENT
 // =============================================
-
 export function PageHelp({ pageKey }: PageHelpProps): JSX.Element {
   const [isOpen, setIsOpen] = useState(false);
   const [openSections, setOpenSections] = useState<Set<number>>(new Set());
   const overlayRef = useRef<HTMLDivElement>(null);
-
   const content = PAGE_HELP_CONTENT[pageKey];
 
   // ---- Open with first section expanded ----
@@ -167,13 +170,11 @@ export function PageHelp({ pageKey }: PageHelpProps): JSX.Element {
   // ---- Escape key closes overlay ----
   useEffect(() => {
     if (!isOpen) return;
-
     function handleKeyDown(e: KeyboardEvent): void {
       if (e.key === 'Escape') {
         setIsOpen(false);
       }
     }
-
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
@@ -236,13 +237,14 @@ export function PageHelp({ pageKey }: PageHelpProps): JSX.Element {
                 <div className="w-8 h-8 rounded-full bg-[#22C55E]/15 flex items-center justify-center">
                   <HelpCircle className="w-4 h-4 text-[#22C55E]" />
                 </div>
-                <h2 className="text-base font-bold iv-text">{content.title}</h2>
+                {/* Hardcoded white — overlay is always dark */}
+                <h2 className="text-base font-bold text-white">{content.title}</h2>
               </div>
               <button
                 type="button"
                 onClick={handleClose}
                 className="w-8 h-8 rounded-lg flex items-center justify-center
-                  text-iv-muted-2 hover:text-iv-text hover:bg-[#1C2029]
+                  text-[#6B7280] hover:text-white hover:bg-[#1C2029]
                   transition-colors focus:outline-none focus:ring-2 focus:ring-[#22C55E]/50"
                 aria-label="Close help"
               >
@@ -253,8 +255,8 @@ export function PageHelp({ pageKey }: PageHelpProps): JSX.Element {
 
           {/* ── Content ── */}
           <div className="max-w-lg mx-auto px-5 py-6">
-            {/* Summary */}
-            <p className="text-sm iv-muted leading-relaxed mb-6">{content.summary}</p>
+            {/* Summary — hardcoded #9CA3AF, overlay is always dark */}
+            <p className="text-sm text-[#9CA3AF] leading-relaxed mb-6">{content.summary}</p>
 
             {/* Accordion sections */}
             <div className="space-y-3">
@@ -274,8 +276,8 @@ export function PageHelp({ pageKey }: PageHelpProps): JSX.Element {
               })}
             </div>
 
-            {/* Footer */}
-            <p className="text-center text-xs iv-muted mt-8 mb-4">
+            {/* Footer — hardcoded #9CA3AF, overlay is always dark */}
+            <p className="text-center text-xs text-[#9CA3AF] mt-8 mb-4">
               Need more help? Email{' '}
               <a
                 href="mailto:support@inspectvoice.co.uk"

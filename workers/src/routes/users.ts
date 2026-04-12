@@ -85,19 +85,41 @@ export async function updateMe(
   const data: Record<string, unknown> = {};
 
   if ('display_name' in body) data['display_name'] = validateOptionalString(body['display_name'], 'display_name', { maxLength: 200 });
-  if ('phone' in body) data['phone'] = validateOptionalPhone(body['phone'], 'phone');
+  // Accept first_name / last_name from frontend entity type
+  if ('first_name' in body) data['first_name'] = validateOptionalString(body['first_name'], 'first_name', { maxLength: 100 });
+  if ('last_name' in body) data['last_name'] = validateOptionalString(body['last_name'], 'last_name', { maxLength: 100 });
+  // Phone — accept null/empty without strict format validation
+  if ('phone' in body) {
+    const phoneVal = body['phone'];
+    data['phone'] = (typeof phoneVal === 'string' && phoneVal.trim().length > 0)
+      ? phoneVal.trim().substring(0, 50)
+      : null;
+  }
   if ('job_title' in body) data['job_title'] = validateOptionalString(body['job_title'], 'job_title', { maxLength: 200 });
-
-  // Certification fields
+  // Certification fields — accept both DB column names and entity field names
   if ('rpii_qualified' in body) data['rpii_qualified'] = validateOptionalBoolean(body['rpii_qualified'], 'rpii_qualified', false);
   if ('rpii_number' in body) data['rpii_number'] = validateOptionalString(body['rpii_number'], 'rpii_number', { maxLength: 50 });
+  if ('rpii_certification_number' in body) data['rpii_number'] = validateOptionalString(body['rpii_certification_number'], 'rpii_certification_number', { maxLength: 50 });
   if ('rpii_expiry' in body) data['rpii_expiry'] = validateOptionalISODate(body['rpii_expiry'], 'rpii_expiry');
   if ('rpii_grade' in body) data['rpii_grade'] = validateOptionalString(body['rpii_grade'], 'rpii_grade', { maxLength: 50 });
-  if ('other_qualifications' in body) data['other_qualifications'] = validateOptionalString(body['other_qualifications'], 'other_qualifications', { maxLength: 2000 });
+  if ('rospa_certification_number' in body) data['rospa_certification_number'] = validateOptionalString(body['rospa_certification_number'], 'rospa_certification_number', { maxLength: 50 });
+  // other_qualifications — accept both array (from frontend) and string (legacy)
+  if ('other_qualifications' in body) {
+    const oq = body['other_qualifications'];
+    if (Array.isArray(oq)) {
+      data['other_qualifications'] = oq
+        .filter((q): q is string => typeof q === 'string')
+        .map((q) => q.trim())
+        .filter(Boolean)
+        .join(', ')
+        .substring(0, 2000);
+    } else {
+      data['other_qualifications'] = validateOptionalString(oq, 'other_qualifications', { maxLength: 2000 });
+    }
+  }
   if ('insurance_provider' in body) data['insurance_provider'] = validateOptionalString(body['insurance_provider'], 'insurance_provider', { maxLength: 200 });
   if ('insurance_policy_number' in body) data['insurance_policy_number'] = validateOptionalString(body['insurance_policy_number'], 'insurance_policy_number', { maxLength: 100 });
   if ('insurance_expiry' in body) data['insurance_expiry'] = validateOptionalISODate(body['insurance_expiry'], 'insurance_expiry');
-
   // Preferences
   if ('preferred_voice_engine' in body) data['preferred_voice_engine'] = validateOptionalString(body['preferred_voice_engine'], 'preferred_voice_engine', { maxLength: 50 });
   if ('preferred_language' in body) data['preferred_language'] = validateOptionalString(body['preferred_language'], 'preferred_language', { maxLength: 10 });

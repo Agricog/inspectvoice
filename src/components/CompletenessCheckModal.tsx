@@ -513,22 +513,32 @@ export default function CompletenessCheckModal({
 
         setIsOffline(false);
 
-       // Online: send current in-memory state as the authoritative source.
+        // Online: send current in-memory state as the authoritative source.
         // Server validates ownership via DB but runs checks against this payload,
         // eliminating the sync race condition entirely.
-        const json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
-          `/api/v1/inspections/${inspection.id}/completeness-check`,
-          {
-            method: 'POST',
-            retries: 0,
-            body: {
-              items,
-              inspector_summary: inspectorSummary,
-              closure_recommended: closureRecommended,
-              closure_reason: closureReason,
+        // 10-second timeout — if the worker stalls, fall through to offline checks.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+        let json: { success: boolean; data: CompletenessResult };
+        try {
+          json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
+            `/api/v1/inspections/${inspection.id}/completeness-check`,
+            {
+              method: 'POST',
+              retries: 0,
+              body: {
+                items,
+                inspector_summary: inspectorSummary,
+                closure_recommended: closureRecommended,
+                closure_reason: closureReason,
+              },
+              headers: { 'Request-Timeout': '9000' },
             },
-          },
-        );
+          );
+        } finally {
+          clearTimeout(timeoutId);
+        }
 
         setResult(json.data);
         setLoading(false);

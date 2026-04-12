@@ -513,26 +513,24 @@ export default function CompletenessCheckModal({
 
         setIsOffline(false);
 
-        // Online: call worker endpoint (single attempt, no retries)
+       // Online: send current in-memory state as the authoritative source.
+        // Server validates ownership via DB but runs checks against this payload,
+        // eliminating the sync race condition entirely.
         const json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
           `/api/v1/inspections/${inspection.id}/completeness-check`,
-          { method: 'POST', retries: 0 },
+          {
+            method: 'POST',
+            retries: 0,
+            body: {
+              items,
+              inspector_summary: inspectorSummary,
+              closure_recommended: closureRecommended,
+              closure_reason: closureReason,
+            },
+          },
         );
 
-        // Guard: if server says "no assets" but we have items locally,
-        // the sync hasn't completed yet — use local checks instead
-        const serverSaysNoAssets = json.data.issues.some(
-          (i: CompletenessIssue) => i.code === 'NO_ASSETS',
-        );
-        if (serverSaysNoAssets && items.length > 0) {
-          const localResult = await runOfflineChecks(
-            inspection, items, inspectorSummary, closureRecommended, closureReason,
-          );
-          setResult(localResult);
-          setIsOffline(true);
-        } else {
-          setResult(json.data);
-        }
+        setResult(json.data);
         setLoading(false);
       } catch {
         // Any failure (404 = not synced, 500, network) → fall back to local checks

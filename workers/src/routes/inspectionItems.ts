@@ -69,7 +69,7 @@ const ACTION_TIMEFRAMES = [
 const AI_STATUSES = ['pending', 'processing', 'completed', 'failed'] as const;
 const TRANSCRIPTION_METHODS = ['deepgram', 'web_speech_api', 'manual'] as const;
 /** Columns that require explicit ::jsonb casting in parameterised queries */
-const JSONB_COLUMNS = new Set(['defects', 'ai_analysis']);
+const JSONB_COLUMNS = new Set(['defects', 'ai_analysis', 'checklist_data']);
 // =============================================
 // HELPER: Verify inspection belongs to org
 // =============================================
@@ -405,6 +405,7 @@ export async function createInspectionItem(
     ai_processing_status: validateOptionalEnum(body['ai_processing_status'], 'ai_processing_status', AI_STATUSES) ?? 'pending',
     ai_processed_at: null,
     defects: JSON.stringify(defects),
+    checklist_data: body['checklist_data'] ? JSON.stringify(body['checklist_data']) : null,
     overall_condition: validateOptionalEnum(body['overall_condition'], 'overall_condition', CONDITION_RATINGS),
     risk_rating: validateOptionalEnum(body['risk_rating'], 'risk_rating', RISK_RATINGS),
     requires_action: validateOptionalBoolean(body['requires_action'], 'requires_action', false),
@@ -512,6 +513,7 @@ export async function updateInspectionItem(
   if ('ai_processing_status' in body) data['ai_processing_status'] = validateOptionalEnum(body['ai_processing_status'], 'ai_processing_status', AI_STATUSES);
   if ('ai_processed_at' in body) data['ai_processed_at'] = body['ai_processed_at'];
   if ('defects' in body) data['defects'] = JSON.stringify(body['defects'] ?? []);
+  if ('checklist_data' in body) data['checklist_data'] = body['checklist_data'] ? JSON.stringify(body['checklist_data']) : null;
   if ('overall_condition' in body) data['overall_condition'] = validateOptionalEnum(body['overall_condition'], 'overall_condition', CONDITION_RATINGS);
   if ('risk_rating' in body) data['risk_rating'] = validateOptionalEnum(body['risk_rating'], 'risk_rating', RISK_RATINGS);
   if ('requires_action' in body) data['requires_action'] = validateOptionalBoolean(body['requires_action'], 'requires_action', false);

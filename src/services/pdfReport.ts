@@ -548,14 +548,50 @@ function renderExecutiveSummary(doc: PDFDocument, cursor: Cursor, fonts: PDFFont
   const { inspection, items } = data;
   const boxWidth = CONTENT_WIDTH / 4 - 4;
   const boxHeight = 50;
-
   const allDefects = items.flatMap((i) => i.defects);
+
+  // Use inspection-level counts as the authoritative source — these are written
+  // from local in-memory data at sign-off time and are always correct.
+  // Fall back to recalculating from items only if the inspection record
+  // has no counts yet (e.g. unsigned draft preview).
+  const totalDefectsForCounts = allDefects.length;
+  const useInspectionCounts = (
+    inspection.very_high_risk_count > 0 ||
+    inspection.high_risk_count > 0 ||
+    inspection.medium_risk_count > 0 ||
+    inspection.low_risk_count > 0
+  );
   const riskData: Array<[string, number, ReturnType<typeof rgb>, ReturnType<typeof rgb>]> = [
-    ['Very High', allDefects.filter((d) => d.risk_rating === RiskRating.VERY_HIGH).length, COLOUR_RED, COLOUR_RED_BG],
-    ['High', allDefects.filter((d) => d.risk_rating === RiskRating.HIGH).length, COLOUR_ORANGE, COLOUR_ORANGE_BG],
-    ['Medium', allDefects.filter((d) => d.risk_rating === RiskRating.MEDIUM).length, COLOUR_YELLOW, COLOUR_YELLOW_BG],
-    ['Low', allDefects.filter((d) => d.risk_rating === RiskRating.LOW).length, COLOUR_GREEN, COLOUR_GREEN_BG],
+    [
+      'Very High',
+      useInspectionCounts
+        ? inspection.very_high_risk_count
+        : allDefects.filter((d) => d.risk_rating === RiskRating.VERY_HIGH).length,
+      COLOUR_RED, COLOUR_RED_BG,
+    ],
+    [
+      'High',
+      useInspectionCounts
+        ? inspection.high_risk_count
+        : allDefects.filter((d) => d.risk_rating === RiskRating.HIGH).length,
+      COLOUR_ORANGE, COLOUR_ORANGE_BG,
+    ],
+    [
+      'Medium',
+      useInspectionCounts
+        ? inspection.medium_risk_count
+        : allDefects.filter((d) => d.risk_rating === RiskRating.MEDIUM).length,
+      COLOUR_YELLOW, COLOUR_YELLOW_BG,
+    ],
+    [
+      'Low',
+      useInspectionCounts
+        ? inspection.low_risk_count
+        : allDefects.filter((d) => d.risk_rating === RiskRating.LOW).length,
+      COLOUR_GREEN, COLOUR_GREEN_BG,
+    ],
   ];
+  void totalDefectsForCounts; // used below for condition breakdown
 
   for (let i = 0; i < riskData.length; i++) {
     const [label, count, textCol, bgCol] = riskData[i]!;

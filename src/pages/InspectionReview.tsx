@@ -1152,11 +1152,15 @@ export default function InspectionReview(): JSX.Element {
       // ── Step 4: Load org branding ──
       let orgLogoBase64: string | undefined;
       let orgBrandColour: string | undefined;
+      let orgCompanyName: string | undefined;
       try {
         const { secureFetch } = await import('@hooks/useFetch');
         const orgResp = await secureFetch<{ data: Record<string, unknown> }>('/api/v1/org/settings');
         if (orgResp?.data) {
           orgBrandColour = typeof orgResp.data.brand_colour === 'string' ? orgResp.data.brand_colour : undefined;
+          orgCompanyName = typeof orgResp.data.company_name === 'string' && orgResp.data.company_name.trim().length > 0
+            ? orgResp.data.company_name
+            : undefined;
           const meta = orgResp.data.metadata as Record<string, unknown> | null | undefined;
           orgLogoBase64 = typeof meta?.logo_base64 === 'string' ? meta.logo_base64 : undefined;
         }
@@ -1170,7 +1174,7 @@ export default function InspectionReview(): JSX.Element {
         items: pdfItems,
         site,
         assets: siteAssets,
-        orgName: organization?.name || 'InspectVoice',
+        orgName: orgCompanyName || organization?.name || 'InspectVoice',
         orgLogoBase64,
         orgBrandColour,
         photoCountsByItem,

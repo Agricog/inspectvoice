@@ -45,6 +45,7 @@ import {
   Square,
   Trash2,
   X,
+  Sparkles,
   Eye,
   Info,
   BookOpen,
@@ -367,6 +368,8 @@ export default function InspectionCapture(): JSX.Element {
   const [localBaseline, setLocalBaseline] = useState<BaselinePhoto | null>(null);
   const [showQuickPick, setShowQuickPick] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [previousFindings, setPreviousFindings] = useState<PreviousFinding[]>([]);
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [findingActions, setFindingActions] = useState<Record<string, FindingAction>>({});
@@ -941,6 +944,63 @@ export default function InspectionCapture(): JSX.Element {
   }, []);
 
   // =============================================
+  // VOICE-TO-DEFECT EXTRACTION
+  // =============================================
+
+  const handleExtractDefects = useCallback(async () => {
+    if (!currentAsset || !captureState.voiceTranscript || captureState.voiceTranscript.length < 15) return;
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const { secureFetch } = await import('@hooks/useFetch');
+      const response = await secureFetch<{
+        data: {
+          defects: Array<{
+            description: string;
+            bs_en_reference: string;
+            risk_rating: string;
+            remedial_action: string;
+            action_timeframe: string;
+            estimated_cost_band: string;
+          }>;
+        };
+      }>('/api/v1/extract-defects', {
+        method: 'POST',
+        body: {
+          transcript: captureState.voiceTranscript,
+          asset_type: currentAsset.asset_type,
+          asset_code: currentAsset.asset_code,
+        },
+      });
+      const extracted = response.data?.defects ?? [];
+      if (extracted.length === 0) {
+        setExtractError('No defects found in transcript.');
+      } else {
+        setCaptureState((prev) => ({
+          ...prev,
+          manualDefects: [
+            ...prev.manualDefects,
+            ...extracted.map((d) => ({
+              description: d.description,
+              bs_en_reference: d.bs_en_reference,
+              risk_rating: d.risk_rating as RiskRating,
+              remedial_action: d.remedial_action,
+              action_timeframe: (d.action_timeframe ?? 'routine') as ActionTimeframe,
+              estimated_cost_band: (d.estimated_cost_band ?? 'low') as CostBand,
+              _libraryEntryId: undefined,
+            })),
+          ],
+        }));
+      }
+    } catch (error) {
+      setExtractError('Failed to extract defects. Try adding them manually.');
+      captureError(error, { module: 'InspectionCapture', operation: 'extractDefects' });
+    } finally {
+      setExtracting(false);
+    }
+  }, [currentAsset, captureState.voiceTranscript]);
+
+  // =============================================
   // SAVE CURRENT ASSET
   // =============================================
 
@@ -1501,6 +1561,27 @@ export default function InspectionCapture(): JSX.Element {
               className="w-full bg-transparent text-sm iv-text resize-y border-none outline-none focus:ring-0 p-0"
               aria-label="Edit transcript"
             />
+          </div>
+        )}
+
+        {/* Extract defects from transcript */}
+        {captureState.voiceTranscript && captureState.voiceTranscript.length >= 15 && !isRecording && !isPaused && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => void handleExtractDefects()}
+              disabled={extracting}
+              className="iv-btn-primary flex items-center gap-2 text-sm disabled:opacity-50"
+            >
+              {extracting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />Extracting Defects…</>
+              ) : (
+                <><Sparkles className="w-4 h-4" />Extract Defects from Voice</>
+              )}
+            </button>
+            {extractError && (
+              <p className="text-xs text-[#EAB308] mt-1.5">{extractError}</p>
+            )}
           </div>
         )}
 

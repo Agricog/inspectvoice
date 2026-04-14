@@ -829,11 +829,11 @@ export default function InspectionReview(): JSX.Element {
     [],
   );
 
-  // ---- Per-field normalisation callback ----
+// ---- Per-field normalisation callback ----
   const handleFieldNormalised = useCallback(
     (itemId: string, fieldName: string, normalisedText: string) => {
-      setItems((prev) =>
-        prev.map((item) => {
+      setItems((prev) => {
+        const updated = prev.map((item) => {
           if (item.id !== itemId) return item;
           if (fieldName.startsWith('defect_')) {
             const indexStr = fieldName.split('_')[1];
@@ -850,8 +850,18 @@ export default function InspectionReview(): JSX.Element {
             return { ...item, defects: updatedDefects };
           }
           return item;
-        }),
-      );
+        });
+
+        // Persist to IndexedDB so the change survives reload and PDF merge
+        const changedItem = updated.find((i) => i.id === itemId);
+        if (changedItem) {
+          void inspectionItems.update(itemId, { defects: changedItem.defects }).catch((err) => {
+            captureError(err, { module: 'InspectionReview', operation: 'normaliseFieldPersist' });
+          });
+        }
+
+        return updated;
+      });
     },
     [],
   );

@@ -17,6 +17,7 @@ import { Logger } from './shared/logger';
 // ── Route Handlers ──
 import { listSites, getSite, createSite, updateSite, deleteSite } from './routes/sites';
 import { runCompletenessCheck } from './routes/completenessCheck';
+import { extractDefectsFromTranscript } from './routes/extractDefects';
 import { listAssetsBySite, getAsset, createAsset, updateAsset, deleteAsset } from './routes/assets';
 import { getAssetHistory } from './routes/assetHistory';
 import { getPreviousFindings } from './routes/previousFindings';
@@ -209,6 +210,8 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['GET', '/api/v1/inspections/:id/pdf', downloadPdf],
   // ── Completeness Check ──
   ['POST', '/api/v1/inspections/:id/completeness-check', runCompletenessCheck],
+  // ── Voice-to-Defect Extraction ──
+  ['POST', '/api/v1/extract-defects', extractDefectsFromTranscript],
   // ── Users ──
   ['GET', '/api/v1/users/me', getMe],
   ['PUT', '/api/v1/users/me', updateMe],

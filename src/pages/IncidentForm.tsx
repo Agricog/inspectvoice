@@ -39,7 +39,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
-import { useFetch } from '@hooks/useFetch';
+import { useFetch, secureFetch } from '@hooks/useFetch';
 import { captureError } from '@utils/errorTracking';
 
 // =============================================
@@ -355,22 +355,11 @@ export default function IncidentForm(): JSX.Element {
       const url = isEdit ? `/api/v1/incidents/${id}` : '/api/v1/incidents';
       const method = isEdit ? 'PUT' : 'POST';
 
-      const response = await fetch(url, {
+      const result = await secureFetch<{ success: boolean; data: { id: string } }>(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
+        body,
       });
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => null) as Record<string, unknown> | null;
-        const errMsg = (err?.['error'] as Record<string, string> | undefined)?.['message'];
-        throw new Error(
-          errMsg ?? `Failed to ${isEdit ? 'update' : 'create'} incident`,
-        );
-      }
-
-      const result = await response.json() as { data: { id: string } };
       navigate(`/incidents/${result.data.id}`);
     } catch (error) {
       captureError(error, { module: 'IncidentForm', operation: 'submit' });

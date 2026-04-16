@@ -45,6 +45,7 @@ import {
 import { v4 as uuid } from 'uuid';
 import { useFormValidation } from '@hooks/useFormValidation';
 import { assetsCache } from '@services/offlineStore';
+import { secureFetch } from '@hooks/useFetch';
 import {
   createValidator,
   isValidAssetCode,
@@ -454,17 +455,68 @@ export default function AssetForm(): JSX.Element {
     onSubmit: async (values) => {
       if (!siteId) return;
       setSaveError(null);
-
       try {
         const asset = formToAsset(values, siteId, existingAsset);
-        await assetsCache.put(asset);
+
+        const apiPayload: Record<string, unknown> = {
+          id: asset.id,
+          site_id: asset.site_id,
+          asset_code: asset.asset_code,
+          asset_type: asset.asset_type,
+          asset_category: asset.asset_category,
+          manufacturer: asset.manufacturer,
+          model: asset.model,
+          serial_number: asset.serial_number,
+          install_date: asset.install_date,
+          purchase_cost_gbp: asset.purchase_cost_gbp,
+          compliance_standard: asset.compliance_standard,
+          expected_lifespan_years: asset.expected_lifespan_years,
+          surface_type: asset.surface_type,
+          fall_height_mm: asset.fall_height_mm,
+          impact_attenuation_required_mm: asset.impact_attenuation_required_mm,
+          last_maintenance_date: asset.last_maintenance_date,
+          next_maintenance_due: asset.next_maintenance_due,
+          maintenance_notes: asset.maintenance_notes,
+          is_active: asset.is_active,
+          metadata: asset.metadata,
+        };
+
+        let savedAsset: Asset | null = null;
+
+        try {
+          if (isEditMode) {
+            const response = await secureFetch<{ success: boolean; data: Asset }>(
+              `/api/v1/assets/${asset.id}`,
+              { method: 'PUT', body: apiPayload },
+            );
+            savedAsset = response.data;
+          } else {
+            const response = await secureFetch<{ success: boolean; data: Asset }>(
+              '/api/v1/assets',
+              { method: 'POST', body: apiPayload },
+            );
+            savedAsset = response.data;
+          }
+        } catch (apiErr) {
+          if (navigator.onLine) {
+            const message = apiErr instanceof Error ? apiErr.message : 'Failed to save asset';
+            console.error('[AssetForm] API save failed while online:', apiErr);
+            throw new Error(message);
+          }
+          console.warn('[AssetForm] Offline — saving locally for sync:', apiErr);
+        }
+
+        const assetToCache = savedAsset ?? asset;
+        await assetsCache.put(assetToCache);
+
         navigate(`/sites/${siteId}`, { replace: true });
       } catch (error) {
         captureError(error, {
           module: 'AssetForm',
-          operation: 'saveAsset',
+          operation: isEditMode ? 'updateAsset' : 'createAsset',
         });
-        setSaveError('Failed to save asset. Please try again.');
+        const message = error instanceof Error ? error.message : 'Failed to save asset. Please try again.';
+        setSaveError(message);
         formTopRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     },

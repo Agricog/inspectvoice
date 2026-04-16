@@ -18,7 +18,7 @@ import { Logger } from './shared/logger';
 import { listSites, getSite, createSite, updateSite, deleteSite } from './routes/sites';
 import { runCompletenessCheck } from './routes/completenessCheck';
 import { extractDefectsFromTranscript } from './routes/extractDefects';
-import { listAssetsBySite, getAsset, createAsset, updateAsset, deleteAsset } from './routes/assets';
+import { listAssetsBySite, getAsset, createAsset, updateAsset, deleteAsset, reorderAssets } from './routes/assets';
 import { getAssetHistory } from './routes/assetHistory';
 import { getPreviousFindings } from './routes/previousFindings';
 import { listInspections, getInspection, createInspection, updateInspection, deleteInspection } from './routes/inspections';
@@ -169,6 +169,7 @@ const ROUTES: Array<[string, string, RouteHandler]> = [
   ['DELETE', '/api/v1/sites/:id', deleteSite],
   // ── Assets ──
   ['GET', '/api/v1/sites/:siteId/assets', listAssetsBySite],
+  ['PUT', '/api/v1/sites/:siteId/assets/reorder', reorderAssets],
   ['GET', '/api/v1/assets/:id/history', getAssetHistory],
   ['GET', '/api/v1/assets/:id/previous-findings', getPreviousFindings],
   ['GET', '/api/v1/assets/:id', getAsset],

@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 import { useClerk } from '@clerk/clerk-react';
 import { useFetch } from '@hooks/useFetch';
+import { clearAllData } from '@services/offlineStore';
 import type { User as UserEntity, Organisation } from '@/types/entities';
 import {
   InspectionType,
@@ -907,8 +908,13 @@ export function SettingsPage(): JSX.Element {
     void refetchOrg();
   }, [refetchUser, refetchOrg]);
 
-  const handleSignOut = useCallback(() => {
-    void signOut({ redirectUrl: '/sign-in' });
+  const handleSignOut = useCallback(async () => {
+    try {
+      await clearAllData();
+    } catch {
+      // Non-blocking — sign out regardless
+    }
+    await signOut({ redirectUrl: '/sign-in' });
   }, [signOut]);
 
   return (

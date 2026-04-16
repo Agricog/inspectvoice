@@ -13,6 +13,12 @@
  *   - Seed button (admin only, one-time)
  *   - Delete All button (admin only, clears all entries for re-seeding)
  *
+ * UPDATED: 16 Apr 2026
+ *   - Replaced all raw fetch() calls with secureFetch for consistent
+ *     auth token injection, CSRF headers, and correct API base URL.
+ *   - Removed manual getToken() / useAuth — secureFetch handles auth.
+ *   - Fixed missing CSRF on handleFormSubmit and handleSeed.
+ *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any
  */
 import { useState, useEffect, useCallback } from 'react';
@@ -35,7 +41,6 @@ import {
   Shield,
   Save,
 } from 'lucide-react';
-import { useAuth } from '@clerk/clerk-react';
 import { ASSET_TYPE_CONFIG } from '@config/assetTypes';
 import {
   RISK_RATING_LABELS,
@@ -44,8 +49,7 @@ import {
   COST_BAND_LABELS,
 } from '@/types';
 import type { DefectLibraryEntry, DefectLibraryEntryVersion } from '@/types/features14_15';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+import { secureFetch } from '@hooks/useFetch';
 
 // =============================================
 // TYPES
@@ -115,8 +119,6 @@ function sourceBadge(source: string): JSX.Element {
 // =============================================
 
 export default function DefectLibraryPage(): JSX.Element {
-  const { getToken } = useAuth();
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<DefectLibraryEntry[]>([]);
@@ -156,20 +158,16 @@ export default function DefectLibraryPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const token = await getToken();
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
       if (assetTypeFilter) params.set('asset_type', assetTypeFilter);
       if (sourceFilter) params.set('source', sourceFilter);
       if (searchQuery) params.set('search', searchQuery);
 
-      const res = await fetch(`${API_BASE}/api/v1/defect-library?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = await res.json() as {
+      const json = await secureFetch<{
         data: DefectLibraryEntry[];
         pagination: { total: number };
-      };
+      }>(`/api/v1/defect-library?${params}`);
+
       setEntries(json.data);
       setTotal(json.pagination.total);
     } catch (err) {
@@ -177,7 +175,7 @@ export default function DefectLibraryPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [getToken, offset, assetTypeFilter, sourceFilter, searchQuery]);
+  }, [offset, assetTypeFilter, sourceFilter, searchQuery]);
 
   useEffect(() => {
     void fetchEntries();
@@ -223,7 +221,6 @@ export default function DefectLibraryPage(): JSX.Element {
     setFormSaving(true);
     setFormError(null);
     try {
-      const token = await getToken();
       const body = {
         asset_type: form.asset_type,
         title: form.title,
@@ -235,20 +232,14 @@ export default function DefectLibraryPage(): JSX.Element {
         timeframe_default: form.timeframe_default || null,
         change_note: form.change_note || (editingId ? 'Updated' : 'Initial version'),
       };
+
       const url = editingId
-        ? `${API_BASE}/api/v1/defect-library/${editingId}`
-        : `${API_BASE}/api/v1/defect-library`;
+        ? `/api/v1/defect-library/${editingId}`
+        : '/api/v1/defect-library';
       const method = editingId ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const errJson = await res.json() as { error?: { message?: string } };
-        throw new Error(errJson.error?.message ?? `${res.status}`);
-      }
+      await secureFetch(url, { method, body });
+
       setShowForm(false);
       void fetchEntries();
     } catch (err) {
@@ -256,39 +247,29 @@ export default function DefectLibraryPage(): JSX.Element {
     } finally {
       setFormSaving(false);
     }
-  }, [form, editingId, getToken, fetchEntries]);
+  }, [form, editingId, fetchEntries]);
 
   // ── Delete org entry ──
   const handleDelete = useCallback(async (entryId: string) => {
     if (!confirm('Deactivate this org entry? It can be restored later.')) return;
     try {
-      const token = await getToken();
-      const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
-      await fetch(`${API_BASE}/api/v1/defect-library/${entryId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf },
-      });
+      await secureFetch(`/api/v1/defect-library/${entryId}`, { method: 'DELETE' });
       void fetchEntries();
     } catch {
       // silent
     }
-  }, [getToken, fetchEntries]);
+  }, [fetchEntries]);
 
   // ── Delete system entry (uses same endpoint — server now allows system entries) ──
   const handleDeleteSystem = useCallback(async (entryId: string) => {
     if (!confirm('Delete this system entry? It can be re-seeded later.')) return;
     try {
-      const token = await getToken();
-      const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
-      await fetch(`${API_BASE}/api/v1/defect-library/${entryId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf },
-      });
+      await secureFetch(`/api/v1/defect-library/${entryId}`, { method: 'DELETE' });
       void fetchEntries();
     } catch {
       // silent
     }
-  }, [getToken, fetchEntries]);
+  }, [fetchEntries]);
 
   // ── Version history ──
   const openHistory = useCallback(async (entryId: string) => {
@@ -296,32 +277,26 @@ export default function DefectLibraryPage(): JSX.Element {
     setHistoryLoading(true);
     setHistoryVersions([]);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_BASE}/api/v1/defect-library/${entryId}/versions`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const json = await res.json() as { data: DefectLibraryEntryVersion[] };
-        setHistoryVersions(json.data);
-      }
+      const json = await secureFetch<{ data: DefectLibraryEntryVersion[] }>(
+        `/api/v1/defect-library/${entryId}/versions`,
+      );
+      setHistoryVersions(json.data);
     } catch {
       // silent
     } finally {
       setHistoryLoading(false);
     }
-  }, [getToken]);
+  }, []);
 
   // ── Seed ──
   const handleSeed = useCallback(async () => {
     setSeeding(true);
     setSeedResult(null);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_BASE}/api/v1/defect-library/seed`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json() as { data: { created: number; skipped: number; total: number } };
+      const json = await secureFetch<{ data: { created: number; skipped: number; total: number } }>(
+        '/api/v1/defect-library/seed',
+        { method: 'POST' },
+      );
       const d = json.data;
       setSeedResult(`Created ${d.created}, skipped ${d.skipped} (${d.total} total in library)`);
     } catch {
@@ -329,30 +304,25 @@ export default function DefectLibraryPage(): JSX.Element {
     } finally {
       setSeeding(false);
     }
-  }, [getToken]);
+  }, []);
 
   // ── Delete All ──
   const handleDeleteAll = useCallback(async () => {
     if (!confirm('Delete ALL library entries (system + org)? System entries can be re-seeded afterwards.')) return;
     setDeletingAll(true);
     try {
-      const token = await getToken();
-      const csrf = sessionStorage.getItem('iv-csrf-token') ?? '';
-      const res = await fetch(`${API_BASE}/api/v1/defect-library`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf },
-      });
-      if (res.ok) {
-        const json = await res.json() as { data: { deleted: number } };
-        setSeedResult(`Deleted ${json.data.deleted} entries`);
-        void fetchEntries();
-      }
+      const json = await secureFetch<{ data: { deleted: number } }>(
+        '/api/v1/defect-library',
+        { method: 'DELETE' },
+      );
+      setSeedResult(`Deleted ${json.data.deleted} entries`);
+      void fetchEntries();
     } catch {
       setSeedResult('Delete failed');
     } finally {
       setDeletingAll(false);
     }
-  }, [getToken, fetchEntries]);
+  }, [fetchEntries]);
 
   // ── Update form field helper ──
   const updateField = (field: keyof FormData, value: string) => {
@@ -392,7 +362,7 @@ export default function DefectLibraryPage(): JSX.Element {
             {deletingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
             Delete All
           </button>
-          <button type="button" onClick={handleSeed} disabled={seeding} className="iv-btn-secondary text-xs flex items-center gap-1.5">
+          <button type="button" onClick={() => void handleSeed()} disabled={seeding} className="iv-btn-secondary text-xs flex items-center gap-1.5">
             {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
             Seed System Entries
           </button>
@@ -597,11 +567,13 @@ export default function DefectLibraryPage(): JSX.Element {
                 <X className="w-5 h-5" />
               </button>
             </div>
+
             {formError && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-300">
                 {formError}
               </div>
             )}
+
             <div className="space-y-3">
               <div>
                 <label className="iv-label mb-1 block">Asset Type *</label>
@@ -712,6 +684,7 @@ export default function DefectLibraryPage(): JSX.Element {
                 </div>
               )}
             </div>
+
             <div className="flex items-center gap-3 mt-6">
               <button
                 type="button"

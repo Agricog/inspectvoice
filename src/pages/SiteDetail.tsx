@@ -32,6 +32,10 @@ import {
   ChevronRight,
   Info,
   Trash2,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
+  Check,
 } from 'lucide-react';
 import { sitesCache, assetsCache, inspections as inspectionsStore } from '@services/offlineStore';
 import { secureFetch } from '@hooks/useFetch';
@@ -202,9 +206,14 @@ export function SiteDetail(): JSX.Element {
   const [confirmDeleteInspection, setConfirmDeleteInspection] = useState<string | null>(null);
   const [deletingInspection, setDeletingInspection] = useState(false);
 
-  // Asset delete
+ // Asset delete
   const [confirmDeleteAsset, setConfirmDeleteAsset] = useState<CachedAsset | null>(null);
   const [deletingAsset, setDeletingAsset] = useState(false);
+
+  // Asset reorder
+  const [reorderMode, setReorderMode] = useState(false);
+  const [reorderedAssets, setReorderedAssets] = useState<CachedAsset[]>([]);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   useEffect(() => {
     if (id) trackPageView(`/sites/${id}`);
@@ -283,6 +292,57 @@ export function SiteDetail(): JSX.Element {
     }
   }, []);
 
+ // ── Reorder handlers ──
+  const handleEnterReorder = useCallback(() => {
+    setReorderedAssets([...assets].sort((a, b) => {
+      const aOrder = (a.data as unknown as Record<string, unknown>).sort_order as number ?? 0;
+      const bOrder = (b.data as unknown as Record<string, unknown>).sort_order as number ?? 0;
+      return aOrder - bOrder;
+    }));
+    setReorderMode(true);
+  }, [assets]);
+
+  const handleCancelReorder = useCallback(() => {
+    setReorderMode(false);
+    setReorderedAssets([]);
+  }, []);
+
+  const handleMoveAsset = useCallback((index: number, direction: 'up' | 'down') => {
+    setReorderedAssets((prev) => {
+      const next = [...prev];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= next.length) return prev;
+      const temp = next[targetIndex]!;
+      next[targetIndex] = next[index]!;
+      next[index] = temp;
+      return next;
+    });
+  }, []);
+
+  const handleSaveOrder = useCallback(async () => {
+    if (!id || reorderedAssets.length === 0) return;
+    setSavingOrder(true);
+    try {
+      const assetIds = reorderedAssets.map((a) => a.data.id);
+      await secureFetch(`/api/v1/sites/${id}/assets/reorder`, {
+        method: 'PUT',
+        body: { asset_ids: assetIds },
+      });
+      // Update local cache with new sort_order
+      for (let i = 0; i < reorderedAssets.length; i++) {
+        const cached = reorderedAssets[i]!;
+        await assetsCache.put({ ...cached.data, sort_order: i } as import('@/types').Asset);
+      }
+      setAssets(reorderedAssets);
+      setReorderMode(false);
+      setReorderedAssets([]);
+    } catch (err) {
+      captureError(err, { module: 'SiteDetail', operation: 'reorderAssets' });
+    } finally {
+      setSavingOrder(false);
+    }
+  }, [id, reorderedAssets]);
+
   // ── Load site data ──
   useEffect(() => {
     if (!id) {
@@ -341,7 +401,11 @@ export function SiteDetail(): JSX.Element {
             // Offline — show empty, non-blocking
           }
         }
-        setAssets(activeAssets);
+        setAssets(activeAssets.sort((a, b) => {
+          const aOrder = (a.data as unknown as Record<string, unknown>).sort_order as number ?? 0;
+          const bOrder = (b.data as unknown as Record<string, unknown>).sort_order as number ?? 0;
+          return aOrder - bOrder;
+        }));
         setSiteInspections(cachedInspections);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to load site';
@@ -587,10 +651,44 @@ export function SiteDetail(): JSX.Element {
                   {assets.length}
                 </span>
               </h2>
-              <Link to={`/sites/${site.id}/assets/new`} className="iv-btn-secondary text-sm">
-                <Plus className="w-3.5 h-3.5" />
-                Add Asset
-              </Link>
+              <div className="flex items-center gap-2">
+                {!reorderMode ? (
+                  <button
+                    type="button"
+                    onClick={handleEnterReorder}
+                    disabled={assets.length < 2}
+                    className="iv-btn-secondary text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <GripVertical className="w-3.5 h-3.5" />
+                    Reorder
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveOrder()}
+                      disabled={savingOrder}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-iv-accent text-white rounded-lg text-sm font-medium hover:bg-iv-accent/90 disabled:opacity-50 transition-colors"
+                    >
+                      {savingOrder ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      {savingOrder ? 'Saving…' : 'Save Order'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelReorder}
+                      className="iv-btn-secondary text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+                {!reorderMode && (
+                  <Link to={`/sites/${site.id}/assets/new`} className="iv-btn-secondary text-sm">
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Asset
+                  </Link>
+                )}
+              </div>
             </div>
 
             {assets.length === 0 ? (
@@ -607,8 +705,47 @@ export function SiteDetail(): JSX.Element {
               </div>
             ) : (
               <div className="space-y-1.5">
-                {assets.map((cached) => {
+                {(reorderMode ? reorderedAssets : assets).map((cached, index) => {
                   const asset = cached.data;
+
+                  if (reorderMode) {
+                    return (
+                      <div key={asset.id} className="iv-card-interactive flex items-center gap-3 py-2.5 px-3">
+                        <div className="flex flex-col gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveAsset(index, 'up')}
+                            disabled={index === 0}
+                            className="iv-btn-icon w-6 h-6 disabled:opacity-20"
+                            aria-label="Move up"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveAsset(index, 'down')}
+                            disabled={index === reorderedAssets.length - 1}
+                            className="iv-btn-icon w-6 h-6 disabled:opacity-20"
+                            aria-label="Move down"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <GripVertical className="w-4 h-4 text-iv-muted-2 shrink-0" />
+                        <span className="text-xs text-iv-muted-2 font-mono w-5 text-center shrink-0">{index + 1}</span>
+                        <div className="w-8 h-8 rounded-md bg-iv-surface-2 flex items-center justify-center shrink-0">
+                          <Package className="w-4 h-4 text-iv-muted" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-iv-text truncate">{asset.asset_code}</p>
+                          <p className="text-2xs text-iv-muted truncate">
+                            {asset.asset_type} {asset.manufacturer ? `— ${asset.manufacturer}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div key={asset.id} className="iv-card-interactive flex items-center gap-3 py-2.5 px-3">
                       <Link

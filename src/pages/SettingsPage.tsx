@@ -515,7 +515,7 @@ function OrganisationSection({
     } catch {
       setSectionState({ status: 'error', message: 'Failed to update organisation' });
     }
-  }, [orgName, primaryColor, onSave]);
+  }, [orgName, primaryColor, logoBase64, org, onSave]);
 
   const tierLabel = (org.tier ?? 'free').charAt(0).toUpperCase() + (org.tier ?? 'free').slice(1);
   const statusLabel = (org.subscription_status ?? 'trialing').charAt(0).toUpperCase() + (org.subscription_status ?? 'trialing').slice(1);

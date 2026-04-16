@@ -221,10 +221,11 @@ export async function createAsset(
     metadata: body['metadata'] ?? {},
   };
 
-  // Insert — db.insert auto-adds org_id, but assets table uses site_id for org linkage.
-  // We need to use rawQuery since assets doesn't have org_id column directly.
-  const columns = Object.keys(data);
-  const values = Object.values(data);
+  // Insert — assets table has its own org_id column (NOT NULL).
+  // Inject org_id from the request context so the row is correctly tenanted.
+  const dataWithOrg = { ...data, org_id: ctx.orgId };
+  const columns = Object.keys(dataWithOrg);
+  const values = Object.values(dataWithOrg);
   const placeholders = columns.map((_, i) => `$${i + 1}`);
   const now = new Date().toISOString();
 

@@ -21,7 +21,6 @@
  *   <input value={form.values.name} onChange={form.handleChange('name')} />
  *   {form.fieldError('name') && <span>{form.fieldError('name')}</span>}
  */
-
 import { useState, useCallback, useRef } from 'react';
 import type { ValidationResult, ValidationError } from '@utils/validation';
 import { sanitiseForStorage } from '@utils/sanitization';
@@ -54,6 +53,8 @@ interface FormState<T extends Record<string, unknown>> {
   submitted: boolean;
   /** Whether any field has been modified */
   dirty: boolean;
+  /** Error message from a failed submit (null if no error) */
+  submitError: string | null;
   /** Get the error message for a specific field (or null) */
   fieldError: (field: keyof T) => string | null;
   /** Whether a specific field has an error */
@@ -93,13 +94,13 @@ export function useFormValidation<T extends Record<string, unknown>>(
   const [submitted, setSubmitted] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [touchedFields, setTouchedFields] = useState<Set<string>>(new Set());
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const initialValuesRef = useRef(initialValues);
 
   /** Sanitise all string values in the form */
   const sanitiseValues = useCallback((vals: T): T => {
     if (!shouldSanitise) return vals;
-
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(vals)) {
       result[key] = typeof value === 'string' ? sanitiseForStorage(value) : value;
@@ -146,14 +147,12 @@ export function useFormValidation<T extends Record<string, unknown>>(
     (field: keyof T) =>
       (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         const { value, type } = e.target;
-
         let typedValue: unknown = value;
         if (type === 'number') {
           typedValue = value === '' ? '' : Number(value);
         } else if (type === 'checkbox' && 'checked' in e.target) {
           typedValue = (e.target as HTMLInputElement).checked;
         }
-
         setValue(field, typedValue as T[keyof T]);
       },
     [setValue],
@@ -163,7 +162,6 @@ export function useFormValidation<T extends Record<string, unknown>>(
   const handleBlur = useCallback(
     (field: keyof T) => () => {
       setTouchedFields((prev) => new Set(prev).add(field as string));
-
       if (validateOnBlur) {
         const result = validate(values);
         setErrors(result.errors);
@@ -176,7 +174,6 @@ export function useFormValidation<T extends Record<string, unknown>>(
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
-
       setSubmitted(true);
 
       // Sanitise before validation
@@ -191,10 +188,13 @@ export function useFormValidation<T extends Record<string, unknown>>(
       }
 
       setSubmitting(true);
-
+      setSubmitError(null);
       try {
         await onSubmit(cleanValues);
         setDirty(false);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'An unexpected error occurred. Please try again.';
+        setSubmitError(message);
       } finally {
         setSubmitting(false);
       }
@@ -209,6 +209,7 @@ export function useFormValidation<T extends Record<string, unknown>>(
     setSubmitted(false);
     setSubmitting(false);
     setDirty(false);
+    setSubmitError(null);
     setTouchedFields(new Set());
   }, []);
 
@@ -218,6 +219,7 @@ export function useFormValidation<T extends Record<string, unknown>>(
     submitting,
     submitted,
     dirty,
+    submitError,
     fieldError,
     hasError,
     setValue,

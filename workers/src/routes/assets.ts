@@ -57,8 +57,7 @@ const SURFACE_TYPES = [
   'artificial_grass', 'tarmac', 'concrete', 'other',
 ] as const;
 
-const ASSET_SORT_COLUMNS = ['asset_code', 'asset_type', 'created_at', 'last_inspection_date'] as const;
-
+const ASSET_SORT_COLUMNS = ['sort_order', 'asset_code', 'asset_type', 'created_at', 'last_inspection_date'] as const;
 // =============================================
 // LIST ASSETS FOR SITE
 // =============================================
@@ -78,7 +77,7 @@ export async function listAssetsBySite(
 
   const pagination = parsePagination(request, ctx.env);
   const { limit, offset } = paginationToOffset(pagination);
-  const sortBy = parseSortField(request, [...ASSET_SORT_COLUMNS], 'asset_code');
+  const sortBy = parseSortField(request, [...ASSET_SORT_COLUMNS], 'sort_order');
   const sortDir = parseSortDirection(request);
   const search = parseSearchQuery(request);
   const categoryFilter = parseFilterParam(request, 'category');
@@ -221,9 +220,16 @@ export async function createAsset(
     metadata: body['metadata'] ?? {},
   };
 
+ // Set sort_order to end of list for this site
+  const maxOrderRows = await db.rawQuery<{ max_order: number | null }>(
+    `SELECT MAX(sort_order) AS max_order FROM assets WHERE site_id = $1`,
+    [siteId],
+  );
+  const nextOrder = (maxOrderRows[0]?.max_order ?? -1) + 1;
+
   // Insert — assets table has its own org_id column (NOT NULL).
   // Inject org_id from the request context so the row is correctly tenanted.
-  const dataWithOrg = { ...data, org_id: ctx.orgId };
+  const dataWithOrg = { ...data, org_id: ctx.orgId, sort_order: nextOrder };
   const columns = Object.keys(dataWithOrg);
   const values = Object.values(dataWithOrg);
   const placeholders = columns.map((_, i) => `$${i + 1}`);
@@ -376,5 +382,59 @@ export async function deleteAsset(
   return jsonResponse({
     success: true,
     data: { id, deactivated: true },
+  }, ctx.requestId);
+}
+// =============================================
+// REORDER ASSETS
+// =============================================
+
+export async function reorderAssets(
+  request: Request,
+  params: RouteParams,
+  ctx: RequestContext,
+): Promise<Response> {
+  validateCsrf(request);
+  await checkRateLimit(ctx, 'write');
+
+  const siteId = validateUUID(params['siteId'], 'siteId');
+  const db = createDb(ctx);
+
+  // Verify site belongs to this org
+  await db.findByIdOrThrow('sites', siteId, 'Site');
+
+  const body = await parseJsonBody(request);
+  const assetIds = body['asset_ids'];
+
+  if (!Array.isArray(assetIds) || assetIds.length === 0) {
+    throw new NotFoundError('asset_ids must be a non-empty array');
+  }
+
+  // Validate all IDs are UUIDs
+  for (const id of assetIds) {
+    validateUUID(id, 'asset_ids[]');
+  }
+
+  // Update sort_order in a single query using unnest
+  const now = new Date().toISOString();
+  await db.rawQuery(
+    `UPDATE assets
+     SET sort_order = bulk.new_order, updated_at = $1
+     FROM (
+       SELECT unnest($2::uuid[]) AS asset_id,
+              generate_series(0, $3::int) AS new_order
+     ) AS bulk
+     WHERE assets.id = bulk.asset_id
+       AND assets.site_id = $4
+       AND assets.site_id IN (SELECT id FROM sites WHERE org_id = $5)`,
+    [now, assetIds, assetIds.length - 1, siteId, ctx.orgId],
+  );
+
+  void writeAuditLog(ctx, 'assets.reordered', 'sites', siteId, {
+    asset_count: assetIds.length,
+  }, request);
+
+  return jsonResponse({
+    success: true,
+    data: { reordered: assetIds.length },
   }, ctx.requestId);
 }

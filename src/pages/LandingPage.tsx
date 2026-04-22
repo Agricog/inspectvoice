@@ -2,9 +2,9 @@
  * InspectVoice — SEO Landing Page
  * src/pages/LandingPage.tsx
  *
- * Route: / (unauthenticated visitors, SSG pre-rendered)
+ * Route: / (unauthenticated visitors)
  *
- * Full Autaimate Build Standard v3 SEO compliance:
+ * Full Autaimate Build Standard v2 SEO compliance:
  * - 15-point SEO Achievement Framework
  * - 8 JSON-LD schemas (@graph)
  * - 2,500+ words educational content
@@ -12,18 +12,16 @@
  * - Quick Answer Box (voice search optimised)
  * - Internal linking to product sections
  * - H1 → H2 → H3 hierarchy
- * - Pre-rendered to static HTML via vite-react-ssg for crawler access
  *
- * UPDATED: March 2026 — reflects all built features.
- * UPDATED: April 2026 — migrated from react-helmet-async <Helmet> to
- *   vite-react-ssg <Head> so meta tags are injected into pre-rendered HTML
- *   at build time. Fixed duplicate id="contact" (CTA -> "get-started").
+ * UPDATED: March 2026 — reflects all built features including previous findings
+ * carry-forward, route planner, inspector performance, defect library, baseline
+ * photo comparison, offline auth resilience, premium PDF, and accurate pricing.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
 import { useState } from 'react';
-import { Head } from 'vite-react-ssg';
+import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
 import {
   Mic,
@@ -203,7 +201,7 @@ const JSON_LD_GRAPH = {
         {
           '@type': 'HowToStep',
           name: 'Plan Your Route',
-          text: "Open the route planner to see today's sites ordered by due date. Tap optimise for the most efficient driving route with turn-by-turn directions.",
+          text: 'Open the route planner to see today\'s sites ordered by due date. Tap optimise for the most efficient driving route with turn-by-turn directions.',
         },
         {
           '@type': 'HowToStep',
@@ -259,7 +257,7 @@ const JSON_LD_GRAPH = {
       author: { '@type': 'Organization', name: 'Autaimate' },
       publisher: { '@type': 'Organization', name: 'Autaimate' },
       datePublished: '2026-01-15',
-      dateModified: '2026-04-22',
+      dateModified: '2026-03-27',
       description:
         'Comprehensive guide covering BS EN 1176, BS EN 1177, routine visual inspections, operational inspections, and annual inspections for UK local authority playgrounds.',
     },
@@ -336,7 +334,7 @@ const FEATURES = [
     icon: Navigation,
     title: 'Route Planning',
     description:
-      "See today's due and overdue sites on a map. Optimise your driving route with one tap and get turn-by-turn directions between sites.",
+      'See today\'s due and overdue sites on a map. Optimise your driving route with one tap and get turn-by-turn directions between sites.',
   },
   {
     icon: Camera,
@@ -448,9 +446,9 @@ export default function LandingPage() {
   return (
     <>
       {/* =============================================
-          SEO: HEAD — ALL 15 POINTS, SSG-INJECTED
+          SEO: HELMET — ALL 15 POINTS
           ============================================= */}
-      <Head>
+      <Helmet>
         <title>{PAGE_TITLE}</title>
         <meta name="description" content={PAGE_DESCRIPTION} />
         <link rel="canonical" href={SITE_URL} />
@@ -473,9 +471,10 @@ export default function LandingPage() {
         <meta name="twitter:image" content={OG_IMAGE} />
         <meta name="author" content="Autaimate" />
         <meta name="publisher" content="Autaimate" />
-        <meta name="theme-color" content="#16a34a" />
         <script type="application/ld+json">{JSON.stringify(JSON_LD_GRAPH)}</script>
-      </Head>
+        <meta name="theme-color" content="#16a34a" />
+        <html lang="en-GB" />
+      </Helmet>
 
       <div className="min-h-screen bg-white">
         {/* =============================================
@@ -665,7 +664,7 @@ export default function LandingPage() {
                 {
                   step: '1',
                   title: 'Plan Route',
-                  desc: "See today's due sites on the map. Tap optimise for the fastest driving route.",
+                  desc: 'See today\'s due sites on the map. Tap optimise for the fastest driving route.',
                 },
                 {
                   step: '2',
@@ -1058,9 +1057,9 @@ export default function LandingPage() {
         </section>
 
         {/* =============================================
-            CTA SECTION (id="get-started")
+            CTA SECTION
             ============================================= */}
-        <section id="get-started" className="py-20 sm:py-24 bg-slate-50">
+        <section id="contact" className="py-20 sm:py-24 bg-slate-50">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="text-center">
               <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
@@ -1095,7 +1094,7 @@ export default function LandingPage() {
         </section>
 
         {/* =============================================
-            CONTACT FORM (id="contact")
+            CONTACT FORM
             ============================================= */}
         <section id="contact" className="py-20 sm:py-24">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">

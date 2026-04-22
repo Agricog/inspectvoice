@@ -2,16 +2,12 @@
  * InspectVoice — Privacy Policy
  * src/pages/PrivacyPage.tsx
  *
- * Route: /privacy (public, SSG pre-rendered)
- *
- * UPDATED: April 2026 — migrated from react-helmet-async <Helmet> to
- *   vite-react-ssg <Head> so meta tags are injected into pre-rendered HTML
- *   at build time.
+ * Route: /privacy (public)
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 
-import { Head } from 'vite-react-ssg';
+import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
 import { Mic, ArrowLeft } from 'lucide-react';
 
@@ -21,7 +17,7 @@ const LAST_UPDATED = '26 February 2026';
 export default function PrivacyPage() {
   return (
     <>
-      <Head>
+      <Helmet>
         <title>Privacy Policy | InspectVoice</title>
         <meta
           name="description"
@@ -29,15 +25,7 @@ export default function PrivacyPage() {
         />
         <link rel="canonical" href={`${SITE_URL}/privacy`} />
         <meta name="robots" content="index, follow" />
-        <meta property="og:type" content="website" />
-        <meta property="og:title" content="Privacy Policy | InspectVoice" />
-        <meta
-          property="og:description"
-          content="InspectVoice privacy policy. How we collect, use, and protect your data. GDPR compliant."
-        />
-        <meta property="og:url" content={`${SITE_URL}/privacy`} />
-        <meta property="og:site_name" content="InspectVoice" />
-      </Head>
+      </Helmet>
 
       <div className="min-h-screen bg-white">
         {/* Nav */}

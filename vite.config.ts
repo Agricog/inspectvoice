@@ -42,6 +42,7 @@ export default defineConfig({
       workbox: {
         skipWaiting: true,
         clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
 
         // SPA fallback — serves index.html for all navigation requests when offline
@@ -146,7 +147,7 @@ export default defineConfig({
       '@config': fileURLToPath(new URL('./src/config', import.meta.url)),
     },
   },
-  build: {
+ build: {
     target: 'es2020',
     sourcemap: true,
     rollupOptions: {
@@ -156,6 +157,14 @@ export default defineConfig({
           ui: ['lucide-react'],
         },
       },
+    },
+  },
+  ssgOptions: {
+    script: 'async',
+    formatting: 'minify',
+    crittersOptions: false,
+    onFinished() {
+      console.info('[SSG] Pre-rendering complete');
     },
   },
   server: {

@@ -1,5 +1,3 @@
-/// <reference types="vite-react-ssg" />
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -44,7 +42,6 @@ export default defineConfig({
       workbox: {
         skipWaiting: true,
         clientsClaim: true,
-        cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
 
         // SPA fallback — serves index.html for all navigation requests when offline
@@ -57,7 +54,7 @@ export default defineConfig({
         ],
 
         runtimeCaching: [
-          // --- Google Fonts stylesheets ---
+          // ─── Google Fonts stylesheets ───
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'StaleWhileRevalidate',
@@ -65,12 +62,12 @@ export default defineConfig({
               cacheName: 'google-fonts-stylesheets',
               expiration: {
                 maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
               },
             },
           },
 
-          // --- Google Fonts files (woff2) ---
+          // ─── Google Fonts files (woff2) ───
           {
             urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
             handler: 'CacheFirst',
@@ -78,7 +75,7 @@ export default defineConfig({
               cacheName: 'google-fonts-webfonts',
               expiration: {
                 maxEntries: 20,
-                maxAgeSeconds: 60 * 60 * 24 * 365,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
               },
               cacheableResponse: {
                 statuses: [0, 200],
@@ -86,7 +83,8 @@ export default defineConfig({
             },
           },
 
-          // --- API: GET requests (read data — cache as fallback) ---
+          // ─── API: GET requests (read data — cache as fallback) ───
+          // Matches both workers.dev and future custom domain
           {
             urlPattern: ({ url, request }) => {
               const isApi =
@@ -100,7 +98,7 @@ export default defineConfig({
               networkTimeoutSeconds: 5,
               expiration: {
                 maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24,
+                maxAgeSeconds: 60 * 60 * 24, // 24 hours
               },
               cacheableResponse: {
                 statuses: [0, 200],
@@ -108,7 +106,7 @@ export default defineConfig({
             },
           },
 
-          // --- API: mutations (POST/PUT/DELETE — never cache) ---
+          // ─── API: mutations (POST/PUT/DELETE — never cache) ───
           {
             urlPattern: ({ url, request }) => {
               const isApi =
@@ -119,13 +117,13 @@ export default defineConfig({
             handler: 'NetworkOnly',
           },
 
-          // --- Clerk auth — always network, never cache tokens ---
+          // ─── Clerk auth — always network, never cache tokens ───
           {
             urlPattern: /^https:\/\/.*clerk\..*/i,
             handler: 'NetworkOnly',
           },
 
-          // --- R2 signed URL uploads — network only ---
+          // ─── R2 signed URL uploads — network only ───
           {
             urlPattern: ({ url }) =>
               url.hostname.includes('r2.cloudflarestorage.com') ||
@@ -163,15 +161,5 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
-  },
-  // vite-react-ssg options (augments UserConfig via triple-slash reference above)
-  ssgOptions: {
-    script: 'async',
-    formatting: 'none',
-    includedRoutes: (paths: string[]): string[] => {
-      // Only pre-render public marketing pages. All other routes remain SPA-only.
-      const PUBLIC_SSG_ROUTES = new Set<string>(['/', '/privacy', '/terms']);
-      return paths.filter((p) => PUBLIC_SSG_ROUTES.has(p));
-    },
   },
 });

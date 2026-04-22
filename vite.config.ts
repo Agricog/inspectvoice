@@ -159,14 +159,6 @@ export default defineConfig({
       },
     },
   },
-  ssgOptions: {
-    script: 'async',
-    formatting: 'minify',
-    crittersOptions: false,
-    onFinished() {
-      console.info('[SSG] Pre-rendering complete');
-    },
-  },
   server: {
     port: 3000,
     strictPort: true,

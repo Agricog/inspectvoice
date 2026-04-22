@@ -7,135 +7,92 @@
  *   3. Wrap the app in ClerkProvider for authentication
  *   4. Bridge Clerk auth tokens to secureFetch via AuthTokenProvider
  *   5. Mount the React application
- *   6. Support SSG pre-rendering via ViteReactSSG entry pattern
  *
  * Note: BrowserRouter and HelmetProvider are in App.tsx — NOT duplicated here.
  *
- * SSG: During server-side pre-rendering, ClerkProvider is NOT mounted because
- * it requires browser-only APIs (cookies, localStorage). Public marketing pages
- * must branch on `import.meta.env.SSR` and render without Clerk context.
- *
  * Build Standard: Autaimate v3
  */
-
 import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { ClerkProvider } from '@clerk/clerk-react';
-import { ViteReactSSG } from 'vite-react-ssg';
-import { routes } from './App';
+import { registerSW } from 'virtual:pwa-register';
 import { initErrorTracking } from '@utils/errorTracking';
 import { initAnalytics } from '@utils/analytics';
 import { AuthTokenProvider } from '@components/AuthTokenProvider';
+import { App } from './App';
 import './index.css';
 import { initTheme } from '@services/theme';
-
+initTheme();
 // =============================================
-// 0. CLERK — validate publishable key (client only)
+// 0. CLERK — validate publishable key
 // =============================================
-
-const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as
-  | string
-  | undefined;
-
-if (!import.meta.env.SSR && !CLERK_PUBLISHABLE_KEY) {
+const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+if (!CLERK_PUBLISHABLE_KEY) {
   throw new Error(
     'Missing VITE_CLERK_PUBLISHABLE_KEY environment variable. ' +
-      'Set it in Railway and redeploy (Vite bakes env vars at build time).'
+    'Set it in Railway and redeploy (Vite bakes env vars at build time).'
   );
 }
-
 // =============================================
-// 1. OBSERVABILITY + THEME — client only
+// 1. OBSERVABILITY — before React renders
 // =============================================
-
-if (!import.meta.env.SSR) {
-  initTheme();
-  initErrorTracking();
-  initAnalytics({ debug: !import.meta.env.PROD });
-}
-
+initErrorTracking();
+initAnalytics({ debug: !import.meta.env.PROD });
 // =============================================
-// 2. PWA SERVICE WORKER REGISTRATION — client only
+// 2. PWA SERVICE WORKER REGISTRATION
 // =============================================
-
+const updateSW = registerSW({
+  onNeedRefresh() {
+    window.dispatchEvent(new CustomEvent('iv-sw-update-available'));
+  },
+  onOfflineReady() {
+    window.dispatchEvent(new CustomEvent('iv-sw-offline-ready'));
+  },
+  onRegisteredSW(swUrl, registration) {
+    if (registration) {
+      setInterval(() => {
+        void registration.update();
+      }, 60 * 60 * 1000);
+    }
+    if (import.meta.env.DEV) {
+      console.info('[PWA] Service worker registered:', swUrl);
+    }
+  },
+  onRegisterError(error) {
+    console.error('[PWA] Service worker registration failed:', error);
+  },
+});
 declare global {
   interface Window {
     __IV_SW_UPDATE?: (reloadPage: boolean) => Promise<void>;
   }
 }
-
-if (!import.meta.env.SSR) {
-  void (async () => {
-    const { registerSW } = await import('virtual:pwa-register');
-    const updateSW = registerSW({
-      onNeedRefresh() {
-        window.dispatchEvent(new CustomEvent('iv-sw-update-available'));
-      },
-      onOfflineReady() {
-        window.dispatchEvent(new CustomEvent('iv-sw-offline-ready'));
-      },
-      onRegisteredSW(swUrl, registration) {
-        if (registration) {
-          setInterval(
-            () => {
-              void registration.update();
-            },
-            60 * 60 * 1000
-          );
-        }
-        if (import.meta.env.DEV) {
-          console.info('[PWA] Service worker registered:', swUrl);
-        }
-      },
-      onRegisterError(error) {
-        console.error('[PWA] Service worker registration failed:', error);
-      },
-    });
-    window.__IV_SW_UPDATE = updateSW;
-  })();
+window.__IV_SW_UPDATE = updateSW;
+// =============================================
+// 3. MOUNT REACT APP
+// =============================================
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error('Root element not found. Check index.html has <div id="root">.');
 }
-
-// =============================================
-// 3. REMOVE SPLASH SCREEN — client only
-// =============================================
-
-if (!import.meta.env.SSR && typeof document !== 'undefined') {
-  queueMicrotask(() => {
-    const splash = document.getElementById('iv-splash');
-    if (splash) {
-      splash.classList.add('fade-out');
-      setTimeout(() => splash.remove(), 300);
-    }
-  });
+// Remove the HTML splash screen once React takes over
+const splash = document.getElementById('iv-splash');
+if (splash) {
+  splash.classList.add('fade-out');
+  setTimeout(() => splash.remove(), 300);
 }
-
-// =============================================
-// 4. SSG ENTRY — exports routes and wraps in providers
-// =============================================
-
-export const createRoot = ViteReactSSG(
-  {
-    routes,
-    basename: '/',
-  },
-  ({ app }) => {
-    // SSG (build time): render without ClerkProvider — marketing pages are public
-    if (import.meta.env.SSR) {
-      return <StrictMode>{app}</StrictMode>;
-    }
-
-    // Client (runtime): full app with Clerk
-    return (
-      <StrictMode>
-        <ClerkProvider
-          publishableKey={CLERK_PUBLISHABLE_KEY as string}
-          signInFallbackRedirectUrl="/dashboard"
-          signUpFallbackRedirectUrl="/dashboard"
-          signInUrl="/sign-in"
-          signUpUrl="/sign-up"
-        >
-          <AuthTokenProvider>{app}</AuthTokenProvider>
-        </ClerkProvider>
-      </StrictMode>
-    );
-  }
+createRoot(rootElement).render(
+  <StrictMode>
+    <ClerkProvider
+      publishableKey={CLERK_PUBLISHABLE_KEY}
+      signInFallbackRedirectUrl="/dashboard"
+      signUpFallbackRedirectUrl="/dashboard"
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+    >
+      <AuthTokenProvider>
+        <App />
+      </AuthTokenProvider>
+    </ClerkProvider>
+  </StrictMode>,
 );

@@ -57,7 +57,7 @@ export default defineConfig({
         ],
 
         runtimeCaching: [
-          // ─── Google Fonts stylesheets ───
+          // --- Google Fonts stylesheets ---
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'StaleWhileRevalidate',
@@ -70,7 +70,7 @@ export default defineConfig({
             },
           },
 
-          // ─── Google Fonts files (woff2) ───
+          // --- Google Fonts files (woff2) ---
           {
             urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
             handler: 'CacheFirst',
@@ -86,7 +86,7 @@ export default defineConfig({
             },
           },
 
-          // ─── API: GET requests (read data — cache as fallback) ───
+          // --- API: GET requests (read data — cache as fallback) ---
           {
             urlPattern: ({ url, request }) => {
               const isApi =
@@ -108,7 +108,7 @@ export default defineConfig({
             },
           },
 
-          // ─── API: mutations (POST/PUT/DELETE — never cache) ───
+          // --- API: mutations (POST/PUT/DELETE — never cache) ---
           {
             urlPattern: ({ url, request }) => {
               const isApi =
@@ -119,13 +119,13 @@ export default defineConfig({
             handler: 'NetworkOnly',
           },
 
-          // ─── Clerk auth — always network, never cache tokens ───
+          // --- Clerk auth — always network, never cache tokens ---
           {
             urlPattern: /^https:\/\/.*clerk\..*/i,
             handler: 'NetworkOnly',
           },
 
-          // ─── R2 signed URL uploads — network only ───
+          // --- R2 signed URL uploads — network only ---
           {
             urlPattern: ({ url }) =>
               url.hostname.includes('r2.cloudflarestorage.com') ||
@@ -164,8 +164,7 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
   },
-  // vite-react-ssg options (augments UserConfig via module declaration)
-  // @ts-expect-error — ambient types may not resolve with tsconfig "types": []
+  // vite-react-ssg options (augments UserConfig via triple-slash reference above)
   ssgOptions: {
     script: 'async',
     formatting: 'none',

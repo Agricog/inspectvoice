@@ -1,3 +1,5 @@
+/// <reference types="vite-react-ssg" />
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -63,7 +65,7 @@ export default defineConfig({
               cacheName: 'google-fonts-stylesheets',
               expiration: {
                 maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+                maxAgeSeconds: 60 * 60 * 24 * 365,
               },
             },
           },
@@ -76,7 +78,7 @@ export default defineConfig({
               cacheName: 'google-fonts-webfonts',
               expiration: {
                 maxEntries: 20,
-                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+                maxAgeSeconds: 60 * 60 * 24 * 365,
               },
               cacheableResponse: {
                 statuses: [0, 200],
@@ -85,7 +87,6 @@ export default defineConfig({
           },
 
           // ─── API: GET requests (read data — cache as fallback) ───
-          // Matches both workers.dev and future custom domain
           {
             urlPattern: ({ url, request }) => {
               const isApi =
@@ -99,7 +100,7 @@ export default defineConfig({
               networkTimeoutSeconds: 5,
               expiration: {
                 maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24, // 24 hours
+                maxAgeSeconds: 60 * 60 * 24,
               },
               cacheableResponse: {
                 statuses: [0, 200],
@@ -147,7 +148,7 @@ export default defineConfig({
       '@config': fileURLToPath(new URL('./src/config', import.meta.url)),
     },
   },
- build: {
+  build: {
     target: 'es2020',
     sourcemap: true,
     rollupOptions: {
@@ -162,5 +163,16 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
+  },
+  // vite-react-ssg options (augments UserConfig via module declaration)
+  // @ts-expect-error — ambient types may not resolve with tsconfig "types": []
+  ssgOptions: {
+    script: 'async',
+    formatting: 'none',
+    includedRoutes: (paths: string[]): string[] => {
+      // Only pre-render public marketing pages. All other routes remain SPA-only.
+      const PUBLIC_SSG_ROUTES = new Set<string>(['/', '/privacy', '/terms']);
+      return paths.filter((p) => PUBLIC_SSG_ROUTES.has(p));
+    },
   },
 });

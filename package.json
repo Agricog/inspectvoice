@@ -8,7 +8,6 @@
     "postinstall": "mkdir -p node_modules/@types/mapbox__point-geometry && echo 'export default class Point { x: number; y: number; constructor(x: number, y: number) }' > node_modules/@types/mapbox__point-geometry/index.d.ts",
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:ssg": "tsc -b && vite-react-ssg build",
     "preview": "vite preview",
     "lint": "eslint .",
     "type-check": "tsc --noEmit"

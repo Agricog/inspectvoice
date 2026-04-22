@@ -1,18 +1,23 @@
 /**
- * InspectVoice — App Root
- * Route definitions with Layout shell, Clerk auth gates, and PWA update prompt.
+ * InspectVoice — App Routes
  *
- * UPDATED: Features 14 (Inspector Performance) + 15 (Defect Library) routes added.
- * UPDATED: Landing page at / for SEO, dashboard moved to /dashboard.
- * FIX: 31 Mar 2026 — HomeRoute replaces bare SignedIn/SignedOut on / route
- *   to prevent white screen when Clerk hasn't initialised after sign-in redirect.
+ * Routes array for vite-react-ssg. Public marketing pages (/, /privacy, /terms)
+ * are eagerly imported and pre-rendered to static HTML at build time.
+ * All authenticated routes are lazy-loaded so their Clerk/browser-API
+ * dependencies never execute during SSG.
+ *
+ * Architecture:
+ *   - RootLayout wraps app in HelmetProvider (SSG + client)
+ *   - ClientShell wraps children in ClerkProvider + AuthTokenProvider (client only)
+ *   - AuthGate + OrgGate enforce sign-in and active org on protected routes
  *
  * Build Standard: Autaimate v3
  */
 
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Navigate, Outlet } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
+import type { RouteRecord } from 'vite-react-ssg';
 import {
   SignIn,
   SignUp,
@@ -20,58 +25,76 @@ import {
   SignedOut,
   RedirectToSignIn,
   OrganizationSwitcher,
+  ClerkProvider,
   useOrganization,
   useAuth,
 } from '@clerk/clerk-react';
 import { Layout } from '@components/Layout';
 import { PWAUpdatePrompt } from '@components/PWAUpdatePrompt';
+import { AuthTokenProvider } from '@components/AuthTokenProvider';
 import { getCachedSession } from '@services/offlineAuth';
-import { SiteList } from '@pages/SiteList';
-import { SiteForm } from '@pages/SiteForm';
-import { SiteDetail } from '@pages/SiteDetail';
-import AssetForm from '@pages/AssetForm';
-import AssetDetail from '@pages/AssetDetail';
-import InspectionStart from '@pages/InspectionStart';
-import InspectionReview from '@pages/InspectionReview';
-import InspectionCapture from '@pages/InspectionCapture';
-import { InspectionList } from '@pages/InspectionList';
-import { DefectTracker } from '@pages/DefectTracker';
-import { ManagerDashboard } from '@pages/ManagerDashboard';
-import { SettingsPage } from '@pages/SettingsPage';
-import IncidentList from '@pages/IncidentList';
-import IncidentForm from '@pages/IncidentForm';
-import VerifyPage from '@pages/VerifyPage';
-import SealedExportsPage from '@pages/SealedExportsPage';
-import NormalisationHistoryPage from '@pages/NormalisationHistoryPage';
-import RoutePlanner from '@pages/RoutePlanner';
-import { PortalRouter } from './portal/PortalRouter';
 
-// ── Feature 14: Inspector Performance ──
-import InspectorPerformancePage from '@pages/InspectorPerformancePage';
-import InspectorDetailPage from '@pages/InspectorDetailPage';
-import MyPerformancePage from '@pages/MyPerformancePage';
-
-// ── Feature 15: Defect Library ──
-import DefectLibraryPage from '@pages/DefectLibraryPage';
-
-// ── Feature 14: Performance Share (public) ──
-import PerformanceSharePage from '@pages/PerformanceSharePage';
-
-// ── Feature 17: Manufacturer Recalls ──
-import RecallsPage from '@pages/RecallsPage';
-
-// ── SEO Landing Page ──
+// ─── Eager: SSG pre-rendered public pages ───
 import LandingPage from '@pages/LandingPage';
-
-// ── Legal Pages ──
 import PrivacyPage from '@pages/PrivacyPage';
 import TermsPage from '@pages/TermsPage';
+
+// =============================================
+// ROOT LAYOUT — Helmet (SSG-safe) + client shell
+// =============================================
+
+function RootLayout(): JSX.Element {
+  return (
+    <HelmetProvider>
+      <ClientShell>
+        <Suspense fallback={null}>
+          <Outlet />
+        </Suspense>
+      </ClientShell>
+    </HelmetProvider>
+  );
+}
+
+function ClientShell({ children }: { children: ReactNode }): JSX.Element {
+  // During SSG: skip client-only providers, render children directly.
+  // ClerkProvider, AuthTokenProvider, and PWAUpdatePrompt all require
+  // browser APIs and are only mounted at runtime.
+  if (import.meta.env.SSR) {
+    return <>{children}</>;
+  }
+
+  const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as
+    | string
+    | undefined;
+
+  if (!publishableKey) {
+    throw new Error(
+      'Missing VITE_CLERK_PUBLISHABLE_KEY environment variable. ' +
+        'Set it in Railway and redeploy (Vite bakes env vars at build time).'
+    );
+  }
+
+  return (
+    <ClerkProvider
+      publishableKey={publishableKey}
+      signInFallbackRedirectUrl="/dashboard"
+      signUpFallbackRedirectUrl="/dashboard"
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+    >
+      <AuthTokenProvider>
+        <PWAUpdatePrompt />
+        {children}
+      </AuthTokenProvider>
+    </ClerkProvider>
+  );
+}
 
 // =============================================
 // ORG GATE — requires active organisation
 // =============================================
 
-function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
+function OrgGate({ children }: { children: ReactNode }): JSX.Element {
   const { organization, isLoaded } = useOrganization();
 
   if (!isLoaded) {
@@ -86,7 +109,9 @@ function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-6">
         <div className="text-center">
-          <h1 className="text-xl font-semibold text-iv-text mb-2">Select Organisation</h1>
+          <h1 className="text-xl font-semibold text-iv-text mb-2">
+            Select Organisation
+          </h1>
           <p className="text-sm text-iv-muted">
             Choose or create an organisation to continue.
           </p>
@@ -104,15 +129,14 @@ function OrgGate({ children }: { children: React.ReactNode }): JSX.Element {
 }
 
 // =============================================
-// AUTH GATE — wraps all protected content
+// AUTH GATE — wraps protected content
 // =============================================
 
-function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
+function AuthGate({ children }: { children: ReactNode }): JSX.Element {
   const { isLoaded } = useAuth();
   const cachedSession = getCachedSession();
   const isOffline = !navigator.onLine;
 
-  // Clerk loaded — standard auth flow
   if (isLoaded) {
     return (
       <>
@@ -126,24 +150,31 @@ function AuthGate({ children }: { children: React.ReactNode }): JSX.Element {
     );
   }
 
-  // Offline with cached session — let them in
   if (isOffline && cachedSession) {
     return <>{children}</>;
   }
 
-// Clerk still loading — splash is already visible from index.html
   return <></>;
 }
 
 // =============================================
-// HOME ROUTE — handles / with proper loading state
+// HOME ROUTE — SSG-safe, redirects signed-in users client-side
 // =============================================
 
 function HomeRoute(): JSX.Element {
-  const { isLoaded, isSignedIn } = useAuth();
-  const [timedOut, setTimedOut] = React.useState(false);
+  // During SSG: always render LandingPage — no Clerk context available.
+  // On client: HomeRouteClient handles signed-in redirect without hydration mismatch.
+  if (import.meta.env.SSR) {
+    return <LandingPage />;
+  }
+  return <HomeRouteClient />;
+}
 
-  React.useEffect(() => {
+function HomeRouteClient(): JSX.Element {
+  const { isLoaded, isSignedIn } = useAuth();
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
     if (isLoaded) return;
     const timer = setTimeout(() => setTimedOut(true), 3000);
     return () => clearTimeout(timer);
@@ -156,7 +187,7 @@ function HomeRoute(): JSX.Element {
     return <LandingPage />;
   }
 
-  // Offline or timed out with cached session — go straight to dashboard
+  // Offline with cached session — fast-path to dashboard
   if (timedOut || !navigator.onLine) {
     const cached = getCachedSession();
     if (cached) {
@@ -164,20 +195,26 @@ function HomeRoute(): JSX.Element {
     }
   }
 
-  // Show splash while waiting
+  // While Clerk initialises: render LandingPage so hydration matches SSG output
+  return <LandingPage />;
+}
+
+// =============================================
+// SIGN-IN / SIGN-UP WRAPPERS
+// =============================================
+
+function SignInRoute(): JSX.Element {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-iv-bg gap-4">
-      <div className="w-12 h-12 rounded-xl bg-iv-accent/10 flex items-center justify-center">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-iv-accent">
-          <path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
-          <path d="M12.02 21.485C6.44 21.485 2 16.97 2 11.4a10 10 0 0 1 20 0c0 2.58-.94 4.93-2.49 6.73" />
-          <path d="M8 21l4-4l4 4" />
-        </svg>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="w-1.5 h-1.5 rounded-full bg-iv-accent animate-pulse" />
-        <span className="text-sm text-iv-muted">Loading…</span>
-      </div>
+    <div className="flex items-center justify-center min-h-screen bg-iv-bg">
+      <SignIn routing="path" path="/sign-in" />
+    </div>
+  );
+}
+
+function SignUpRoute(): JSX.Element {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-iv-bg">
+      <SignUp routing="path" path="/sign-up" />
     </div>
   );
 }
@@ -196,112 +233,232 @@ function NotFound(): JSX.Element {
 }
 
 // =============================================
-// APP
+// ROUTES — exported for vite-react-ssg
 // =============================================
 
-export function App(): JSX.Element {
-  return (
-    <HelmetProvider>
-      <BrowserRouter>
-        {/* PWA: offline banner, update prompt, offline-ready toast */}
-        <PWAUpdatePrompt />
+export const routes: RouteRecord[] = [
+  {
+    path: '/',
+    element: <RootLayout />,
+    children: [
+      // ─── Public (SSG pre-rendered) ───
+      { index: true, element: <HomeRoute /> },
+      { path: 'privacy', element: <PrivacyPage /> },
+      { path: 'terms', element: <TermsPage /> },
 
-        <Routes>
-          {/* ── Public routes (no auth required) ── */}
+      // ─── Public (client-only — Clerk dependency) ───
+      { path: 'sign-in/*', element: <SignInRoute /> },
+      { path: 'sign-up/*', element: <SignUpRoute /> },
+      {
+        path: 'verify/:bundleId',
+        lazy: async () => {
+          const mod = await import('@pages/VerifyPage');
+          return { Component: mod.default };
+        },
+      },
+      {
+        path: 'performance-share/:token',
+        lazy: async () => {
+          const mod = await import('@pages/PerformanceSharePage');
+          return { Component: mod.default };
+        },
+      },
 
-          {/* Landing / dashboard — splash screen while Clerk initialises */}
-          <Route path="/" element={<HomeRoute />} />
+      // ─── Protected (AuthGate + Layout, all lazy-loaded) ───
+      {
+        element: (
+          <AuthGate>
+            <Layout />
+          </AuthGate>
+        ),
+        children: [
+          {
+            path: 'dashboard',
+            lazy: async () => {
+              const { ManagerDashboard } = await import('@pages/ManagerDashboard');
+              return { Component: ManagerDashboard };
+            },
+          },
+          {
+            path: 'sites',
+            lazy: async () => {
+              const { SiteList } = await import('@pages/SiteList');
+              return { Component: SiteList };
+            },
+          },
+          {
+            path: 'sites/new',
+            lazy: async () => {
+              const { SiteForm } = await import('@pages/SiteForm');
+              return { Component: SiteForm };
+            },
+          },
+          {
+            path: 'sites/:id',
+            lazy: async () => {
+              const { SiteDetail } = await import('@pages/SiteDetail');
+              return { Component: SiteDetail };
+            },
+          },
+          {
+            path: 'sites/:id/edit',
+            lazy: async () => {
+              const { SiteForm } = await import('@pages/SiteForm');
+              return { Component: SiteForm };
+            },
+          },
+          {
+            path: 'sites/:siteId/assets/new',
+            lazy: async () => {
+              const mod = await import('@pages/AssetForm');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'sites/:siteId/assets/:assetId',
+            lazy: async () => {
+              const mod = await import('@pages/AssetDetail');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'sites/:siteId/assets/:assetId/edit',
+            lazy: async () => {
+              const mod = await import('@pages/AssetForm');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'sites/:siteId/inspect/new',
+            lazy: async () => {
+              const mod = await import('@pages/InspectionStart');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'sites/:siteId/inspections/:inspectionId/review',
+            lazy: async () => {
+              const mod = await import('@pages/InspectionReview');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'sites/:siteId/inspections/:inspectionId/capture',
+            lazy: async () => {
+              const mod = await import('@pages/InspectionCapture');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'inspections',
+            lazy: async () => {
+              const { InspectionList } = await import('@pages/InspectionList');
+              return { Component: InspectionList };
+            },
+          },
+          {
+            path: 'defects',
+            lazy: async () => {
+              const { DefectTracker } = await import('@pages/DefectTracker');
+              return { Component: DefectTracker };
+            },
+          },
+          {
+            path: 'incidents',
+            lazy: async () => {
+              const mod = await import('@pages/IncidentList');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'incidents/new',
+            lazy: async () => {
+              const mod = await import('@pages/IncidentForm');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'incidents/:id',
+            lazy: async () => {
+              const mod = await import('@pages/IncidentForm');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'sealed-exports',
+            lazy: async () => {
+              const mod = await import('@pages/SealedExportsPage');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'normalisation-history',
+            lazy: async () => {
+              const mod = await import('@pages/NormalisationHistoryPage');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'settings',
+            lazy: async () => {
+              const { SettingsPage } = await import('@pages/SettingsPage');
+              return { Component: SettingsPage };
+            },
+          },
+          {
+            path: 'route-planner',
+            lazy: async () => {
+              const mod = await import('@pages/RoutePlanner');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'portal/*',
+            lazy: async () => {
+              const { PortalRouter } = await import('./portal/PortalRouter');
+              return { Component: PortalRouter };
+            },
+          },
+          {
+            path: 'inspector-performance',
+            lazy: async () => {
+              const mod = await import('@pages/InspectorPerformancePage');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'inspector-performance/:userId',
+            lazy: async () => {
+              const mod = await import('@pages/InspectorDetailPage');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'my-performance',
+            lazy: async () => {
+              const mod = await import('@pages/MyPerformancePage');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'defect-library',
+            lazy: async () => {
+              const mod = await import('@pages/DefectLibraryPage');
+              return { Component: mod.default };
+            },
+          },
+          {
+            path: 'recalls',
+            lazy: async () => {
+              const mod = await import('@pages/RecallsPage');
+              return { Component: mod.default };
+            },
+          },
+        ],
+      },
 
-          <Route
-            path="/sign-in/*"
-            element={
-              <div className="flex items-center justify-center min-h-screen bg-iv-bg">
-                <SignIn routing="path" path="/sign-in" />
-              </div>
-            }
-          />
-          <Route
-            path="/sign-up/*"
-            element={
-              <div className="flex items-center justify-center min-h-screen bg-iv-bg">
-                <SignUp routing="path" path="/sign-up" />
-              </div>
-            }
-          />
-
-          {/* Public verification — council officers, solicitors, insurers */}
-          <Route path="/verify/:bundleId" element={<VerifyPage />} />
-
-          {/* Public performance share — token-scoped, no auth */}
-          <Route path="/performance-share/:token" element={<PerformanceSharePage />} />
-
-          {/* Legal pages — public, no auth */}
-          <Route path="/privacy" element={<PrivacyPage />} />
-          <Route path="/terms" element={<TermsPage />} />
-
-          {/* ── Protected routes ── */}
-          <Route
-            element={
-              <AuthGate>
-                <Layout />
-              </AuthGate>
-            }
-          >
-            {/* Dashboard */}
-            <Route path="/dashboard" element={<ManagerDashboard />} />
-
-            {/* Sites */}
-            <Route path="/sites" element={<SiteList />} />
-            <Route path="/sites/new" element={<SiteForm />} />
-            <Route path="/sites/:id" element={<SiteDetail />} />
-            <Route path="/sites/:id/edit" element={<SiteForm />} />
-            <Route path="/sites/:siteId/assets/new" element={<AssetForm />} />
-            <Route path="/sites/:siteId/assets/:assetId" element={<AssetDetail />} />
-            <Route path="/sites/:siteId/assets/:assetId/edit" element={<AssetForm />} />
-            <Route path="/sites/:siteId/inspect/new" element={<InspectionStart />} />
-            <Route path="/sites/:siteId/inspections/:inspectionId/review" element={<InspectionReview />} />
-            <Route path="/sites/:siteId/inspections/:inspectionId/capture" element={<InspectionCapture />} />
-
-            {/* Inspections */}
-            <Route path="/inspections" element={<InspectionList />} />
-
-            {/* Defects */}
-            <Route path="/defects" element={<DefectTracker />} />
-
-            {/* Incidents */}
-            <Route path="/incidents" element={<IncidentList />} />
-            <Route path="/incidents/new" element={<IncidentForm />} />
-            <Route path="/incidents/:id" element={<IncidentForm />} />
-
-            {/* Sealed Exports */}
-            <Route path="/sealed-exports" element={<SealedExportsPage />} />
-
-            {/* Normalisation */}
-            <Route path="/normalisation-history" element={<NormalisationHistoryPage />} />
-
-            {/* Settings */}
-            <Route path="/settings" element={<SettingsPage />} />
-
-            {/* Route Planner */}
-            <Route path="/route-planner" element={<RoutePlanner />} />
-            <Route path="/portal/*" element={<PortalRouter />} />
-
-            {/* ── Feature 14: Inspector Performance ── */}
-            <Route path="/inspector-performance" element={<InspectorPerformancePage />} />
-            <Route path="/inspector-performance/:userId" element={<InspectorDetailPage />} />
-            <Route path="/my-performance" element={<MyPerformancePage />} />
-
-            {/* ── Feature 15: Defect Library ── */}
-            <Route path="/defect-library" element={<DefectLibraryPage />} />
-
-            {/* ── Feature 17: Manufacturer Recalls ── */}
-            <Route path="/recalls" element={<RecallsPage />} />
-
-            {/* 404 */}
-            <Route path="*" element={<NotFound />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </HelmetProvider>
-  );
-}
+      // Catch-all 404
+      { path: '*', element: <NotFound /> },
+    ],
+  },
+];

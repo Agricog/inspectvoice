@@ -36,11 +36,14 @@ import {
   assetsCache,
   runStorageMaintenance,
 } from '@services/offlineStore';
-import { captureError } from '@utils/errorTracking';
+iimport { captureError } from '@utils/errorTracking';
 import { recoverFromAuthFailure } from '@services/authRecovery';
 import {
   SyncOperationType,
   SyncStatus,
+} from '@/types';
+import type {
+  SyncQueueEntry,
 } from '@/types';
 
 // =============================================

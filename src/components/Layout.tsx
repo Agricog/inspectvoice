@@ -1,12 +1,12 @@
 /**
  * InspectVoice — App Shell Layout
- * Persistent header with navigation, offline indicator, and content area.
- * Mobile-first responsive design.
+ * Persistent header with navigation, offline indicator, sync status,
+ * and content area. Mobile-first responsive design.
  *
- * UPDATED: Feature 14 + 15 nav items added.
+ * UPDATED Step 6: Sync status surfaced — inspector now has visibility into
+ *   syncing/synced/error/auth-required states, not just connectivity.
  */
-
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import {
   Shield,
@@ -21,10 +21,15 @@ import {
   Navigation,
   BarChart3,
   BookOpen,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { useOnlineStatus } from '@hooks/useOnlineStatus';
 import { Sun, Moon } from 'lucide-react';
 import { toggleTheme, getTheme } from '@services/theme';
+import { syncService } from '@services/syncService';
+import { SyncStatus } from '@/types';
+import type { SyncStatusDetail } from '@services/syncService';
 
 interface NavItem {
   to: string;
@@ -42,10 +47,106 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
 ];
 
+// =============================================
+// SYNC STATUS — copy + colour for each state
+// =============================================
+
+interface SyncStatusDisplay {
+  show: boolean;
+  variant: 'info' | 'warning' | 'error' | 'success';
+  icon: React.ReactNode;
+  message: string;
+}
+
+function deriveSyncDisplay(
+  isOnline: boolean,
+  status: SyncStatus,
+  detail: SyncStatusDetail | null,
+): SyncStatusDisplay {
+  // Offline always wins — that's the most relevant message
+  if (!isOnline) {
+    return {
+      show: true,
+      variant: 'warning',
+      icon: <WifiOff className="w-4 h-4" />,
+      message: 'Offline — data saved locally, will sync when connected',
+    };
+  }
+
+  const pending = detail?.pendingCount ?? 0;
+
+  switch (status) {
+    case SyncStatus.SYNCING:
+      return {
+        show: true,
+        variant: 'info',
+        icon: <RefreshCw className="w-4 h-4 animate-spin" />,
+        message: pending > 0 ? `Syncing ${pending} item${pending === 1 ? '' : 's'}…` : 'Syncing…',
+      };
+    case SyncStatus.AUTH_REQUIRED:
+      return {
+        show: true,
+        variant: 'error',
+        icon: <AlertTriangle className="w-4 h-4" />,
+        message: 'Sign-in required to continue syncing',
+      };
+    case SyncStatus.ERROR:
+      return {
+        show: true,
+        variant: 'error',
+        icon: <AlertTriangle className="w-4 h-4" />,
+        message: detail?.lastError
+          ? `Sync error: ${detail.lastError}`
+          : `Sync error — ${pending} item${pending === 1 ? '' : 's'} pending`,
+      };
+    case SyncStatus.OFFLINE:
+      // Already handled above by isOnline check, but cover the enum value
+      return {
+        show: true,
+        variant: 'warning',
+        icon: <WifiOff className="w-4 h-4" />,
+        message: 'Offline — data saved locally',
+      };
+    case SyncStatus.SYNCED:
+    case SyncStatus.IDLE:
+    default:
+      // Don't show a banner when everything is fine
+      return {
+        show: false,
+        variant: 'success',
+        icon: <CheckCircle2 className="w-4 h-4" />,
+        message: '',
+      };
+  }
+}
+
+const VARIANT_CLASSES: Record<SyncStatusDisplay['variant'], string> = {
+  info: 'bg-iv-accent/10 border-iv-accent/30 text-iv-accent',
+  warning: 'bg-risk-medium/15 border-risk-medium/30 text-risk-medium',
+  error: 'bg-red-500/10 border-red-500/30 text-red-400',
+  success: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400',
+};
+
+// =============================================
+// LAYOUT
+// =============================================
+
 export function Layout(): JSX.Element {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [theme, setThemeState] = useState(getTheme());
   const { isOnline } = useOnlineStatus();
+
+  // Subscribe to sync service status
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(syncService.getStatus());
+  const [syncDetail, setSyncDetail] = useState<SyncStatusDetail | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = syncService.onStatusChange((status, detail) => {
+      setSyncStatus(status);
+      setSyncDetail(detail ?? null);
+    });
+    return unsubscribe;
+  }, []);
 
   const closeMobileMenu = useCallback(() => {
     setMobileMenuOpen(false);
@@ -55,15 +156,19 @@ export function Layout(): JSX.Element {
     setMobileMenuOpen((prev) => !prev);
   }, []);
 
+  const syncDisplay = deriveSyncDisplay(isOnline, syncStatus, syncDetail);
+
   return (
     <div className="min-h-dvh bg-iv-bg flex flex-col">
-      {/* Offline banner */}
-      {!isOnline && (
-        <div className="bg-risk-medium/15 border-b border-risk-medium/30 px-4 py-2 flex items-center justify-center gap-2">
-          <WifiOff className="w-4 h-4 text-risk-medium" />
-          <span className="text-sm font-medium text-risk-medium">
-            Offline — data saved locally, will sync when connected
-          </span>
+      {/* Sync / Offline status banner */}
+      {syncDisplay.show && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`border-b px-4 py-2 flex items-center justify-center gap-2 ${VARIANT_CLASSES[syncDisplay.variant]}`}
+        >
+          {syncDisplay.icon}
+          <span className="text-sm font-medium">{syncDisplay.message}</span>
         </div>
       )}
 
@@ -117,6 +222,7 @@ export function Layout(): JSX.Element {
             >
               {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
+
             {/* Online indicator (desktop) */}
             <div className="hidden md:flex items-center gap-1.5">
               {isOnline ? (

@@ -28,8 +28,8 @@ export function cacheAuthSession(session: CachedSession): void {
   }
 }
 
-/** Max age of a cached session before it's considered stale (7 days) */
-const MAX_SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Max age of a cached session before it's considered stale (14 days) */
+const MAX_SESSION_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export function getCachedSession(): CachedSession | null {
   try {

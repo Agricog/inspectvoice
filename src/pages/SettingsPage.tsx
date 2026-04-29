@@ -43,9 +43,8 @@ import {
   LogOut,
   CreditCard,
 } from 'lucide-react';
-import { useClerk } from '@clerk/clerk-react';
 import { useFetch } from '@hooks/useFetch';
-import { clearAllData } from '@services/offlineStore';
+import { recoverFromAuthFailure } from '@services/authRecovery';
 import type { User as UserEntity, Organisation } from '@/types/entities';
 import {
   InspectionType,
@@ -877,8 +876,6 @@ function ResetDemoDataSection(): JSX.Element {
 // =============================================
 
 export function SettingsPage(): JSX.Element {
-  const { signOut } = useClerk();
-
   const { data: userData, loading: userLoading, error: userError, refetch: refetchUser } =
     useFetch<UserProfileResponse>('/api/v1/users/me');
 
@@ -909,13 +906,11 @@ export function SettingsPage(): JSX.Element {
   }, [refetchUser, refetchOrg]);
 
   const handleSignOut = useCallback(async () => {
-    try {
-      await clearAllData();
-    } catch {
-      // Non-blocking — sign out regardless
-    }
-    await signOut({ redirectUrl: '/sign-in' });
-  }, [signOut]);
+    // Single canonical recovery path — same as auth death.
+    // Drains queue, clears CSRF, clears cached session, clears IndexedDB,
+    // unregisters SW, signs out of Clerk, hard reload to /sign-in.
+    await recoverFromAuthFailure('user-initiated-signout');
+  }, []);
 
   return (
     <>

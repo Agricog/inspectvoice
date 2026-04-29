@@ -17,6 +17,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { captureError } from '@utils/errorTracking';
 import { getCSRFHeaders, requiresCSRF } from '@utils/csrf';
 import { getAuthToken } from '@utils/authToken';
+import { recoverFromAuthFailure } from '@services/authRecovery';
 
 // =============================================
 // TYPES
@@ -165,7 +166,20 @@ export async function secureFetch<T>(
       if (!response.ok) {
         const responseBody = await response.text().catch(() => null);
 
-        // Don't retry 4xx errors (client errors)
+        // 401 — auth has died. Trigger central recovery and abort.
+        // Recovery is async + reloads the page, so this fetch's caller
+        // will be unmounted before it can do anything with the error.
+        if (response.status === 401) {
+          void recoverFromAuthFailure(`secureFetch:401:${method} ${path}`);
+          throw new FetchError(
+            `${method} ${path} failed: 401 — auth recovery triggered`,
+            401,
+            response.statusText,
+            responseBody,
+          );
+        }
+
+        // Don't retry other 4xx errors (client errors)
         if (response.status >= 400 && response.status < 500) {
           throw new FetchError(
             `${method} ${path} failed: ${response.status} ${response.statusText}`,

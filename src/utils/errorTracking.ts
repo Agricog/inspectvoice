@@ -2,13 +2,23 @@
  * InspectVoice — Error Tracking (Sentry)
  * Initialises Sentry and provides typed error reporting helpers.
  * NEVER logs PII or secrets — scrubs sensitive headers/data.
+ *
+ * Release tracking: __APP_RELEASE__ is injected by Vite at build time
+ * from the RAILWAY_GIT_COMMIT_SHA env var. See vite.config.ts.
  */
 
 import * as Sentry from '@sentry/react';
 
+// Build-time injected globals (see vite.config.ts `define` block).
+// Format: 'inspectvoice@<7-char-sha>' or 'inspectvoice@dev' locally.
+declare const __APP_RELEASE__: string;
+declare const __APP_COMMIT_SHA__: string;
+
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN ?? '';
 const IS_PRODUCTION = import.meta.env.PROD;
-const APP_VERSION = '0.1.0';
+const APP_RELEASE = __APP_RELEASE__;
+// Exported for display in UI (e.g. footer version)
+export const APP_BUILD_SHA = __APP_COMMIT_SHA__;
 
 /** Call once in main.tsx before React renders */
 export function initErrorTracking(): void {
@@ -21,7 +31,7 @@ export function initErrorTracking(): void {
 
   Sentry.init({
     dsn: SENTRY_DSN,
-    release: `inspectvoice@${APP_VERSION}`,
+    release: APP_RELEASE,
     environment: IS_PRODUCTION ? 'production' : 'development',
     tracesSampleRate: IS_PRODUCTION ? 0.2 : 1.0,
     replaysSessionSampleRate: 0,

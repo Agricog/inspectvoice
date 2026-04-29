@@ -19,6 +19,9 @@ import { getCSRFHeaders, requiresCSRF } from '@utils/csrf';
 import { getAuthToken } from '@utils/authToken';
 import { recoverFromAuthFailure } from '@services/authRecovery';
 
+// Note: captureError is invoked from secureFetch on 5xx/network errors
+// so service-layer fetches are observed in Sentry alongside hook-based ones.
+
 // =============================================
 // TYPES
 // =============================================
@@ -233,12 +236,25 @@ export async function secureFetch<T>(
     }
   }
 
-  throw lastError ?? new FetchError(
+  const finalError = lastError ?? new FetchError(
     `${method} ${path} failed after ${maxAttempts} attempts`,
     0,
     'Unknown',
     null,
   );
+
+  // Capture in Sentry so service-layer fetches (syncService, etc) get the
+  // same observability as hook-based fetches. Skip 401 since recovery
+  // is already firing and will dominate the breadcrumb trail.
+  if (finalError.status !== 401) {
+    captureError(finalError, {
+      module: 'secureFetch',
+      operation: `${method} ${path}`,
+      metadata: { status: finalError.status, attempts: maxAttempts },
+    });
+  }
+
+  throw finalError;
 }
 
 // =============================================

@@ -28,7 +28,11 @@ import { syncService } from '@services/syncService';
 import { cacheAuthSession, getCachedSession } from '@services/offlineAuth';
 import { recoverFromAuthFailure } from '@services/authRecovery';
 import { secureFetch, FetchError } from '@hooks/useFetch';
-import { captureWarning } from '@utils/errorTracking';
+import {
+  captureWarning,
+  setErrorTrackingUser,
+  clearErrorTrackingUser,
+} from '@utils/errorTracking';
 
 /** How long to wait for Clerk before falling back to cached session */
 const CLERK_TIMEOUT_MS = 3_000;
@@ -106,9 +110,16 @@ export function AuthTokenProvider({ children }: { children: React.ReactNode }): 
     });
   }, [authLoaded, userId, stableGetToken]);
 
-  // ── Cache session when user + org are available ──
+  // ── Cache session + tag Sentry with user/org context ──
   useEffect(() => {
-    if (!userLoaded || !orgLoaded || !user || !organization) return;
+    if (!userLoaded || !orgLoaded || !user || !organization) {
+      // Signed out or pre-auth — clear any stale Sentry user context
+      if (userLoaded && !user) {
+        clearErrorTrackingUser();
+      }
+      return;
+    }
+
     cacheAuthSession({
       userId: user.id,
       orgId: organization.id,
@@ -116,6 +127,12 @@ export function AuthTokenProvider({ children }: { children: React.ReactNode }): 
       userName: [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Inspector',
       cachedAt: new Date().toISOString(),
     });
+
+    // Tag every Sentry event from now on with user + org.
+    // This means errors come in with breadcrumb context like
+    // "user: user_3CQrR... | org_id: org_3CQrayRX..." — so when Julie hits
+    // a bug, you see exactly whose device it happened on without guessing.
+    setErrorTrackingUser(user.id, organization.id);
   }, [userLoaded, orgLoaded, user, organization]);
 
   // ── Timeout path: Clerk didn't load, fall back to cached session ──

@@ -358,60 +358,26 @@ export default function RoutePlanner(): JSX.Element {
   const [mobileView, setMobileView] = useState<MobileView>('list');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+
+  // ---- Theme — react to dark/light class changes ----
+  const [isDark, setIsDark] = useState(() =>
+    typeof document !== 'undefined' ? document.documentElement.classList.contains('dark') : true,
+  );
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   // ---- RBAC (simplified — real role comes from API response filtering) ----
   // Admin/manager see all; inspector sees assigned only. The API handles this.
   // We just need to know if we should show the "unassigned" toggle.
   const [isPrivileged, setIsPrivileged] = useState(false);
-
-  // =============================================
-  // LOAD SITES
-  // =============================================
-
-  const loadSites = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-
-    try {
-      const { secureFetch } = await import('@hooks/useFetch');
-      const params = new URLSearchParams();
-      params.set('urgency', urgencyFilter);
-      if (showUnassigned) params.set('unassigned', 'true');
-
-      const response = await secureFetch<{ data: { sites: RoutePlannerSite[] } }>(
-        `/api/v1/route-planner/sites?${params.toString()}`,
-      );
-
-      const loadedSites = response.data?.sites ?? [];
-      setSites(loadedSites);
-
-      // Check if we got unassigned data back (indicates privileged user)
-      // A proper approach would check the user role from Clerk, but the API
-      // already enforces RBAC so this is just for UI toggle visibility
-      setIsPrivileged(true); // We'll refine this if needed
-
-      // Fit map bounds to loaded sites
-      if (loadedSites.length > 0 && mapRef.current) {
-        fitMapToSites(loadedSites);
-      }
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Failed to load sites');
-    } finally {
-      setLoading(false);
-    }
-  }, [urgencyFilter, showUnassigned]);
-
-  useEffect(() => {
-    void loadSites();
-  }, [loadSites]);
-  // Force map resize when mobile view switches to map
-  useEffect(() => {
-    if (mobileView === 'map' && mapRef.current) {
-      setTimeout(() => {
-        mapRef.current?.resize();
-      }, 100);
-    }
-  }, [mobileView]);
 
   // =============================================
   // MAP HELPERS
@@ -440,6 +406,61 @@ export default function RoutePlanner(): JSX.Element {
       { padding: 60, duration: 1000, maxZoom: 14 },
     );
   }, []);
+
+  // =============================================
+  // LOAD SITES
+  // =============================================
+
+  const loadSites = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+
+    try {
+      const { secureFetch } = await import('@hooks/useFetch');
+      const params = new URLSearchParams();
+      params.set('urgency', urgencyFilter);
+      if (showUnassigned) params.set('unassigned', 'true');
+
+      const response = await secureFetch<{ data: { sites: RoutePlannerSite[] } }>(
+        `/api/v1/route-planner/sites?${params.toString()}`,
+      );
+
+      const loadedSites = response.data?.sites ?? [];
+      setSites(loadedSites);
+
+      // Check if we got unassigned data back (indicates privileged user)
+      // A proper approach would check the user role from Clerk, but the API
+      // already enforces RBAC so this is just for UI toggle visibility
+      setIsPrivileged(true); // We'll refine this if needed
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Failed to load sites');
+    } finally {
+      setLoading(false);
+    }
+  }, [urgencyFilter, showUnassigned]);
+
+  useEffect(() => {
+    void loadSites();
+  }, [loadSites]);
+
+  // ── Fit map to sites whenever both data and map are ready ──
+  // Previously this lived inside loadSites() but the map ref was often null
+  // at that moment (component still mounting), leaving the map at the default
+  // UK-wide view. Doing it as a separate effect ensures both conditions are
+  // satisfied before fitting.
+  useEffect(() => {
+    if (!mapLoaded || sites.length === 0) return;
+    fitMapToSites(sites);
+  }, [mapLoaded, sites, fitMapToSites]);
+
+  // Force map resize when mobile view switches to map
+  useEffect(() => {
+    if (mobileView === 'map' && mapRef.current) {
+      setTimeout(() => {
+        mapRef.current?.resize();
+      }, 100);
+    }
+  }, [mobileView]);
 
   const handleSelectSite = useCallback((siteId: string) => {
     setSelectedSiteId((prev) => (prev === siteId ? null : siteId));
@@ -675,8 +696,8 @@ export default function RoutePlanner(): JSX.Element {
           )}
         </div>
 
-        {/* Mobile view toggle */}
-        <div className="flex md:hidden items-center gap-1 bg-iv-surface-2 rounded-lg p-0.5">
+        {/* Mobile/tablet view toggle (shown below lg breakpoint, ~1024px) */}
+        <div className="flex lg:hidden items-center gap-1 bg-iv-surface-2 rounded-lg p-0.5">
           <button
             type="button"
             onClick={() => setMobileView('list')}
@@ -698,11 +719,11 @@ export default function RoutePlanner(): JSX.Element {
         </div>
       </div>
 
-      {/* ── Main Content (side-by-side desktop, toggle mobile) ── */}
+      {/* ── Main Content (side-by-side desktop, toggle mobile/tablet) ── */}
       <div className="flex flex-1 min-h-0">
         {/* ── LEFT PANEL: Site List ── */}
-        <div className={`w-full md:w-[400px] md:flex-shrink-0 flex flex-col border-r border-[#2A2F3A] bg-iv-surface overflow-hidden ${
-          mobileView === 'list' ? 'flex' : 'hidden md:flex'
+        <div className={`w-full lg:w-[400px] lg:flex-shrink-0 flex flex-col border-r border-[#2A2F3A] bg-iv-surface overflow-hidden ${
+          mobileView === 'list' ? 'flex' : 'hidden lg:flex'
         }`}>
           {/* Filters */}
           <div className="px-3 py-2 border-b border-[#2A2F3A] space-y-2 flex-shrink-0">
@@ -846,16 +867,16 @@ export default function RoutePlanner(): JSX.Element {
 
         {/* ── RIGHT PANEL: Map ── */}
         <div
-  className={`relative min-w-0 ${mobileView === 'map' ? '' : 'hidden md:block'}`}
-  style={{ flex: '1 1 0%', height: 'calc(100dvh - 12rem)' }}
->
-  <MapGL
-    ref={mapRef}
-    mapboxAccessToken={MAPBOX_TOKEN}
-    initialViewState={DEFAULT_VIEW}
-    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-            mapStyle={document.documentElement.classList.contains('dark') ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
+          className={`relative flex-1 min-w-0 h-full ${mobileView === 'map' ? '' : 'hidden lg:block'}`}
+        >
+          <MapGL
+            ref={mapRef}
+            mapboxAccessToken={MAPBOX_TOKEN}
+            initialViewState={DEFAULT_VIEW}
+            style={{ width: '100%', height: '100%' }}
+            mapStyle={isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
             attributionControl={false}
+            onLoad={() => setMapLoaded(true)}
           >
             <NavigationControl position="top-right" />
             <GeolocateControl
@@ -911,7 +932,7 @@ export default function RoutePlanner(): JSX.Element {
 
           {/* Map overlay: route summary */}
           {routeData && (
-            <div className="absolute bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-64 bg-iv-surface/95 backdrop-blur-sm rounded-lg border border-[#2A2F3A] p-3">
+            <div className="absolute bottom-4 left-4 right-4 lg:left-auto lg:right-4 lg:w-64 bg-iv-surface/95 backdrop-blur-sm rounded-lg border border-[#2A2F3A] p-3">
               <div className="flex items-center gap-2 mb-1">
                 <Navigation className="w-4 h-4 text-iv-accent" />
                 <span className="text-sm font-medium iv-text">Route Planned</span>

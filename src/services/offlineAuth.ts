@@ -28,18 +28,38 @@ export function cacheAuthSession(session: CachedSession): void {
   }
 }
 
+/** Max age of a cached session before it's considered stale (7 days) */
+const MAX_SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function getCachedSession(): CachedSession | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (
-      typeof parsed['userId'] === 'string' &&
-      typeof parsed['orgId'] === 'string'
+      typeof parsed['userId'] !== 'string' ||
+      typeof parsed['orgId'] !== 'string'
     ) {
-      return parsed as unknown as CachedSession;
+      return null;
     }
-    return null;
+
+    // Staleness check — reject sessions older than 7 days.
+    // Prevents zombie offline mode resurrecting a session from weeks ago.
+    const cachedAt = typeof parsed['cachedAt'] === 'string' ? parsed['cachedAt'] : null;
+    if (cachedAt) {
+      const cachedAtMs = new Date(cachedAt).getTime();
+      if (!Number.isNaN(cachedAtMs) && Date.now() - cachedAtMs > MAX_SESSION_AGE_MS) {
+        // Stale — clear it so we don't keep evaluating
+        try {
+          localStorage.removeItem(CACHE_KEY);
+        } catch {
+          // Non-blocking
+        }
+        return null;
+      }
+    }
+
+    return parsed as unknown as CachedSession;
   } catch {
     return null;
   }

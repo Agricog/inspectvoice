@@ -3,7 +3,21 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, URL } from 'node:url';
 
+// ─── Build-time release identifier ───
+// Railway provides RAILWAY_GIT_COMMIT_SHA automatically during builds.
+// Locally / outside Railway, falls back to 'dev' so behaviour stays predictable.
+// Truncated to 7 chars for readability in Sentry release dropdowns.
+const COMMIT_SHA = (
+  process.env.RAILWAY_GIT_COMMIT_SHA ??
+  process.env.GIT_COMMIT_SHA ??
+  'dev'
+).slice(0, 7);
+
 export default defineConfig({
+  define: {
+    __APP_RELEASE__: JSON.stringify(`inspectvoice@${COMMIT_SHA}`),
+    __APP_COMMIT_SHA__: JSON.stringify(COMMIT_SHA),
+  },
   plugins: [
     react(),
     VitePWA({

@@ -36,7 +36,7 @@ import {
   assetsCache,
   runStorageMaintenance,
 } from '@services/offlineStore';
-iimport { captureError } from '@utils/errorTracking';
+import { captureError } from '@utils/errorTracking';
 import { recoverFromAuthFailure } from '@services/authRecovery';
 import {
   SyncOperationType,

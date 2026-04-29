@@ -670,14 +670,20 @@ async function enqueueSync(
 ): Promise<void> {
   const db = await getDB();
 
-  // Queue depth guard
+  // Queue depth guard — log loudly when we hit the cap so it's visible
+  // in Sentry instead of disappearing silently. Inspector workflow still
+  // doesn't break, but we get observability into the failure.
   const currentDepth = await db.count(IDB_STORE_NAMES.SYNC_QUEUE);
   if (currentDepth >= MAX_SYNC_QUEUE_DEPTH) {
     captureError(
-      new StorageLimitError(`Sync queue full: ${currentDepth} entries`),
-      { module: 'offlineStore', operation: 'enqueueSync' },
+      new StorageLimitError(
+        `Sync queue full (${currentDepth}/${MAX_SYNC_QUEUE_DEPTH}). ` +
+        `Dropped ${type} for entity ${entityId}. ` +
+        `User may have unsynced work that won't reach the server.`,
+      ),
+      { module: 'offlineStore', operation: 'enqueueSync', entityId, metadata: { type, currentDepth } },
     );
-    return; // Silently skip — don't break the user's workflow
+    return;
   }
 
   const entry: SyncQueueEntry = {

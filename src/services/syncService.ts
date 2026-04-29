@@ -37,12 +37,10 @@ import {
   runStorageMaintenance,
 } from '@services/offlineStore';
 import { captureError } from '@utils/errorTracking';
+import { recoverFromAuthFailure } from '@services/authRecovery';
 import {
   SyncOperationType,
   SyncStatus,
-} from '@/types';
-import type {
-  SyncQueueEntry,
 } from '@/types';
 
 // =============================================
@@ -438,25 +436,48 @@ class SyncService {
           return false;
         }
       }
-    } catch (error) {
+   } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const status = error instanceof FetchError ? error.status : 0;
+
+      // 401 — auth has died. Trigger recovery and DO NOT dead-letter the queue.
+      // The user's pending work stays in IndexedDB until they sign back in.
+      if (status === 401) {
+        captureError(error, {
+          module: 'SyncService',
+          operation: `processEntry:${entry.type}:401`,
+          entityId: entry.entity_id,
+          attempt: entry.attempts + 1,
+        });
+        void recoverFromAuthFailure(`syncService:401:${entry.type}`);
+        return false;
+      }
+
+      // Record this single attempt (single call — bug fix from previous behaviour
+      // which recorded 3 times and instantly dead-lettered any 4xx).
       await syncQueue.recordAttempt(entry.id, errorMessage);
 
-      // Log non-retryable errors at higher severity
-      const isClientError = error instanceof FetchError && error.status >= 400 && error.status < 500;
+      // Other 4xx (403, 422, 400, etc) — genuinely non-retryable client errors.
+      // Mark as max attempts so the entry is purged on next maintenance cycle.
+      const isPermanentClientError =
+        error instanceof FetchError && status >= 400 && status < 500 && status !== 401;
+
       captureError(error, {
         module: 'SyncService',
         operation: `processEntry:${entry.type}`,
         entityId: entry.entity_id,
         attempt: entry.attempts + 1,
-        isClientError,
+        isClientError: isPermanentClientError,
       });
 
-      // Client errors (4xx) should not be retried — mark as max attempts
-      if (isClientError) {
-        await syncQueue.recordAttempt(entry.id, `Non-retryable: ${errorMessage}`);
-        await syncQueue.recordAttempt(entry.id, `Non-retryable: ${errorMessage}`);
-        // Recording 3 times ensures it hits max_attempts (3) for purgeFailed()
+      if (isPermanentClientError) {
+        // Force the attempts counter up to max so purgeFailed() removes it.
+        // We do this in a controlled way by recording the remaining attempts
+        // needed, not by triple-calling recordAttempt with stale state.
+        const remainingAttempts = Math.max(0, entry.max_attempts - (entry.attempts + 1));
+        for (let i = 0; i < remainingAttempts; i++) {
+          await syncQueue.recordAttempt(entry.id, `Non-retryable: ${errorMessage}`);
+        }
       }
 
       return false;

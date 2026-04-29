@@ -776,7 +776,9 @@ class SyncService {
         }
 
         // ── Assets for each site (merge) ──
-        for (const site of sitesRes.data.sites) {
+        // Use sitesArray (the normalised list), not sitesRes.data.sites which
+        // throws when the API returns sites as a top-level array.
+        for (const site of sitesArray) {
           try {
             const siteId = site['id'] as string;
             if (!siteId) continue;

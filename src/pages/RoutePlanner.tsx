@@ -360,20 +360,6 @@ export default function RoutePlanner(): JSX.Element {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
 
-  // ---- Theme — react to dark/light class changes ----
-  const [isDark, setIsDark] = useState(() =>
-    typeof document !== 'undefined' ? document.documentElement.classList.contains('dark') : true,
-  );
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark'));
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => observer.disconnect();
-  }, []);
-
   // ---- RBAC (simplified — real role comes from API response filtering) ----
   // Admin/manager see all; inspector sees assigned only. The API handles this.
   // We just need to know if we should show the "unassigned" toggle.
@@ -874,7 +860,7 @@ export default function RoutePlanner(): JSX.Element {
             mapboxAccessToken={MAPBOX_TOKEN}
             initialViewState={DEFAULT_VIEW}
             style={{ width: '100%', height: '100%' }}
-            mapStyle={isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
+          mapStyle="mapbox://styles/mapbox/dark-v11"
             attributionControl={false}
             onLoad={() => setMapLoaded(true)}
           >

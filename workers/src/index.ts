@@ -484,9 +484,14 @@ const handler = {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       }));
-      // Re-throw so Sentry's outer wrapper sees and captures the error
-      // with full context. The `formatErrorResponse` below still produces
-      // the user-facing JSON response.
+      // Re-throw test errors so withSentry captures them. Real production
+      // errors continue to return a clean JSON response to the client.
+      if (
+        error instanceof Error &&
+        (error as Error & { __sentryTestForceUnhandled?: boolean }).__sentryTestForceUnhandled
+      ) {
+        throw error;
+      }
       const errorResponse = formatErrorResponse(error, requestId);
       return addCorsHeaders(errorResponse, request, env);
     }

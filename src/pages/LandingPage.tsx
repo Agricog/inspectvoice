@@ -1126,7 +1126,7 @@ export default function LandingPage() {
             ============================================= */}
         <footer className="bg-slate-900 text-slate-400 py-12">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid sm:grid-cols-4 gap-8 mb-8">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-8 mb-8">
               <div>
                 <div className="flex items-center gap-2.5 mb-4">
                   <div className="w-7 h-7 rounded-md bg-emerald-600 flex items-center justify-center">
@@ -1213,6 +1213,38 @@ export default function LandingPage() {
                     <Link to="/terms" className="hover:text-emerald-400 transition-colors">
                       Terms of Service
                     </Link>
+                  </li>
+                </ul>
+              </div>
+
+              <div>
+                <h4 className="text-xs font-semibold text-white uppercase tracking-wider mb-3">
+                  Resources
+                </h4>
+                <ul className="space-y-2 text-xs">
+                  <li>
+                    
+                      href="https://playinspectionsoftware.co.uk/bs-en-1176/"
+                      className="hover:text-emerald-400 transition-colors"
+                    >
+                      BS EN 1176 Guide
+                    </a>
+                  </li>
+                  <li>
+                    
+                      href="https://playinspectionsoftware.co.uk/rpii/"
+                      className="hover:text-emerald-400 transition-colors"
+                    >
+                      RPII Inspector Guide
+                    </a>
+                  </li>
+                  <li>
+                    
+                      href="https://playinspectionsoftware.co.uk/"
+                      className="hover:text-emerald-400 transition-colors"
+                    >
+                      Play Inspection Software
+                    </a>
                   </li>
                 </ul>
               </div>

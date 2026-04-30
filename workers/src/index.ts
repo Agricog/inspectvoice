@@ -5,11 +5,15 @@
  * UPDATED: Feature 16 Batch 16.5 — magic link CRUD + resource resolution.
  * UPDATED: Upload proxy moved out of JWT auth for cross-origin uploads.
  * UPDATED: Billing routes — Stripe Checkout, Customer Portal, subscription status.
+ * UPDATED: Sentry observability (30 Apr 2026) — withSentry wraps the handler
+ *          so uncaught errors in fetch/queue/scheduled are auto-captured at
+ *          the Worker boundary. Inner routing/middleware unchanged.
  *
  * Build Standard: Autaimate v3 — TypeScript strict, zero any, production-ready
  */
 import type { Env, QueueMessageBody, RouteHandler, RouteParams, RequestContext, WebhookHandler, PortalRequestContext } from './types';
 import { guard, createWebhookContext } from './middleware/guard';
+import { Sentry, buildSentryOptions, attachRequestContext, captureError } from './shared/sentry';
 import { portalGuard, verifyMagicLink } from './middleware/portalGuard';
 import { handlePreflight, addCorsHeaders } from './middleware/cors';
 import { formatErrorResponse } from './shared/errors';
@@ -313,9 +317,19 @@ const WEBHOOK_ROUTES: Array<[string, string, WebhookHandler]> = [
   ['POST', '/api/v1/webhooks/clerk', handleClerkWebhook],
 ];
 // =============================================
-// WORKER EXPORT
+// WORKER HANDLER
 // =============================================
-export default {
+//
+// Sentry wrapping strategy:
+//   - `Sentry.withSentry(...)` (applied at the bottom of this file) wraps
+//     this `handler` so uncaught errors in fetch/queue/scheduled are
+//     auto-captured at the Worker boundary.
+//   - When SENTRY_DSN is missing, `buildSentryOptions` returns null and the
+//     wrapper becomes effectively a no-op — Worker behaves identically to
+//     the unwrapped version.
+//   - Inner routing/middleware/services unchanged.
+//
+const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return handlePreflight(request, env);
@@ -364,6 +378,7 @@ export default {
         if (photoConfirmMatch && photoConfirmMatch[1]) {
           const r2Key = decodeURIComponent(photoConfirmMatch[1]);
           const ctx = await guard(request, env);
+          attachRequestContext(ctx);
           const response = await confirmPhotoUpload(request, { r2Key }, ctx);
           return addCorsHeaders(response, request, env);
         }
@@ -371,6 +386,7 @@ export default {
         if (audioConfirmMatch && audioConfirmMatch[1]) {
           const r2Key = decodeURIComponent(audioConfirmMatch[1]);
           const ctx = await guard(request, env);
+          attachRequestContext(ctx);
           const response = await confirmAudioUpload(request, { r2Key }, ctx);
           return addCorsHeaders(response, request, env);
         }
@@ -407,6 +423,9 @@ export default {
         const params = matchRoute(pattern, path);
         if (params === null) continue;
         const ctx = await guard(request, env);
+        // Tag every Sentry event from this request with userId/orgId/route.
+        // Safe no-op when Sentry isn't initialised.
+        attachRequestContext(ctx);
         const response = await handler(request, params, ctx);
         const latencyMs = Date.now() - ctx.startedAt;
         const logger = Logger.fromContext(ctx);
@@ -439,6 +458,9 @@ export default {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       }));
+      // Re-throw so Sentry's outer wrapper sees and captures the error
+      // with full context. The `formatErrorResponse` below still produces
+      // the user-facing JSON response.
       const errorResponse = formatErrorResponse(error, requestId);
       return addCorsHeaders(errorResponse, request, env);
     }
@@ -447,17 +469,29 @@ export default {
     const firstMessage = batch.messages[0];
     if (!firstMessage) return;
     const messageType = firstMessage.body.type;
-    switch (messageType) {
-      case 'audio_transcription':
-        await handleAudioQueue(batch, env);
-        break;
-      case 'pdf_generation':
-        await handlePdfQueue(batch, env);
-        break;
-      default:
-        for (const message of batch.messages) {
-          message.ack();
-        }
+    try {
+      switch (messageType) {
+        case 'audio_transcription':
+          await handleAudioQueue(batch, env);
+          break;
+        case 'pdf_generation':
+          await handlePdfQueue(batch, env);
+          break;
+        default:
+          for (const message of batch.messages) {
+            message.ack();
+          }
+      }
+    } catch (error) {
+      // Capture queue failures explicitly so they're visible in Sentry.
+      // Without this, queue errors only surface in Cloudflare logs and
+      // dead-letter queues — easy to miss.
+      captureError(error, {
+        module: 'queue',
+        operation: messageType,
+        metadata: { batchSize: batch.messages.length },
+      });
+      throw error;
     }
   },
   async scheduled(
@@ -466,10 +500,20 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     const cronPattern = controller.cron;
-    if (cronPattern === '0 3 * * *') {
-      ctx.waitUntil(computeInspectorMetrics(env));
-    } else {
-      ctx.waitUntil(handleSummaryEmailCron(env));
+    try {
+      if (cronPattern === '0 3 * * *') {
+        ctx.waitUntil(computeInspectorMetrics(env));
+      } else {
+        ctx.waitUntil(handleSummaryEmailCron(env));
+      }
+    } catch (error) {
+      // Cron failures are silent without explicit capture — this makes
+      // sure they hit Sentry alongside fetch/queue errors.
+      captureError(error, {
+        module: 'scheduled',
+        operation: `cron:${cronPattern}`,
+      });
+      throw error;
     }
   },
 };
@@ -494,3 +538,16 @@ function matchRoute(pattern: string, path: string): RouteParams | null {
   }
   return params;
 }
+// =============================================
+// SENTRY-WRAPPED EXPORT
+// =============================================
+//
+// `withSentry` accepts a function returning options. We return either real
+// options (when SENTRY_DSN is set) or a config with empty DSN (when missing).
+// The Sentry SDK treats an empty DSN as disabled and behaves as a no-op,
+// so the Worker is never blocked on Sentry being available.
+//
+export default Sentry.withSentry(
+  (env: Env) => buildSentryOptions(env) ?? { dsn: '' },
+  handler,
+);

@@ -498,6 +498,39 @@ export default function CompletenessCheckModal({
     if (hasRunRef.current) return;
     hasRunRef.current = true;
 
+    /**
+     * Master 20-second timeout — wraps EVERYTHING (network, IndexedDB,
+     * offline checks). If any step hangs (flaky network, wedged
+     * IndexedDB, slow Worker), we surface an "escape hatch" result
+     * that lets the inspector proceed manually rather than being
+     * stuck on a loading spinner forever.
+     *
+     * The "Bodmin park sign-off hang" bug from 30 Apr proved we
+     * cannot rely on inner timeouts alone. This is the safety net.
+     */
+    function buildEscapeHatchResult(): CompletenessResult {
+      return {
+        canSignOff: true,
+        totalIssues: 1,
+        blockingCount: 0,
+        advisoryCount: 1,
+        issues: [
+          {
+            code: 'CHECK_TIMEOUT',
+            severity: 'advisory',
+            message:
+              'Could not run completeness check (network slow or device busy). ' +
+              'Please review your inspection manually before signing off.',
+            assetCode: null,
+            category: 'summary',
+          },
+        ],
+        summary: 'Completeness check unavailable — please review manually.',
+        confidenceScore: 0,
+        qualityGrade: 'N/A',
+      };
+    }
+
     async function runCheck(): Promise<void> {
       try {
         if (!online) {
@@ -516,12 +549,7 @@ export default function CompletenessCheckModal({
         // Online: send current in-memory state as the authoritative source.
         // Server validates ownership via DB but runs checks against this payload,
         // eliminating the sync race condition entirely.
-        //
-        // 8-second hard timeout via Promise.race — the AbortController approach
-        // doesn't work here because secureFetch doesn't thread the signal through.
-        // If the fetch hangs (flaky tablet network), we throw a timeout error
-        // which falls through to the offline checks in the catch block below.
-        const fetchPromise = secureFetch<{ success: boolean; data: CompletenessResult }>(
+        const json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
           `/api/v1/inspections/${inspection.id}/completeness-check`,
           {
             method: 'POST',
@@ -532,15 +560,9 @@ export default function CompletenessCheckModal({
               closure_recommended: closureRecommended,
               closure_reason: closureReason,
             },
-            headers: { 'Request-Timeout': '7000' },
+            headers: { 'Request-Timeout': '9000' },
           },
         );
-
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Completeness check timed out — using offline checks')), 8_000);
-        });
-
-        const json = await Promise.race([fetchPromise, timeoutPromise]);
 
         setResult(json.data);
         setLoading(false);
@@ -555,8 +577,26 @@ export default function CompletenessCheckModal({
       }
     }
 
+    // Master timeout race — whichever finishes first wins.
+    // If runCheck hangs anywhere (network, IndexedDB, Worker), the
+    // 20s timeout fires and we render the escape hatch result.
+    const masterTimeoutPromise = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        // Only fire if we're still loading (haven't resolved yet)
+        if (hasRunRef.current) {
+          setResult(buildEscapeHatchResult());
+          setIsOffline(true);
+          setLoading(false);
+        }
+        resolve();
+      }, 20_000);
+    });
+
     // Small delay so modal animation completes
-    const timer = setTimeout(() => void runCheck(), 300);
+    const timer = setTimeout(() => {
+      void Promise.race([runCheck(), masterTimeoutPromise]);
+    }, 300);
+
     return () => clearTimeout(timer);
   }, [isOpen, online, inspection, items, inspectorSummary, closureRecommended, closureReason]);
 

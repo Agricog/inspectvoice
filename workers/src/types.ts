@@ -60,6 +60,21 @@ export interface Env {
   readonly WEBHOOKS_PAUSED: string;
   readonly WORKERS_PUBLIC_URL: string;
 
+  // ── Observability (Sentry) ──
+  /**
+   * Sentry DSN for the inspectvoice-api project.
+   * Set via Cloudflare secrets (encrypted at rest).
+   * If empty/undefined, Sentry init is skipped silently — Worker continues normally.
+   */
+  readonly SENTRY_DSN?: string;
+
+  /**
+   * Release identifier for Sentry. Format: 'inspectvoice-api@<git-sha>'.
+   * Injected at deploy time via the GitHub Actions workflow (deploy-worker.yml).
+   * Falls back to 'inspectvoice-api@dev' locally.
+   */
+  readonly SENTRY_RELEASE?: string;
+
   // ── R2 Bucket ──
   readonly INSPECTVOICE_BUCKET: R2Bucket;
 

@@ -1145,31 +1145,11 @@ export default function LandingPage() {
                   Product
                 </h4>
                 <ul className="space-y-2 text-xs">
-                  <li>
-                    <a href="#features" className="hover:text-emerald-400 transition-colors">
-                      Features
-                    </a>
-                  </li>
-                  <li>
-                    <a href="#how-it-works" className="hover:text-emerald-400 transition-colors">
-                      How It Works
-                    </a>
-                  </li>
-                  <li>
-                    <a href="#pricing" className="hover:text-emerald-400 transition-colors">
-                      Pricing
-                    </a>
-                  </li>
-                  <li>
-                    <a href="#compliance" className="hover:text-emerald-400 transition-colors">
-                      Compliance Guide
-                    </a>
-                  </li>
-                  <li>
-                    <a href="#faq" className="hover:text-emerald-400 transition-colors">
-                      FAQ
-                    </a>
-                  </li>
+                  <li><a href="#features" className="hover:text-emerald-400 transition-colors">Features</a></li>
+                  <li><a href="#how-it-works" className="hover:text-emerald-400 transition-colors">How It Works</a></li>
+                  <li><a href="#pricing" className="hover:text-emerald-400 transition-colors">Pricing</a></li>
+                  <li><a href="#compliance" className="hover:text-emerald-400 transition-colors">Compliance Guide</a></li>
+                  <li><a href="#faq" className="hover:text-emerald-400 transition-colors">FAQ</a></li>
                 </ul>
               </div>
 
@@ -1179,20 +1159,12 @@ export default function LandingPage() {
                 </h4>
                 <ul className="space-y-2 text-xs">
                   <li>
-                    <a
-                      href="https://autaimate.com"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-emerald-400 transition-colors"
-                    >
+                    <a href="https://autaimate.com" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors">
                       Autaimate
                     </a>
                   </li>
                   <li>
-                    <a
-                      href="mailto:support@autaimate.com"
-                      className="hover:text-emerald-400 transition-colors"
-                    >
+                    <a href="mailto:support@autaimate.com" className="hover:text-emerald-400 transition-colors">
                       support@autaimate.com
                     </a>
                   </li>
@@ -1223,26 +1195,17 @@ export default function LandingPage() {
                 </h4>
                 <ul className="space-y-2 text-xs">
                   <li>
-                    
-                      href="https://playinspectionsoftware.co.uk/bs-en-1176/"
-                      className="hover:text-emerald-400 transition-colors"
-                    >
+                    <a href="https://playinspectionsoftware.co.uk/bs-en-1176/" className="hover:text-emerald-400 transition-colors">
                       BS EN 1176 Guide
                     </a>
                   </li>
                   <li>
-                    
-                      href="https://playinspectionsoftware.co.uk/rpii/"
-                      className="hover:text-emerald-400 transition-colors"
-                    >
+                    <a href="https://playinspectionsoftware.co.uk/rpii/" className="hover:text-emerald-400 transition-colors">
                       RPII Inspector Guide
                     </a>
                   </li>
                   <li>
-                    
-                      href="https://playinspectionsoftware.co.uk/"
-                      className="hover:text-emerald-400 transition-colors"
-                    >
+                    <a href="https://playinspectionsoftware.co.uk/" className="hover:text-emerald-400 transition-colors">
                       Play Inspection Software
                     </a>
                   </li>
@@ -1253,12 +1216,7 @@ export default function LandingPage() {
             <div className="border-t border-slate-800 pt-6 text-xs text-center">
               <p>
                 &copy; {new Date().getFullYear()} InspectVoice — Built by{' '}
-                <a
-                  href="https://autaimate.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-400 hover:text-emerald-300 transition-colors"
-                >
+                <a href="https://autaimate.com" target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:text-emerald-300 transition-colors">
                   Autaimate
                 </a>
               </p>

@@ -353,6 +353,32 @@ const handler = {
         });
         return addCorsHeaders(response, request, env);
       }
+      // ── TEMPORARY: Sentry verification endpoint ──
+      // Throws a real unhandled exception so we can confirm Sentry captures
+      // server-side errors. REMOVE this block after verification.
+      // Auth-protected by a simple shared secret to prevent abuse.
+      if (path === '/api/v1/sentry-test' && method === 'GET') {
+        const testKey = url.searchParams.get('key');
+        if (testKey !== 'inspectvoice-sentry-verify-2026') {
+          return addCorsHeaders(
+            new Response(JSON.stringify({ error: 'forbidden' }), {
+              status: 403,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+            request,
+            env,
+          );
+        }
+        // Throw OUTSIDE the try/catch by using setTimeout-like mechanism.
+        // Actually we want it INSIDE try/catch but with a special marker so
+        // we can re-throw. Simplest: just throw a distinctive error that
+        // bypasses the formatErrorResponse path by re-throwing.
+        const sentryTestError = new Error(
+          'Sentry verification test — this is a deliberate error to confirm Worker→Sentry pipeline. Safe to ignore.',
+        );
+        (sentryTestError as Error & { __sentryTestForceUnhandled?: boolean }).__sentryTestForceUnhandled = true;
+        throw sentryTestError;
+      }
       // ── Upload Proxy (token-only auth, no JWT) ──
       if (path.startsWith('/api/v1/uploads/put/') && method === 'PUT') {
         const match = path.match(/^\/api\/v1\/uploads\/put\/(.+)$/);

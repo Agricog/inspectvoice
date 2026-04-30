@@ -516,29 +516,31 @@ export default function CompletenessCheckModal({
         // Online: send current in-memory state as the authoritative source.
         // Server validates ownership via DB but runs checks against this payload,
         // eliminating the sync race condition entirely.
-        // 10-second timeout — if the worker stalls, fall through to offline checks.
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10_000);
-
-        let json: { success: boolean; data: CompletenessResult };
-        try {
-          json = await secureFetch<{ success: boolean; data: CompletenessResult }>(
-            `/api/v1/inspections/${inspection.id}/completeness-check`,
-            {
-              method: 'POST',
-              retries: 0,
-              body: {
-                items,
-                inspector_summary: inspectorSummary,
-                closure_recommended: closureRecommended,
-                closure_reason: closureReason,
-              },
-              headers: { 'Request-Timeout': '9000' },
+        //
+        // 8-second hard timeout via Promise.race — the AbortController approach
+        // doesn't work here because secureFetch doesn't thread the signal through.
+        // If the fetch hangs (flaky tablet network), we throw a timeout error
+        // which falls through to the offline checks in the catch block below.
+        const fetchPromise = secureFetch<{ success: boolean; data: CompletenessResult }>(
+          `/api/v1/inspections/${inspection.id}/completeness-check`,
+          {
+            method: 'POST',
+            retries: 0,
+            body: {
+              items,
+              inspector_summary: inspectorSummary,
+              closure_recommended: closureRecommended,
+              closure_reason: closureReason,
             },
-          );
-        } finally {
-          clearTimeout(timeoutId);
-        }
+            headers: { 'Request-Timeout': '7000' },
+          },
+        );
+
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Completeness check timed out — using offline checks')), 8_000);
+        });
+
+        const json = await Promise.race([fetchPromise, timeoutPromise]);
 
         setResult(json.data);
         setLoading(false);
